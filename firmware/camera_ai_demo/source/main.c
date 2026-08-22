@@ -2,15 +2,26 @@
  * main.c - Camera_AI_Test1
  *
  * Capture loop: OV7670 (via SmartDMA, J9 header) -> AI model hook (stub,
- * see source/ai/model_runner.c) -> J8 FlexIO/ST7796S TFT (hardware-
- * accelerated 16-bit parallel bus).
+ * see source/ai/model_runner.c) -> USB Video Class (UVC) over USB
+ * High-Speed (source/usb/usb_video_camera.c), so the board shows up as a
+ * standard webcam on the host PC - no LCD, no vendor driver needed. See
+ * WORKLOG.md for why this replaced the original J8 FlexIO/TFT display path
+ * (the LCD driver code is still in source/display/, just unused now).
+ *
+ * The actual frame delivery to the host isn't driven from this loop -
+ * USB_VideoCamera_Init() registers a class callback
+ * (kUSB_DeviceVideoEventStreamSendResponse in usb_video_camera.c) that
+ * pulls straight from CAMERA_CAPTURE_GetFrameBuffer() and converts to YUY2
+ * on demand, each time the host is ready for the next USB packet. This
+ * loop's job is just the AI hook and the periodic debug log, same as
+ * before.
  */
 
 #include "app.h"
 #include "board.h"
 #include "fsl_debug_console.h"
 #include "camera_capture.h"
-#include "lcd_display.h"
+#include "usb_video_camera.h"
 #include "model_runner.h"
 
 /*
@@ -56,21 +67,20 @@ int main(void)
 
     PRINTF("\r\nCamera_AI_Test1 - FRDM-MCXN947\r\n");
     PRINTF("Camera: OV7670 on J9 SmartDMA/Camera header\r\n");
-    PRINTF("Display: HSD024131-C1 TFT (ILI9341-family) on the J8 header\r\n\r\n");
+    PRINTF("Display: USB Video Class (UVC) webcam over USB High-Speed\r\n\r\n");
 
-    LCD_Init();
     CAMERA_CAPTURE_Init();
     AI_MODEL_Init();
-
-    /* Blank the panel so stale RAM contents don't flash on screen. */
-    static uint16_t s_blankLine[DEMO_PANEL_WIDTH];
-    for (uint16_t y = 0; y < DEMO_PANEL_HEIGHT; y++)
-    {
-        LCD_DrawImage(0, y, DEMO_PANEL_WIDTH, 1, s_blankLine);
-    }
+#if !DEMO_USB_STREAM_DISABLE
+    USB_VideoCamera_Init();
+#endif
 
     while (1)
     {
+#if !DEMO_USB_STREAM_DISABLE
+        USB_VideoCamera_Task();
+#endif
+
         if (CAMERA_CAPTURE_IsFrameReady())
         {
             CAMERA_CAPTURE_ClearFrameReady();
@@ -92,11 +102,6 @@ int main(void)
                 /* debug_console_lite may not support %f, so print score as a percentage integer. */
                 PRINTF("AI result: class=%d score=%d%%\r\n", aiResult.classId, (int)(aiResult.score * 100.0f));
             }
-
-            /* Camera buffer (320x240) drawn into the panel's top-left corner
-             * as-is - see "Adjusting for a different panel resolution" in
-             * README.md to scale/center it instead. */
-            LCD_DrawImage(0, 0, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, frame);
         }
     }
 }

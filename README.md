@@ -1,39 +1,48 @@
 # Camera_AI_Test1
 
-Camera + AI + TFT display project for **FRDM-MCXN947**, built against the local
-`mcuxsdk` checkout (`../mcuxsdk`). Captures frames from an **OV7670** camera via
-SmartDMA, feeds them into a placeholder AI-model hook, and draws them to an
-8-bit-parallel TFT on the board's **J8 FlexIO/LCD header** (hardware-
-accelerated, the same connector/driver stack NXP's own reference example uses,
-narrowed to 8 data bits to match the panel in hand).
+Camera + AI + USB webcam-streaming project for **FRDM-MCXN947**, built against
+the local `mcuxsdk` checkout (`../mcuxsdk`). Captures frames from an **OV7670**
+camera via SmartDMA, feeds them into a placeholder AI-model hook, and streams
+them to a host PC over **USB High-Speed** as a standard USB Video Class (UVC)
+webcam (uncompressed YUY2, 320x240 @ 30fps) - no vendor driver needed, any
+Windows/macOS/Linux camera app should see it as a normal webcam.
 
-> **LCD bring-up is currently blocked (white backlight, no image) - see
-> [WORKLOG.md](WORKLOG.md) for the full debugging history, what's been ruled
-> out, and what to try next before starting over.** Camera is fully working
-> and unaffected by this.
+> **USB video streaming is confirmed working on a real host (Linux, `uvcvideo`
+> + GStreamer) - but it currently streams one frozen frame, not live video.**
+> Verified end-to-end: `lsusb -v` shows a clean UVC descriptor set, the host
+> creates a `/dev/videoN` node, and `gst-launch-1.0` successfully captures
+> real 320x240 YUY2 frames (correct size, real varying pixel data, not
+> garbage). Two real bugs were found and fixed to get here (malformed
+> descriptor byte count; missing `GET_MIN`/`GET_MAX`/`GET_RES`/`GET_DEF`
+> control responses that Linux's UVC driver requires). What's left: SmartDMA
+> (the camera capture coprocessor) genuinely stops - both its completion
+> interrupt and its pixel writes - after capturing ~2 frames, so the same
+> real still frame gets streamed over and over instead of a live feed. See
+> [WORKLOG.md](WORKLOG.md) "Current status" for the full verification trail,
+> the root cause (a DCDC voltage-level conflict between the USB HS PHY and
+> SmartDMA), and next-step ideas for getting SmartDMA to keep capturing.
+>
+> This project originally targeted a TFT panel on the board's J8 FlexIO/LCD
+> header instead of USB output - that path made real progress (a diagnostic
+> bit-bang driver displayed a correct image) but was abandoned in favor of USB
+> streaming; see "LCD (abandoned)" below and WORKLOG.md's "LCD history"
+> section for the full debugging trail. The LCD driver code is still in the
+> tree (`source/display/`), just no longer called from `main.c`.
 
-Source of truth: [requirement.md](requirement.md). Camera wiring/pinout is
-confirmed against the mcuxsdk pin tables (not just a photo). LCD wiring below
-matches NXP's own `display_examples/smartdma_camera_flexio_mculcd` example's
-pin assignments exactly (J8 is the officially-supported way to drive a parallel
-display on this board), except the bus width is compiled as 8-bit instead of
-that example's 16-bit, since the panel in hand only has `LCD_D0..D7` broken out
-- see "History" at the bottom for how this project got here (it started on the
-board's Arduino header with a different shield, then switched to J8 for
-reliability/speed).
+Source of truth: [requirement.md](requirement.md) (note: predates the pivot to
+USB and still describes a TFT panel). Camera wiring/pinout is confirmed
+against the mcuxsdk pin tables (not just a photo).
 
 ## Hardware
 
 - FRDM-MCXN947 board
 - OV7670 camera module -> **J9 (SmartDMA/Camera header)**
-- TFT panel (`HSD024131-C1` per requirement.md) with an **8-bit** parallel data
-  bus (`LCD_D0..D7` only, not the full 16-bit bus J8 supports) ->
-  **J8 (FlexIO/LCD header)**. **Not actually ST7796S** despite this file's
-  code comments still assuming it in a few places - see WORKLOG.md, this is
-  almost certainly an ILI9341-family 240x320 panel (a common "2.4" TFT LCD
-  shield for Arduino Uno" module), which is why `lcd_flexio_mculcd.c` talks
-  to it with a generic MIPI-DCS sequence instead of the SDK's `ST7796S_*`
-  driver.
+- A USB cable from the board's **USB High-Speed device port** to the host PC
+  (this is a separate port from the MCU-Link debug-probe USB connection used
+  for flashing - see "Building and flashing" below).
+- Optional/abandoned: a TFT panel (`HSD024131-C1` per requirement.md) wired to
+  the J8 FlexIO/LCD header - see "LCD (abandoned)" below. Not needed for the
+  current USB-streaming build.
 
 ## Pinout
 
@@ -52,7 +61,12 @@ reliability/speed).
 Board rework note carried over from the NXP reference design: **change SJ16, SJ26,
 SJ27 from the right side to the left side** before attaching the camera to J9.
 
-### TFT (8-bit panel -> J8 FlexIO/LCD header)
+### TFT (abandoned - 8-bit panel -> J8 FlexIO/LCD header)
+
+**Not part of the active build** - kept for reference in case LCD work is
+resumed later (see the banner at the top of this file and WORKLOG.md's "LCD
+history"). None of this wiring is needed to use the current USB-streaming
+firmware.
 
 Straight from `pin_mux.c` in NXP's `smartdma_camera_flexio_mculcd` board port
 (not a guess), narrowed to only the 8 data pins this panel uses - **LCD_D8..D15
@@ -100,7 +114,39 @@ it can't be changed at runtime; if you swap to a 16-bit panel later, that macro
 and the pin table above both need updating together (the removed `LCD_D8..D15`
 rows in an earlier revision of this README show the full 16-bit table).
 
-## If the screen still shows nothing
+## USB (UVC webcam)
+
+> **Enumeration and format negotiation both confirmed working on a real
+> host** (Linux `uvcvideo` + GStreamer - see WORKLOG.md "Current status" for
+> the full trail). **Streams one frozen real frame, not live video** -
+> SmartDMA stops capturing new frames a couple frames after boot (see the
+> banner at the top of this file); the image itself is real and
+> correctly-colored, it just doesn't update.
+
+The board enumerates as a standard USB Video Class device - format
+"Uncompressed YUY2", 320x240, 30fps, over USB High-Speed (see
+`source/usb/usb_device_descriptor.c` for the exact descriptor bytes and
+`source/usb/usb_video_camera.c` for the class glue that fills each USB
+packet from the live camera buffer). To view it:
+
+1. Plug the board's **USB HS device port** (not the MCU-Link debug port)
+   into the host PC.
+2. Open the host OS's stock camera app (Windows Camera, `cheese` on Linux,
+   etc.) or a browser camera picker (e.g. `webcammictest.com`) and look for
+   a device named per `g_UsbDeviceString3` in `usb_device_descriptor.c`
+   ("OV7670 on J9"). On Linux, `v4l2-ctl --list-devices` or
+   `udevadm info --name=/dev/videoN` (matching `ID_MODEL=Camera_AI_Test1`)
+   will confirm which `/dev/videoN` node is the board.
+3. A real image should appear, but it will be static (not updating) until
+   the SmartDMA issue above is fixed.
+
+## LCD (abandoned) troubleshooting
+
+The sections below only apply if resuming the abandoned J8 FlexIO/TFT path
+(see the banner at the top of this file) - not relevant to the current
+USB-streaming build.
+
+### If the screen still shows nothing
 
 In rough order of likelihood, having already fixed the backlight above:
 
@@ -121,7 +167,7 @@ In rough order of likelihood, having already fixed the backlight above:
    breadboard/dupont wires - reseat each one and make sure none are making
    only intermittent contact.
 
-## If your panel isn't ST7796S
+### If your panel isn't ST7796S
 
 `LCD_InitPanel()` in `source/display/lcd_flexio_mculcd.c` calls `ST7796S_Init()`
 with NXP's LCD-PAR-S035 preset. If your module uses a different controller (e.g.
@@ -150,9 +196,11 @@ Camera_AI_Test1/
         hardware_init.c                <- BOARD_InitHardware()
         prj.conf                       <- board-port Kconfig (inputmux, pinmux_project_folder)
     source/
-      main.c                         <- capture -> AI hook -> display loop
+      main.c                         <- capture -> AI hook -> USB streaming loop
       camera/camera_capture.c/h      <- OV7670 + SmartDMA (from NXP reference)
-      display/lcd_flexio_mculcd.c/h  <- FlexIO + ST7796S driver (from NXP reference)
+      usb/usb_video_camera.c/h       <- UVC class glue, RGB565->YUY2 conversion (active display path)
+      usb/usb_device_descriptor.c/h  <- UVC descriptors (uncompressed YUY2, 320x240)
+      display/lcd_flexio_mculcd.c/h  <- FlexIO + ST7796S driver (abandoned, still built but unused)
       ai/model_runner.c/h            <- AI integration stub (see below)
       ai/model_data.h                <- placeholder for an exported model
 ```
@@ -170,8 +218,8 @@ $ ./firmware/camera_ai_demo/build.sh monitor  # open the serial console (115200-
 ```
 
 There's also a diagnostic build variant that bypasses the FlexIO peripheral
-and bit-bangs the same J8 pins via plain GPIO instead, to help isolate LCD
-bring-up issues (see WORKLOG.md):
+and bit-bangs the same J8 pins via plain GPIO instead - a leftover from the
+abandoned LCD path (see WORKLOG.md), unrelated to the current USB build:
 
 ```
 $ ./firmware/camera_ai_demo/build.sh rebuild -DLCD_BITBANG_DIAGNOSTIC=ON
@@ -183,10 +231,13 @@ firmware/camera_ai_demo --toolchain armgcc -Dcore_id=cm33_core0` from inside the
 MCU-Link (CMSIS-DAP) with pyOCD, auto-selecting the probe by its MCU-LINK unique ID
 so it doesn't prompt if another debug probe is also plugged in. See
 `../../touch_rgb/README.md` for the probe-permissions / udev-rule note if `pyocd`
-needs `sudo` on your setup.
+needs `sudo` on your setup. Note the MCU-Link probe port is a *different* USB
+connection than the USB HS device port the UVC webcam enumerates on - both may
+need to be plugged in (probe port for flashing/serial console, device port for
+the webcam).
 
 **Camera confirmed working end-to-end** (from the earlier Arduino-header revision
-of this project, same camera code, unchanged by the J8 switch): the OV7670 driver
+of this project, same camera code, unchanged since): the OV7670 driver
 reads back its PID/VER registers over J9's SCCB/I2C and matches a genuine OV7670
 (`PID=0x76 VER=0x73`), and SmartDMA frame-ready interrupts fire with a periodic
 diagnostic log (`CAMERA_CAPTURE_LogFrameSignature()` in `main.c`) confirming pixel
@@ -197,10 +248,13 @@ Camera: frame #16 ready, 792 samples, pixel range 0xC0C6..0xFBEB, avg=0xE330
 Camera: frame #46 ready, 792 samples, pixel range 0xC0C4..0xFDF1, avg=0xDE26
 ```
 
-**LCD side (J8 FlexIO) is NOT yet visually verified** - this code compiles and
-links cleanly and `LCD_Init()` runs without hanging, but nobody has confirmed a
-picture actually appears on a physical J8-connected panel yet. Check the screen
-after wiring your panel and flashing.
+**USB streaming is confirmed working end-to-end on a real host** (enumeration,
+UVC format negotiation, and actual frame delivery all verified via `lsusb`,
+`dmesg`, and `gst-launch-1.0` capturing real 320x240 YUY2 frames - see
+WORKLOG.md "Current status"). **The one open problem: SmartDMA stops
+capturing new frames a couple frames after boot**, so what streams is a real
+but frozen still image, not live video - see "USB (UVC webcam)" below and
+WORKLOG.md "Current status" for the full bisection of that conflict.
 
 ## AI model integration
 
@@ -220,15 +274,29 @@ only touches `model_runner.c`/`.cpp` and `CMakeLists.txt`.
 
 ## Known limitations
 
-- The camera buffer (320x240) is drawn into the panel's top-left corner as-is, not
-  scaled/centered to fill the full 480x320 panel. To change that, either add
-  scaling in `main.c`, or switch `DEMO_SMARTDMA_API`/`DEMO_BUFFER_WIDTH/HEIGHT` in
-  `app.h` to `kSMARTDMA_CameraWholeFrame480_320` to capture at the panel's native
-  size instead (see `drivers/smartdma/mcxn/fsl_smartdma_fw.h` for the full list of
-  SmartDMA capture modes).
-- `LCD_InitPanel()` assumes an ST7796S controller with NXP's LCD-PAR-S035 preset -
-  see "If your panel isn't ST7796S" above if that doesn't match your hardware.
+- **Live video doesn't work yet - SmartDMA stops capturing new frames a
+  couple frames after boot** whenever USB is also active, so the same real
+  still frame streams over and over instead of updating. USB streaming
+  itself (enumeration, format negotiation, packet delivery) is confirmed
+  working - see the banner at the top of this file and WORKLOG.md "Current
+  status" for the full bisection and root cause (a DCDC voltage-level
+  conflict between the USB HS PHY and SmartDMA). This is the main open
+  problem in this project right now.
+- (Once SmartDMA capture keeps running) it overwrites the single live camera
+  buffer continuously in the background; USB packet-fill reads directly from
+  it while it's being sent, same as the old LCD draw path did - possible for
+  a frame boundary to land mid-tear under bad timing (visually: a brief
+  horizontal split in one frame). Accepted tradeoff for this preview use
+  case, same as the abandoned LCD path already accepted (see WORKLOG.md
+  "History").
+- The camera capture resolution (320x240) is fixed by `DEMO_BUFFER_WIDTH/HEIGHT`
+  in `app.h`; the UVC descriptor's advertised frame size
+  (`source/usb/usb_device_descriptor.h`) has to be kept in sync with it manually
+  if that ever changes.
 - `source/ai/model_runner.c` has no real model wired in yet by design.
+- LCD-specific limitations (`LCD_InitPanel()` assuming ST7796S, etc.) no longer
+  apply to the active build - see "LCD (abandoned) troubleshooting" above if
+  reviving that path.
 
 ## History
 

@@ -1,4 +1,8 @@
-# FRDM-MCXN947 — Camera_AI_Test1: OV7670 (J9) -> AI hook -> J8 FlexIO TFT
+# FRDM-MCXN947 — Camera_AI_Test1: OV7670 (J9) -> AI hook -> USB Video Class
+# (UVC) webcam over USB High-Speed. See WORKLOG.md - this replaced an
+# earlier J8 FlexIO/TFT display path; that code (source/display/,
+# LCD_BITBANG_DIAGNOSTIC below) is still built but no longer called from
+# main.c, kept around in case LCD work is resumed later.
 #
 # Out-of-tree ("freestanding") MCUXpresso SDK application, same pattern as
 # ../../touch_rgb and ../../wifi_sensing_npu: source lives here, outside the
@@ -45,9 +49,22 @@ else()
     mcux_add_macro(CC "-DDEMO_LCD_BITBANG=0")
 endif()
 
+# Diagnostic switch: skip all USB bring-up (USB_DeviceClockInit() /
+# USB_VideoCamera_Init() / USB_VideoCamera_Task() calls become no-ops) to
+# isolate whether a hang seen on hardware is caused by the USB HS PHY/EHCI
+# bring-up itself versus something else - see WORKLOG.md. Off by default
+# (normal USB streaming path).
+option(USB_STREAM_DIAGNOSTIC_DISABLE "Skip USB bring-up entirely - camera+AI loop only, no USB (diagnostic)" OFF)
+if(USB_STREAM_DIAGNOSTIC_DISABLE)
+    mcux_add_macro(CC "-DDEMO_USB_STREAM_DISABLE=1")
+else()
+    mcux_add_macro(CC "-DDEMO_USB_STREAM_DISABLE=0")
+endif()
+
 mcux_add_source(
     BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
     SOURCES source/main.c
+            source/fault_handler.c
             source/camera/camera_capture.c
             source/camera/camera_capture.h
             source/display/lcd_display.h
@@ -55,6 +72,10 @@ mcux_add_source(
             source/ai/model_runner.c
             source/ai/model_runner.h
             source/ai/model_data.h
+            source/usb/usb_device_descriptor.c
+            source/usb/usb_device_descriptor.h
+            source/usb/usb_video_camera.c
+            source/usb/usb_video_camera.h
 )
 
 # So source/main.c can #include "camera_capture.h" etc. by simple name.
@@ -66,6 +87,7 @@ mcux_add_include(
              source/camera
              source/display
              source/ai
+             source/usb
 )
 
 # Produce a raw .bin next to the .elf so pyOCD can flash it directly.

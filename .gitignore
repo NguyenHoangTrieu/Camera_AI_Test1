@@ -1,0 +1,16 @@
+# west/CMake build output (any firmware subproject)
+build/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Python (west/pyOCD tooling, if a venv ever ends up inside this project)
+__pycache__/
+*.pyc
+.venv/

@@ -7,236 +7,316 @@ what happened" history, kept separate so README doesn't get cluttered.
 
 ## Current status (most recent first)
 
-**PROGRESSING, not yet fully fixed. Both the wiring/panel/init-sequence
-explanation and the "RD floats during writes" explanation are now
-confirmed correct (see below) - the FlexIO path went from solid white to
-producing random black/white noise (a bus-speed/signal-integrity symptom),
-then a too-aggressive speed-reduction attempt caused a full hang (see
-below) that's now been backed off to a smaller, safer step - not yet
-flashed/confirmed. Camera side remains fully confirmed working and
-untouched by any of this.**
+**USB video streaming is now confirmed working end-to-end on a real Linux
+host - but it streams one static (frozen) real frame, not live video, because
+the underlying camera-hang issue is narrower than previously written up
+below.** Verified directly on the user's PC (which turned out to be reachable
+from this environment too - `lsusb`, `dmesg`, `gst-launch-1.0`, `v4l2`
+tooling all available):
 
-- **The /50 FlexIO-clock-divider attempt (~10 kHz/pin) hung completely -
-  confirmed via serial log, not just a guess.** User captured
-  `./build.sh monitor` output: the boot banner prints
-  (`Camera_AI_Test1 - FRDM-MCXN947` / `Camera: OV7670 on J9...` /
-  `Display: HSD024131-C1...`) and then **nothing else at all** - not even
-  the camera init log line that unconditionally follows `LCD_Init()` in
-  `main.c`. Since `LCD_InitFlexioMcuLcd()` would print an explicit
-  "LCD: FlexIO MCULCD init failed." if `FLEXIO_MCULCD_Init()` itself
-  failed (it didn't print that), the hang is specifically inside
-  `LCD_InitPanel()`, almost certainly stuck in the very first
-  `LCD_WriteCommand(0x01)` (SW reset) call's busy-wait loop inside
-  `FLEXIO_MCULCD_WriteCommandBlocking()`, waiting on a FlexIO timer
-  completion flag that never asserts at that specific (extreme) clock
-  configuration. This looks like a real lower operating-frequency bound
-  for the FlexIO peripheral/timer mode itself (not just
-  `FLEXIO_MCULCD_SetBaudRate()`'s software 8-bit-divider-field ceiling,
-  which was satisfied - divider computed to ~150, well within 0-255).
-  **Backed off**: `hardware_init.c`'s `kCLOCK_DivFlexioClk` changed from
-  `50u` to `4u` (150 MHz -> 37.5 MHz FlexIO clock instead of 3 MHz), and
-  `app.h`'s `DEMO_FLEXIO_BAUDRATE_BPS` changed from `80000U` (10 kHz/pin)
-  to `800000U` (100 kHz/pin, 4x slower than the noisy 400 kHz/pin case
-  instead of 40x). This keeps the resulting internal SetBaudRate() divider
-  at ~188 - the same numeric magnitude that's already proven to actually
-  run (the un-divided 400 kHz/pin case used essentially that same divider
-  value, just against a 150 MHz source instead of 37.5 MHz) - a smaller,
-  safer step to test the speed/noise hypothesis without also risking
-  whatever lower bound the /50 attempt broke. **Built clean, not yet
-  flashed/tested - this is the immediate next step.**
+- `lsusb -d 1fc9:009a -v` shows a fully well-formed UVC 1.00 descriptor set
+  (Video Control + Video Streaming interfaces, Uncompressed/YUY2 format,
+  320x240 frame descriptor, isochronous endpoint) - no more warnings.
+- The Linux kernel's `uvcvideo` driver binds automatically and creates
+  `/dev/videoN` nodes (confirmed via `udevadm info`, `ID_MODEL=Camera_AI_Test1`).
+- `gst-launch-1.0 v4l2src device=/dev/videoN ! video/x-raw,format=YUY2,...`
+  successfully negotiates the format and captures real frames - dumped to a
+  raw file and checked in Python: 153,600 bytes/frame (the exact expected
+  YUY2 320x240 size) with ~206-207 distinct byte values per frame (i.e. real
+  image content, not a flat/constant buffer).
+- **But** the captured frames don't change between captures. Halting the
+  core over the debug probe and reading `s_frameBuffer`/`s_frameCount`
+  directly (`camera_capture.c`) shows why: `s_frameCount` is stuck at `2`
+  and the buffer bytes are bit-identical before and after resuming execution
+  for 1 full second. **SmartDMA genuinely stops (both the frame-complete
+  interrupt and the underlying pixel DMA writes) after capturing ~2 frames**
+  - but frame #2 itself was a real, valid capture, and it just sits frozen
+  in the buffer afterward. Since the USB streaming path
+  (`USB_VideoCamera_ConvertFrameChunk` in usb_video_camera.c) reads straight
+  from that buffer on every packet, with no dependency on the frame-ready
+  flag the serial log uses, it happily streams that one frozen frame
+  over and over - a real, correctly-colored still image, indefinitely
+  repeated, not motion video. This is the same underlying DCDC/SmartDMA
+  conflict documented further below, just a more precise characterization
+  of its actual effect (a full coprocessor hang, not "produces garbage") -
+  don't need to re-diagnose it, the fix ideas listed below still apply.
 
-- **Bit-bang diagnostic build (`LCD_BITBANG_DIAGNOSTIC=ON`) confirmed
-  working - displays a real image.** This proves the wiring, panel, and
-  generic MIPI-DCS init sequence are all fine; the bug was specific to the
-  FlexIO transport path, not "downstream" of it. Rules out re-checking
-  wiring/panel/init sequence going forward.
+On the way to finding this, two separate, real bugs were found and fixed
+(both independent of the DCDC/camera conflict, which remains the one open
+problem):
 
-- **Fixed and confirmed a real improvement: LCD_RD floating during writes
-  (see below) really was part of the bug.** After switching P0_8/LCD_RD
-  from FlexIO to a plain always-high GPIO output (matching the bit-bang
-  driver - see "Fixed" list below for the exact change), the *normal*
-  FlexIO build went from **solid white (nothing at all)** to **the panel
-  visibly responding but showing random black/white noise instead of a
-  clean image**. That's real progress: the panel is now correctly
-  receiving and acting on commands (SW reset/sleep-out/MADCTL/pixel-format/
-  display-on all landing), and pixel *data* writes are reaching GRAM - the
-  remaining problem is that some of those data bytes are being corrupted
-  in transit.
+1. **Fixed: device wasn't enumerating on a host PC at all**, because
+`USB_DeviceSetSpeed()` (usb_device_descriptor.c) spun forever the moment a
+real host sent a bus reset. The user asked "why don't I see the USB device
+on my PC" - halting the core over the debug probe while it was plugged into
+a real host caught PC stuck inside `USB_DeviceSetSpeed()`, oscillating
+between two addresses in that function - a live infinite loop, not a
+one-off.
 
-- **Current hypothesis: FlexIO bus speed / signal integrity, even at
-  400 kHz/pin.** Black/white "snow" noise (not a structured error like
-  wrong colors, wrong orientation, or a shifted/torn image) is the classic
-  signature of individual bits being sampled wrong on some byte transfers
-  - consistent with WORKLOG's earlier bus-speed hypothesis (step 7 below),
-  just not fully explored before because RD-floating was masking it
-  (nothing displayed at all, so "is the data correct" couldn't even be
-  evaluated). 400 kHz/pin was already the practical floor reachable with
-  the FlexIO peripheral running undivided off the 150 MHz PLL0 (see the
-  divider-overflow note further down) - so **this session lowered the
-  FlexIO source clock itself** (`hardware_init.c`:
-  `CLOCK_SetClkDiv(kCLOCK_DivFlexioClk, 50u)`, was `1u`, giving a 3 MHz
-  FlexIO clock instead of 150 MHz) specifically so the per-pin baud rate
-  could be dropped much further without hitting the same divider-overflow
-  ceiling. `DEMO_FLEXIO_BAUDRATE_BPS` in `app.h` is now `80000U`
-  (~10 kHz/pin, ~40x slower than the 400 kHz/pin that produced noise).
-  This is deliberately very slow (a full 320x240 frame takes on the order
-  of 10+ seconds at this rate) purely to test whether slowing down further
-  eliminates the noise at all - not a usable final value for the real
-  camera loop's frame rate. **Built clean, not yet flashed/tested - this is
-  the next thing to try.**
+Root cause: `USB_DeviceSetSpeed()` walks the raw config descriptor byte
+array by advancing `bLength` bytes at a time. The Processing Unit descriptor
+in `g_UsbDeviceConfigurationDescriptor` (usb_device_descriptor.c) had an
+extra unconditional `0x00U /* bmVideoStandards */` byte left over from
+copy-pasting the stock example's `#if USB_DEVICE_VIDEO_CLASS_VERSION_1_1 ||
+_1_5` block, but `USB_VIDEO_VIRTUAL_CAMERA_VC_PROCESSING_UNIT_LENGTH` (0x0B
+= 11, the UVC *1.0* length that doesn't include that byte, matching bcdUVC
+0x0100 - see usb_device_descriptor.h) was never updated to match: 12 actual
+bytes, declared as 11. That one extra byte desynced every descriptor after
+it by one position. Confirmed by dumping the live `.data` section
+(`arm-none-eabi-objcopy -O binary --only-section=.data ...` + a small Python
+parser walking the `(bLength, bDescriptorType)` chain) - the walk landed on
+a garbage `bLength=0` entry, which is exactly what makes
+`descriptorHead = descriptorHead + descriptorHead->common.bLength` never
+advance. **Fix:** removed the extra byte. Re-parsed the corrected `.data`
+dump afterward - now a clean 14-entry chain, no zero-length entries,
+terminates exactly at the array's own length (180 bytes, matching
+`wTotalLength` in the descriptor itself). Confirmed on hardware: halted
+after reflashing, PC was back to normal - inside `main()`'s ordinary
+`CAMERA_CAPTURE_IsFrameReady()` poll, not stuck anywhere.
 
-### This session's findings
+2. **Fixed: real host (Linux `uvcvideo` driver) failed format negotiation
+with `-32` (STALL) errors**, confirmed via `sudo dmesg`:
+`uvcvideo 3-9.1.2:1.1: Failed to query (GET_MIN) UVC probe control : -32
+(exp. 26)`, and `gst-launch-1.0`'s `v4l2src` failing `TRY_FMT` with
+"Input/output error". Root cause: `USB_DeviceVideoRequest()`
+(usb_video_camera.c) only handled `GET_CUR`/`GET_LEN`/`GET_INFO`/`SET_CUR`
+for `VS_PROBE_CONTROL` - the same set the SDK's stock
+`usb_device_video_virtual_camera` example handles, copied over as-is. Linux's
+`uvcvideo` additionally queries `GET_MIN`/`GET_MAX`/`GET_RES`/`GET_DEF` to
+learn the valid parameter ranges; it has a workaround for a missing
+`GET_DEF` but not for a missing `GET_MIN`, and gives up entirely when that's
+STALLed. **Fix:** since this device only ever supports exactly one
+configuration (320x240 YUY2 @ 30fps), added `GET_MIN`/`GET_MAX`/`GET_RES`/
+`GET_DEF` as fallthroughs to the same `GET_CUR` answer (min == max == res ==
+def == cur when there's only one option). Confirmed fixed via `dmesg` (no
+more STALL errors) and `gst-launch-1.0` successfully negotiating caps
+(`video/x-raw(memory:DMABuf), format=YUYV, width=320, height=240,
+framerate=30/1`).
 
-- **Panel identity, resolved (high confidence): ILI9341-family, 240x320
-  native.** `requirement.md` names the panel `HSD024131-C1` - this is the
-  *only* panel this whole project ever bought (the "different board" open
-  question from earlier sessions is moot; there was only ever one panel).
-  Web search for "2.4 inch TFT LCD shield arduino uno spiflash" (matching
-  WORKLOG's description of the earlier working Arduino-header hardware)
-  turns up an extremely consistent pattern across many vendors: ILI9341
-  controller, 240x320, 8-bit parallel 8080 bus, onboard SD card slot (the
-  "spiflash" in the product name), control lines on the Arduino header's
-  A0-A3 analog pins - which matches this project's own note about needing
-  "analog-only-pin jumper workarounds" on the Arduino-header revision. This
-  is also consistent with the generic MIPI-DCS sequence (0x01/0x11/0x36/
-  0x3A/0x29) having worked via bit-bang, since ILI9341 is MIPI-DCS
-  compatible (unlike e.g. ILI9325/HX8347-family chips from the same shield
-  category, which use a different, non-DCS register protocol and would NOT
-  have responded to that sequence).
+Both fixes verified together on a real Linux host: `lsusb -d 1fc9:009a -v`
+shows a clean descriptor set, `uvcvideo` binds and creates `/dev/videoN`
+nodes, and `gst-launch-1.0 v4l2src ! video/x-raw,format=YUY2,...` captures
+real (if frozen, per above) frames.
 
-- **Fixed: `DEMO_PANEL_WIDTH`/`DEMO_PANEL_HEIGHT` were wrong (480x320,
-  leftover from the original ST7796S assumption) - now 320x240.** This
-  mattered because `main.c`'s boot-time "blank the screen" loop
-  (`LCD_DrawImage(0, y, DEMO_PANEL_WIDTH, 1, ...)` for
-  `y in 0..DEMO_PANEL_HEIGHT`) used these constants directly, sending
-  `LCD_SetWindow()` column/page addresses up to 479/319 to a panel whose
-  real addressable GRAM range (240x320 native, ~320x240 in the
-  MADCTL-rotated landscape orientation this code already uses) tops out
-  around 319/239. That's out-of-range column/page address commands sent to
-  the panel on **every single boot, before the first camera frame is ever
-  drawn** - a real, previously-unnoticed bug, and a plausible independent
-  contributor to "solid white, no image" (some controllers can be left in
-  an odd internal addressing state by an invalid EC/EP value). Fixed in
-  `app.h`. Camera draw calls elsewhere already used `DEMO_BUFFER_WIDTH/
-  HEIGHT` (320x240), which were already correct - only the boot-blank loop
-  was affected.
+**Still open: confirmed real hardware conflict between USB HS PHY bring-up
+and SmartDMA camera capture.** Found via a full bisection done directly on
+hardware this
+session (board turned out to be reachable from this environment via pyOCD/
+MCU-Link, including reading back the halted CPU's PC over the debug probe -
+much faster than the earlier back-and-forth of asking for serial logs by
+hand). Full trail below; short version:
 
-- **Found (not yet fixed - needs a wiring change only the user can make):
-  the LCD_RD line floats (Hi-Z) during every write, not just when
-  physically unconnected.** Traced through the SDK's
-  `fsl_flexio_mculcd.c`: the RD pin's FlexIO timer config only actively
-  drives it during an explicit read; between reads (i.e. during ALL of
-  `LCD_InitPanel()` and `LCD_PushPixels()`), `TIMCTL[timerIndex]` is
-  cleared, which reverts RD's pin config to output-disabled - it floats.
-  This is true of NXP's own reference example too (not a project bug), but
-  it means the earlier suspicion "RD might not be connected on the panel's
-  own PCB" (see "Where things stand" below) has a second, MCU-side
-  component: even if the panel's RD trace *is* connected, the MCU never
-  actively holds it at a defined level except during the one diagnostic
-  read call. The already-inconsistent `LCD_DiagnosticReadId()` results
-  (`C0 C0 C0 C0` -> ` 0 40 40 40` -> ` 0  0  0  0` across different
-  sessions) are a classic floating-input signature.
-  **Untried next step**: physically tie the panel's RD pin to a solid
-  3.3V rail (disconnect it from P0_8 and hard-wire to 3V3, or add a ~10kOhm
-  pull-up to 3.3V) instead of leaving it MCU-driven-when-idle. Cheap, no
-  tools needed beyond a jumper wire.
+- **USB HS PHY requires `SPC0->ACTIVE_CFG`'s `DCDC_VDD_LVL` raised to
+  Overdrive to work at all.** Without it, `CLOCK_EnableUsbhsPhyPllClock()`
+  (`mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.c:3310`) spins forever
+  in its `while (0 == (USBPHY->PLL_SIC & PLL_LOCK)) {}` busy-wait - the PHY's
+  480MHz PLL never locks. Confirmed by halting the core with
+  `pyocd commander -c halt -c reg` and reading PC/LR back to that exact line.
+  Not a bug - this is a real, required step for USB HS on this chip.
+- **The SmartDMA-based camera capture breaks under *any* `DCDC_VDD_LVL`
+  change** - tested both to Overdrive (0x3) and to Normal (0x2), same result
+  either way: frames stop advancing (or read back completely flat/all-zero)
+  within 1-2 frames of boot, silently, no HardFault (confirmed via a
+  temporary diagnostic `HardFault_Handler` override in
+  `source/fault_handler.c` that would have printed CFSR/PC/LR - it never
+  fired). This happens regardless of whether the DCDC change happens before
+  or after `CAMERA_CAPTURE_Init()` starts SmartDMA running - ruled out via
+  bisection that it's a "changing voltage while a coprocessor is active"
+  *transition* hazard; it's a steady-state incompatibility. Also ruled out
+  `CORELDO_VDD_LVL` specifically as the cause (changing it alone doesn't
+  break the camera) and the `SYSLDO_VDD_DS`/`DCDC_VDD_DS` drive-strength
+  bits (changing those alone doesn't either) - it's specifically
+  `DCDC_VDD_LVL`.
+- **Net result: no known-working configuration exists yet where both the
+  camera and USB HS work at the same time.** `DCDC_VDD_LVL` has to be raised
+  for USB; camera breaks whenever it's raised.
 
-- **Code audit of the FlexIO transport layer (ruled out, don't re-check):**
-  diffed this project's `pin_mux.c`/`app.h` FlexIO config line-by-line
-  against NXP's actual verified `examples/_boards/frdmmcxn947/
-  display_examples/smartdma_camera_flexio_mculcd` board port in the
-  `../mcuxsdk` checkout - pin numbers, ALT-function mux, shifter start/end
-  indices (`0..7` - looks unusual but is NXP's own literal reference value,
-  not a copy-paste bug), and baud-rate-divider math all match. Also
-  confirmed via `build/compile_commands.json` that
-  `-DFLEXIO_MCULCD_DATA_BUS_WIDTH=8` really does reach
-  `fsl_flexio_mculcd.c`'s compile command (ruling out a CMake macro-timing/
-  scoping bug, since `mcux_add_macro()` is called after
-  `include(${SdkRootDirPath}/CMakeLists.txt)` in this project's
-  `CMakeLists.txt` - that ordering turned out to still work correctly).
-  Also confirmed the `setCSPin`/`setRSPin` callback signature (1 arg, not
-  2) matches the SDK's default `FLEXIO_MCULCD_LEGACY_GPIO_FUNC=1`, so no
-  calling-convention mismatch either. **In short: nothing found in the
-  FlexIO transport code itself. If this is a FlexIO-specific bug, it's not
-  a config/wiring-table mistake that a code review can catch - it would
-  have to be a genuine electrical/timing behavior difference vs bit-bang.**
+Bisection method, in order (each step flashed + observed on real hardware,
+via a temporary `#if 1/#else` "TEMP bisection" pattern in
+`USB_DeviceClockInit()`/`USB_VideoCamera_Init()` - all since reverted):
+1. Skip all USB (`DEMO_USB_STREAM_DISABLE`, see `CMakeLists.txt`
+   `USB_STREAM_DIAGNOSTIC_DISABLE` option) - camera ran cleanly past frame
+   #700+ with zero issues. Confirms the problem is 100% USB-side.
+2. `USB_DeviceClockInit()` only (skip `USB_DeviceClassInit()`/`USB_DeviceRun()`
+   entirely) - still hung after ~1-2 frames. Confirms it's the clock/PHY
+   bring-up itself, not EHCI controller startup or host enumeration traffic
+   (also independently confirmed by testing with the USB-HS cable physically
+   unplugged from any PC - same hang).
+3. Stop right after the `SPC0->ACTIVE_CFG` write + busy-wait (skip
+   LDOCSR/AHBCLKCTRL/SOSC/PLL/PHY-init) - still hung. Narrows it to the SPC0
+   regulator register write itself.
+4. `DCDC_VDD_LVL(0x3)` (Overdrive) + drive-strength bits, `CORELDO_VDD_LVL`
+   left untouched - still hung, and frame #1 came back flat. Rules out
+   CORELDO being required for the break.
+5. `DCDC_VDD_LVL(0x2)` (Normal) instead of Overdrive - still hung. Rules out
+   "specifically Overdrive" - any level change breaks it.
+6. Drive-strength bits only (`SYSLDO_VDD_DS`, `DCDC_VDD_DS`), no
+   `DCDC_VDD_LVL`/`CORELDO_VDD_LVL` change at all - camera ran cleanly to
+   frame #700+. Isolates the cause to `DCDC_VDD_LVL` specifically.
+7. Restored full `USB_DeviceClockInit()` + `USB_DeviceClassInit()` +
+   `USB_DeviceRun()` with step 6's settings (no `DCDC_VDD_LVL` change) - the
+   core hung inside `CLOCK_EnableUsbhsPhyPllClock()`'s `PLL_LOCK` wait
+   (confirmed via halt+register read). Proves USB HS genuinely needs the
+   voltage bump - it's not something that can just be skipped.
+8. Restored `DCDC_VDD_LVL(0x3)` + `CORELDO_VDD_LVL(0x3)` (matching NXP's
+   stock example) - USB now completes init cleanly (`USB: video class (UVC)
+   camera ready` prints, PLL locks), but camera is back to the original
+   symptom (frame #1 flat, hangs after ~2 frames). Back to square one,
+   conflict confirmed both directions.
 
-- **Added: a bit-bang GPIO diagnostic build**, to directly test "is this
-  FlexIO-specific, or would it fail with any transport." Build with:
-  ```
-  $ ./build.sh rebuild -DLCD_BITBANG_DIAGNOSTIC=ON
-  ```
-  (plain `./build.sh rebuild` / `./build.sh build` goes back to the normal
-  FlexIO path). This bypasses the FlexIO peripheral entirely and drives the
-  same 14 J8 pins with plain `GPIO_PinWrite()` loops - see
-  `source/display/lcd_bitbang_j8.c` for the full rationale (also holds RD
-  high continuously the whole time it runs, as a second test of the RD
-  finding above). Uses the exact same generic MIPI-DCS init sequence, byte
-  for byte, so this isolates the transport, not the init sequence. Both
-  build variants compile clean with `-Werror` (verified this session) but
-  **neither has been flashed/tested on real hardware yet - that's the
-  immediate next step for a new session.**
+**Where this leaves the code:** `board_port/cm33_core0/hardware_init.c`'s
+`USB_DeviceClockInit()` currently matches NXP's stock DCDC/CoreLDO Overdrive
+settings (so USB HS actually initializes), with a comment at that call site
+documenting this whole conflict and pointing back here. USB streaming itself
+works correctly (see above - real frames, correct size/format, confirmed on
+a real host); what doesn't work yet is SmartDMA continuing to capture *new*
+frames past the first couple, so the live feed is really a single frozen
+frame repeated - see the "USB video streaming is now confirmed working"
+entry at the top of this file for the precise, corrected characterization
+of what breaks (SmartDMA fully stops - both its completion interrupt and
+its pixel DMA writes - it doesn't produce garbage).
 
-### Pending tests for next session, in order of effort
+**Ideas for next session** (untested, in rough order of how promising they
+seem):
+- Check whether `BOARD_InitBootClocks()`/`clock_config.c` needs to be
+  re-run, or specific clock dividers (SmartDMA's core clock, or whatever
+  `kMAIN_CLK_to_CLKOUT`/`kCLOCK_DivClkOut` actually derives from) need
+  retuning *for* the Overdrive voltage domain, rather than assuming voltage
+  and clock frequency are independent - many NXP parts require this kind of
+  co-tuning and it's plausible BOARD_InitHardware()'s existing camera clock
+  setup was only ever validated at Mid voltage.
+- Look for MCXN947 chip errata (NXP's errata sheet, not just the SDK) on
+  SmartDMA + DCDC/SPC interactions - this smells like exactly the kind of
+  thing that ends up in an errata document.
+- As a fallback if no fix is found: time-multiplex instead of running both
+  simultaneously - e.g. capture what's needed at Mid voltage, then only
+  raise to Overdrive and start USB once camera capture is done for that
+  session, if the use case tolerates not truly live-streaming.
+- Ask on NXP's community forum / community.nxp.com with the exact
+  DCDC_VDD_LVL + SmartDMA symptom - this looks like the kind of interaction
+  someone at NXP would recognize immediately if it's a known one.
 
-1. ~~Flash the bit-bang diagnostic build~~ **Done - confirmed working
-   (displays an image).** Rules out wiring/panel/init sequence for good.
-2. ~~Tie LCD_RD to 3.3V~~ **Done differently: fixed in firmware instead
-   (P0_8 now a plain always-high GPIO, not routed through FlexIO at all) -
-   no physical rewiring needed.** Confirmed this was a real, necessary fix:
-   normal FlexIO build went from solid white to visibly responding (with
-   noise) after this change.
-3. **Flash the current build (normal FlexIO path, no
-   `LCD_BITBANG_DIAGNOSTIC` flag) and check if the black/white noise is
-   gone**, now that `hardware_init.c`/`app.h` drop the FlexIO bus down to
-   ~10 kHz/pin (~40x slower than the 400 kHz/pin that produced noise - see
-   "Current status" above). This is the immediate next thing to try; not
-   yet tested on real hardware as of this session.
-   - **If the image is now clean**: the remaining problem was purely bus
-     speed. Raise `DEMO_FLEXIO_BAUDRATE_BPS` (app.h) and
-     `kCLOCK_DivFlexioClk` (hardware_init.c) back up together in steps
-     (e.g. halve the clock divider each time, or double the baud rate) to
-     find the actual safe ceiling for this panel - it needs to be fast
-     enough for real-time camera frame rate (320x240 @ ~30 fps needs
-     roughly >4 Mbit/s of actual pixel data alone), which 10 kHz/pin is
-     nowhere near (~10+ sec/frame). Stop raising it as soon as noise
-     reappears and back off one step.
-   - **If noise is still present even this slow**: bus speed probably
-     isn't the (whole) explanation. Next things to check: (a) whether the
-     noise pattern is identical/deterministic across resets (points to a
-     logic bug, e.g. GRAM addressing) vs different every time (points to
-     analog noise/interference on the data lines themselves, e.g. long
-     unshielded dupont wires with no series termination); (b) whether the
-     noise appears even during `main.c`'s initial all-black "blank the
-     screen" loop (trivial constant 0x0000 data) - if even that comes out
-     noisy, the bug is almost certainly in the transport/electrical layer,
-     not in anything camera-data-dependent; (c) fall back to an
-     oscilloscope/logic-analyzer if available - probe P0_9 (WR) and a
-     couple of data pins during a write and look for actual glitches/
-     ringing on the lines, which firmware-side experiments alone can't
-     conclusively rule in or out.
+### Previous entries (kept for context; superseded above where they conflict)
+
+### Previous entry (kept for context; format-choice reasoning below is still current)
+
+**USB (UVC) camera streaming implemented and building clean - NOT YET
+FLASHED/TESTED ON HARDWARE (no board access this session).** Built on top of
+the previous session's plan (see "Plan" below, kept for the reasoning trail)
+of adapting the SDK's `usb_device_video_virtual_camera` example. One thing
+that plan didn't anticipate, discovered while actually reading that
+example's code: it only implements the **MJPEG** UVC payload format (its
+`USB_DeviceVideoPrepareVideoData()` scans transmitted bytes for a `0xFFD9`
+JPEG end-of-image marker to find frame boundaries) - not usable as-is for a
+sensor that produces raw pixels, and MCXN947 has no hardware JPEG encoder.
+Decided (with the user) to switch the UVC format to **uncompressed YUY2**
+instead of adding a software JPEG encoder - YUY2 is a standard "every OS's
+stock webcam stack understands it, no vendor driver" UVC format, and the
+device-side implementation is much simpler than JPEG (fixed frame size,
+no marker scanning). Camera capture stays exactly as before (RGB565,
+untouched); the RGB565->YUY2 conversion happens on the fly, two source
+pixels at a time, directly inside the USB IN-endpoint-complete callback -
+deliberately not a separate whole-frame conversion buffer, to keep RAM
+usage sane (see "Why no second frame buffer" below).
+
+New files (`firmware/camera_ai_demo/source/usb/`):
+- `usb_device_descriptor.c/.h` - UVC descriptors: VC (video control) side is
+  unchanged boilerplate from the stock example; VS (video streaming) side
+  is rewritten for one format (uncompressed YUY2, 320x240, 30fps) instead
+  of MJPEG 176x144, and the still-image-capture descriptor is dropped
+  entirely (not supported).
+- `usb_video_camera.c/.h` - the UVC class glue (adapted from the stock
+  example's `virtual_camera.c`) - control-request handling is basically
+  unchanged (that part was already format-agnostic UVC protocol
+  boilerplate, not MJPEG-specific), but `USB_DeviceVideoPrepareVideoData()`
+  is rewritten: instead of scanning a static byte array for a JPEG marker,
+  it reads `CAMERA_CAPTURE_GetFrameBuffer()` at a running pixel offset,
+  converts each 2-source-pixel chunk to a YUY2 macropixel
+  (`USB_VideoCamera_Rgb565ToYCbCr()`, standard BT.601 integer coefficients),
+  and tracks frame-end with a plain pixel counter instead of a marker scan.
+
+`board_port/cm33_core0/hardware_init.c` gained `USB_DeviceClockInit()` /
+`USB1_HS_IRQHandler()` / `USB_DeviceIsrEnable()`, copied near-verbatim from
+the SDK's own frdmmcxn947 board port for the same stock example (MCXN947-
+specific SPC/SCG/SYSCON register sequence to bring up the USB HS PHY's PLL -
+not something worth re-deriving). No pin muxing changes needed - USB HS
+D+/D- are dedicated pins, not routed through PORT/pin mux, unlike the
+camera/LCD signals.
+
+`source/main.c` no longer calls `LCD_Init()`/`LCD_DrawImage()` - the display
+path is now `USB_VideoCamera_Init()` (registers the UVC class + brings up
+the controller) plus `USB_VideoCamera_Task()` in the main loop (a no-op in
+this bare-metal, no-RTOS-task build; kept for symmetry in case that ever
+changes). Actual frame delivery isn't driven from the main loop at all -
+it's pulled on demand from the USB class callback whenever the host asks for
+the next packet, so the main loop's job is unchanged (AI hook + periodic
+debug log). LCD driver code in `source/display/` is untouched and still
+compiled (just unused - see CMakeLists.txt), same "don't touch unless
+resuming LCD work" status as before.
+
+**Why no second frame buffer:** m_data SRAM for this build is 312KB
+(`MCXN947_cm33_core0_ram.ld`). The RGB565 camera buffer alone is 320*240*2 =
+153,600 bytes. A second full YUY2-converted frame buffer would be another
+153,600 bytes - fine on its own, but combined with USB middleware buffers,
+stack, and everything else, cutting it uncomfortably close for comfort. Since
+YUY2 and RGB565 are both 2 bytes/pixel, converting a whole extra buffer
+wasn't actually necessary - converting just the ~1020 bytes needed for
+each individual USB packet, directly from the live RGB565 buffer, avoids
+the second buffer entirely. Actual build RAM usage: 163,288 / 319,488 bytes
+(51%) - see `./build.sh build` output.
+
+**Bandwidth note:** 320x240 YUY2 @ 30fps is ~36.9 Mbit/s, over what a
+512-byte/microframe USB HS isochronous pipe can carry (~32.8 Mbit/s cap).
+Bumped `HS_STREAM_IN_PACKET_SIZE` to 1024 bytes/microframe (the largest
+single-transaction HS isochronous packet size, no need for the extra
+"transactions per microframe" descriptor bits) - ~65.5 Mbit/s cap, comfortable
+headroom. Only one frame interval is advertised (30fps, matching the
+camera's fixed capture rate) since there's nothing to negotiate down to.
+
+**Not yet done:**
+- **Not flashed or tested on real hardware this session** - no board
+  access. `./build.sh build` succeeds clean (`-Werror`, zero warnings), but
+  nobody has confirmed the board actually enumerates as a webcam yet. Next
+  session (or whenever hardware is available): `./build.sh` (build+flash),
+  plug the board's USB port into a PC, check Windows Camera app / a
+  browser's camera picker / `webcammictest.com` for a device (advertised as
+  "OV7670 on J9" - see `g_UsbDeviceString3` in usb_device_descriptor.c) and
+  confirm a real, live, correctly-colored image appears - not just that
+  enumeration succeeds.
+- If the image looks corrupted/discolored: most likely spot to check first
+  is `USB_VideoCamera_Rgb565ToYCbCr()` (source/usb/usb_video_camera.c) -
+  the RGB565 bit layout or YCbCr coefficients would be the first suspects,
+  not the USB transport plumbing (that part is closely copied from a
+  working stock example).
+- If nothing enumerates at all: check the board's actual USB port - MCXN947
+  dev boards typically have both a USB-HS "device" port and a debug-probe
+  USB port; make sure the camera cable is in the device port, not the
+  MCU-Link probe port (which is a separate USB connection for flashing/
+  debug console, unrelated to this UVC device).
+
+### Plan (from last session, superseded by the above - kept for the reasoning trail)
+
+- **Hardware supports it.** MCXN947 has a genuine USB High-Speed device
+  controller (EHCI-compatible) with its own dedicated HS PHY - confirmed via
+  `CLOCK_EnableUsbhsPhyPllClock()` / `USB_EhciPhyInit()` in the SDK's
+  `fsl_clock.c`, and multiple USB-HS-capable examples already exist for
+  `frdmmcxn947` under `../mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/
+  usb_examples/`.
+- **Reference example to build from:** `usb_device_video_virtual_camera`
+  (also a `_lite` variant) in that same directory - a working USB Video
+  Class (UVC) device example for this exact board. UVC means the board
+  shows up as a standard webcam to any host PC, no custom driver needed.
+  The stock example streams a synthetic/generated test pattern, not a real
+  sensor - turned out to need a format switch (MJPEG -> YUY2) too, not just
+  a data-source swap - see above.
 
 ## Goal (from requirement.md)
 
-FRDM-MCXN947 + OV7670 camera (J9) + TFT display, capture frames and show them
-on the LCD, with a placeholder hook for an AI model later. See
-[requirement.md](requirement.md) for the original ask.
-
-## Hardware in hand
-
-- FRDM-MCXN947 board
-- OV7670 camera module -> J9 (SmartDMA/Camera header) - **works, confirmed**
-- A TFT panel with an **8-bit parallel data bus** (LCD_D0..D7 only). Backlight
-  is **white** and turns on correctly. **Exact controller chip is unknown** -
-  user could not find/read a part number on the module. Currently wired to J8
-  (FlexIO/LCD header) using the pin table in README.md.
-- A *different* board (Arduino-header shield, "tftlcd for arduino uno
-  (spiflash)", HSD024131-C1 glass) was used earlier in this project on the
-  Arduino header via bit-banged GPIO, and **that setup successfully displayed
-  a recognizable camera image**. It's not clear if this is the *same physical
-  panel* re-wired to J8, or a *different* panel bought for J8 - **worth
-  clarifying with the user first thing in a new session**, since it changes
-  the debugging approach a lot (see "Open question" below).
+FRDM-MCXN947 + OV7670 camera (J9), capture frames and get them onto a
+display - originally a TFT panel (see "LCD history" below, now abandoned
+in favor of USB streaming), with a placeholder hook for an AI model later.
+See [requirement.md](requirement.md) for the original ask (note: the
+original ask predates the pivot to USB and still describes a TFT panel).
 
 ## Camera (J9) - fully confirmed working, do not need to re-debug
 
@@ -247,151 +327,52 @@ Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
 Camera: frame #16 ready, 792 samples, pixel range 0xC0C6..0xFBEB, avg=0xE330
 Camera: frame #46 ready, 792 samples, pixel range 0xC0C4..0xFDF1, avg=0xDE26
 ```
-This has stayed working through every LCD-side change described below -
-if it ever stops working, that's a NEW regression, not a pre-existing issue.
+This stayed working through every LCD-side change during the (now
+abandoned) LCD bring-up - if it ever stops working while adding USB, that's
+a NEW regression, not a pre-existing issue.
 
-## LCD bring-up timeline
+## LCD history (abandoned)
 
-1. **Arduino header, bit-banged GPIO 8080 bus** (project's original design,
-   per literal requirement.md wording). Fully brought up: correct orientation
-   after fixing MADCTL, camera image (a face) visibly displayed. Had two
-   accepted downsides (analog-only-pin jumper workarounds, screen tearing
-   from slow bit-bang racing SmartDMA) that motivated switching to J8.
-   **This code no longer exists in the repo** (deleted when switching to
-   J8) - the working generic MIPI-DCS init sequence from it was carried
-   forward into step 3 below.
+The project spent several sessions bringing up an 8-bit-parallel TFT panel
+(`HSD024131-C1` per requirement.md, almost certainly ILI9341-family,
+240x320) on the board's J8 FlexIO/LCD header. Firmware code for this
+(`source/display/lcd_flexio_mculcd.c`, `source/display/lcd_bitbang_j8.c`,
+the LCD-related pin muxing in `board_port/pin_mux.c`, and the
+`LCD_BITBANG_DIAGNOSTIC` CMake option) is still present in the tree in case
+this is revisited later, but is no longer the active goal - **don't spend
+time re-debugging it unless the user explicitly asks to resume LCD work.**
 
-2. **Switched to J8 FlexIO, 16-bit bus, ST7796S SDK driver** (matching NXP's
-   own `display_examples/smartdma_camera_flexio_mculcd` example exactly).
-   Builds and flashes fine, camera keeps working, but this was based on the
-   *assumption* the panel is 16-bit and ST7796S - both turned out wrong (see
-   next steps).
+Progress made before the pivot, for reference if resumed:
+- Wiring, panel, and the generic MIPI-DCS init sequence were all confirmed
+  good (a diagnostic GPIO bit-bang driver on the same J8 pins displayed a
+  correct image).
+- The FlexIO hardware-bus path had two real, fixed bugs: (1) LCD_RD was
+  left floating during writes by the SDK's FlexIO MCULCD driver - fixed by
+  driving it as a plain always-high GPIO instead; (2)
+  `DEMO_PANEL_WIDTH`/`HEIGHT` were wrong (480x320, leftover from an initial
+  wrong ST7796S assumption) causing out-of-range GRAM addressing on every
+  boot - fixed to 320x240.
+- After those fixes, the FlexIO path went from "solid white, nothing at
+  all" to "panel responds, but pixel data comes out as black/white noise"
+  - a bus-speed/signal-integrity symptom. Lowering the FlexIO bus speed
+  further was in progress: an aggressive slowdown (FlexIO clock /50, ~10
+  kHz/pin) caused a full hang (stuck waiting on a FlexIO timer completion
+  flag - looked like a real minimum-operating-frequency issue, not just a
+  software divider-field limit), backed off to a smaller step (/4 clock
+  divider, ~100 kHz/pin) that was built but never flashed/tested before the
+  decision to abandon this path.
 
-3. **User corrected: panel is 8-bit only** (`LCD_D0..D7`, not `D0..D15`).
-   Added `FLEXIO_MCULCD_DATA_BUS_WIDTH=8` compile define
-   (`CMakeLists.txt`), trimmed pin_mux.c/app.h to only configure/use 8 data
-   pins (`FLEXIO0_D16..D23` = `P2_8,P2_9,P2_10,P2_11,P4_12,P4_13,P4_14,P4_15`).
-   Builds fine. **Result: solid white screen, no image at all.**
+## Key files touched by the (abandoned) LCD work
 
-4. **Backlight fix.** Realized J8 has a dedicated `LCD_BLK` pin (`P4_6`,
-   confirmed from board pinout diagram) that NXP's reference never drives
-   (the official LCD-PAR-S035 panel has an always-on backlight; a generic
-   module usually doesn't). Added `DEMO_LCD_BLK_GPIO/PIN` + drive it high in
-   `LCD_Init()`. **Result: backlight came on (white), but still no image
-   content** - this was a real, necessary fix (screen was literally dark
-   before), just not sufficient on its own.
-
-5. **Diagnostic: Read Display ID (cmd 0x04).** Added `LCD_DiagnosticReadId()`
-   in `lcd_flexio_mculcd.c`, prints 4 bytes read back right after reset.
-   Results have been **inconclusive/inconsistent across attempts**:
-   `C0 C0 C0 C0`, then ` 0 40 40 40`, then ` 0  0  0  0` (each after some
-   other change, so not a controlled A/B test). Don't over-trust this
-   signal - see the comment in that function for why (RD line often
-   genuinely not wired on cheap panel PCBs, so a "bad" read doesn't prove
-   the write path is also broken).
-
-6. **User reported the panel used to work fine with a *different*, simpler
-   init sequence on the old Arduino-header bit-bang code** (this is what
-   prompted questioning whether the panel is really ST7796S). Rewrote
-   `lcd_flexio_mculcd.c` to **stop using the SDK's `ST7796S_Init()`/
-   `ST7796S_WritePixels()` etc. entirely**, and instead send the exact same
-   generic MIPI-DCS command sequence that worked before (SW reset 0x01,
-   sleep-out 0x11, MADCTL 0x36=0x68, pixel-format 0x3A=0x55, display-on
-   0x29), now over the FlexIO hardware bus via raw
-   `FLEXIO_MCULCD_WriteCommandBlocking`/`WriteDataArrayBlocking` calls
-   instead of `ST7796S_*`. Also had to hand-roll pixel byte-swapping
-   (`LCD_PushPixels`'s chunked loop) since `FLEXIO_MCULCD_WriteDataArrayBlocking`
-   in 8-bit mode sends raw bytes with no endian handling, unlike the 16-bit
-   path the reference example uses. **Result: still solid white, no image.**
-   Removed `driver.st7796s` from `prj.conf` since no longer used.
-
-7. **Bus speed.** Reasoned that the FlexIO hardware bus (originally
-   20 MHz/pin, i.e. ~50ns per write cycle) might simply be too fast for
-   this specific (probably very cheap/slow) controller to latch data,
-   whereas the old GPIO bit-bang path was inherently much slower (software
-   overhead) and "accidentally" gave the panel enough settling time.
-   Dropped `DEMO_FLEXIO_BAUDRATE_BPS` way down. First attempt (2,000,000 =
-   250 kHz/pin) made `FLEXIO_MCULCD_Init()` itself fail
-   (`kStatus_InvalidArgument` - the timer divider field overflowed; with
-   this board's 150 MHz FlexIO source clock, ~293 kHz/pin is roughly the
-   floor for a valid divider). Raised to 3,200,000 (400 kHz/pin), which is
-   accepted. **Result: still solid white, no image.** (User hasn't yet
-   confirmed if the ID-read diagnostic value changed meaningfully at this
-   speed - last known value was `00 00 00 00`.)
-
-## Where things stand / what's NOT yet been tried
-
-- **No oscilloscope/logic-analyzer verification.** Everything so far has
-  been "change something plausible, rebuild, reflash, ask the human to look
-  at the screen." Nobody has actually confirmed with an instrument whether
-  WR/CS/RS/data pins are toggling as expected during a write. This is the
-  most definitive next step if the user has access to a scope or even a
-  logic analyzer/cheap oscilloscope - probe `P0_9` (WR) during
-  `LCD_WriteCommand()`/`LCD_PushPixels()` and confirm pulses are happening
-  at all.
-- **Wiring hasn't been re-verified pin-by-pin with a multimeter** since the
-  very first J8 wiring pass. Given how many fixes have *not* worked, a
-  plain wiring error (one swapped/loose/miswired signal among the 14: RD,
-  WR, CS, RS, RST, BLK, D0..D7) is now looking like the single most likely
-  remaining explanation - nothing else has moved the needle from "solid
-  white."
-- **RD pin (`P0_8`) not actually connected on the panel PCB** is a live
-  possibility (common on cheap write-only-in-practice modules) - if true,
-  it could also disrupt writes depending on how the specific controller's
-  8080 interface expects RD to idle. Worth trying: temporarily tie the
-  panel's RD pin to a fixed logic level (matching whatever the datasheet/
-  similar modules suggest, usually idle-high) instead of leaving it
-  MCU-driven, *if* a datasheet or similar module's schematic can be found.
-- **3.3V vs 5V logic levels.** MCXN947 GPIO is 3.3V. Some very cheap
-  panel modules expect 5V TTL thresholds and may not reliably read a 3.3V
-  "high" as high. Worth checking the module's actual logic-level
-  requirement if a datasheet/listing can be found.
-- **Panel might need a different init sequence than either one tried.**
-  Both ST7796S's real init AND the generic ILI9481-family-ish sequence
-  failed to produce an image. If the exact controller chip can be
-  identified (check the panel PCB very closely with a magnifier/bright
-  light for a laser-etched part number, or find the exact product listing/
-  seller page it was bought from), a controller-specific init sequence
-  could be tried instead.
-- **Have not tried reverting to bit-banged GPIO on J8's pins** (as a
-  diagnostic, not a permanent fix) to isolate "is this a FlexIO-hardware-
-  specific problem" vs "is this a wiring/panel problem that would fail
-  either way." Since bit-bang WAS proven to work on the Arduino header with
-  a working panel, if bit-banging the *same* J8 pins also fails, that's
-  strong evidence of a wiring problem specific to the J8 connections (not a
-  FlexIO peculiarity). This is a relatively cheap thing to try and would be
-  a good next step: temporarily repurpose the old bit-bang approach
-  (`GPIO_PinWrite` loops) but targeting the J8 pins in `app.h`/`pin_mux.c`
-  instead of the Arduino ones, bypassing FlexIO/baud-rate variables
-  entirely.
-
-## Open question for the user (ask first in a new session)
-
-**Is the panel now wired to J8 the exact same physical LCD glass/board that
-worked on the Arduino header earlier, or a different one?** This matters a
-lot:
-- If it's the **same physical panel**, then the working Arduino-header
-  bring-up already proves the panel itself is good and the generic init
-  sequence is correct for it - the bug is almost certainly in the **J8
-  wiring or the FlexIO transport**, not the panel or init commands. Point
-  debugging at continuity-checking the 14 J8 wires and/or the bit-bang
-  isolation test above.
-- If it's a **different/new panel bought for this**, then nothing has
-  actually been proven to work with *this specific panel* yet - the
-  "proven working init sequence" assumption from step 6 above may not even
-  apply, and the controller-identification path becomes more important.
-
-## Key current values (for quick reference without reading all the code)
-
-- `DEMO_FLEXIO_BAUDRATE_BPS` = `3200000U` (400 kHz/pin) in
-  `firmware/camera_ai_demo/board_port/cm33_core0/app.h`
-- `FLEXIO_MCULCD_DATA_BUS_WIDTH=8` set in
-  `firmware/camera_ai_demo/CMakeLists.txt` via `mcux_add_macro`
-- LCD init sequence: see `LCD_InitPanel()` in
-  `firmware/camera_ai_demo/source/display/lcd_flexio_mculcd.c` (generic
-  MIPI-DCS, not ST7796S-specific)
-- Full J8 pin table: [README.md](README.md#tft-8-bit-panel---j8-flexiolcd-header)
-- Build/flash: `./firmware/camera_ai_demo/build.sh` (build+flash),
-  `build.sh monitor` for serial console. See README.md "Building and
-  flashing" for full details, including that the board sometimes drops off
-  USB when being physically rewired - just reconnect and re-run.
+- `firmware/camera_ai_demo/source/display/lcd_flexio_mculcd.c` - FlexIO
+  hardware-bus LCD driver
+- `firmware/camera_ai_demo/source/display/lcd_bitbang_j8.c` - diagnostic
+  GPIO bit-bang LCD driver (proved wiring/panel/init sequence are fine)
+- `firmware/camera_ai_demo/source/display/lcd_display.h` - selects between
+  the two above via `DEMO_LCD_BITBANG`
+- `firmware/camera_ai_demo/board_port/pin_mux.c` - `BOARD_InitFlexioPins()`
+  has the J8 LCD pin muxing (both FlexIO and bit-bang variants)
+- `firmware/camera_ai_demo/board_port/cm33_core0/app.h` - LCD pin/geometry/
+  bus-speed macros
+- `firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c` - FlexIO
+  clock divider setup
