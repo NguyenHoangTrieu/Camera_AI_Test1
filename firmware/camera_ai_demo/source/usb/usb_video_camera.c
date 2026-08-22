@@ -525,9 +525,10 @@ static usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event,
 
 void USB_VideoCamera_Init(void)
 {
-    /* USB_DeviceClockInit() already ran from BOARD_InitHardware() (before
-     * CAMERA_CAPTURE_Init() started the SmartDMA) - see the comment at its
-     * call site in hardware_init.c for why it can't run here instead. */
+    /* USB_DeviceClockInit() already ran from main() - after
+     * CAMERA_CAPTURE_Deinit() cleanly stopped SmartDMA and raised DCDC to
+     * Overdrive - see the time-multiplex comment at the top of main.c and
+     * WORKLOG.md for why capture and USB HS can't run at the same time. */
 #if (defined(FSL_FEATURE_SOC_SYSMPU_COUNT) && (FSL_FEATURE_SOC_SYSMPU_COUNT > 0U))
     SYSMPU_Enable(SYSMPU, 0);
 #endif /* FSL_FEATURE_SOC_SYSMPU_COUNT */

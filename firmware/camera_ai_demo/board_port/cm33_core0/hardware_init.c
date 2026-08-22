@@ -22,6 +22,58 @@
 #include "usb_phy.h"
 
 /*
+ * CONFIRMED (see WORKLOG.md "decisive isolation test" entry): SmartDMA
+ * camera capture only runs reliably with DCDC_VDD_LVL at Mid (1.0V) - *any*
+ * other level (Normal 1.1V or Overdrive 1.2V) makes it stop after ~2
+ * frames, silently (no HardFault). USB HS PHY genuinely needs DCDC_VDD_LVL
+ * raised to Overdrive (CLOCK_EnableUsbhsPhyPllClock() spins forever in its
+ * PLL_LOCK busy-wait otherwise). Since both can't be true at once, these two
+ * helpers isolate just the regulator-level switch (no USB clock/PHY
+ * bring-up, no camera re-init) so callers can flip between the two voltage
+ * levels repeatedly - see main()'s periodic-refresh loop, which drops back
+ * to Mid every few seconds to grab a fresh frame, then returns to Overdrive
+ * - without having to redo either USB_DeviceClockInit()'s one-time PHY/PLL
+ * bring-up or CAMERA_CAPTURE_Init()'s OV7670 SCCB init each cycle.
+ */
+void BOARD_SetRegulatorsMidVoltage(void)
+{
+    spc_active_mode_core_ldo_option_t ldoOpt = {
+        .CoreLDOVoltage       = kSPC_CoreLDO_MidDriveVoltage,
+        .CoreLDODriveStrength = kSPC_CoreLDO_NormalDriveStrength,
+    };
+    SPC_SetActiveModeCoreLDORegulatorConfig(SPC0, &ldoOpt);
+
+    spc_active_mode_dcdc_option_t dcdcOpt = {
+        .DCDCVoltage       = kSPC_DCDC_MidVoltage,
+        .DCDCDriveStrength = kSPC_DCDC_NormalDriveStrength,
+    };
+    SPC_SetActiveModeDCDCRegulatorConfig(SPC0, &dcdcOpt);
+}
+
+void BOARD_SetRegulatorsOverdriveVoltage(void)
+{
+    /* NOTE: do NOT try raising CORELDO_VDD_LVL alone without DCDC_VDD_LVL -
+     * tried this on real hardware (see WORKLOG.md) and it left the chip's
+     * SWD/debug port completely unreachable (pyOCD couldn't reconnect even
+     * under reset, needed a physical power cycle to recover). Always raise
+     * both together, matching NXP's stock example, or neither. */
+    spc_active_mode_dcdc_option_t usbDcdcOpt = {
+        .DCDCVoltage       = kSPC_DCDC_OverdriveVoltage,
+        .DCDCDriveStrength = kSPC_DCDC_NormalDriveStrength,
+    };
+    SPC_SetActiveModeDCDCRegulatorConfig(SPC0, &usbDcdcOpt); /* waits for SPC_SC_BUSY internally */
+
+    spc_active_mode_core_ldo_option_t usbLdoOpt = {
+        .CoreLDOVoltage       = kSPC_CoreLDO_OverDriveVoltage,
+        .CoreLDODriveStrength = kSPC_CoreLDO_NormalDriveStrength,
+    };
+    SPC_SetActiveModeCoreLDORegulatorConfig(SPC0, &usbLdoOpt);
+    while (SPC0->SC & SPC_SC_BUSY_MASK)
+    {
+    }
+}
+
+/*
  * USB High-Speed (EHCI + dedicated HS PHY) bring-up for the UVC camera
  * stream (source/usb/usb_video_camera.c). Copied near-verbatim from the SDK
  * board port for this exact board+example
@@ -31,8 +83,12 @@
  * re-deriving. No pin muxing is needed: unlike the camera/LCD signals, the
  * USB HS D+/D- lines are dedicated pins, not routed through PORT/pin mux.
  *
- * Defined (and called from BOARD_InitHardware() below) BEFORE any other
- * peripheral clock setup, deliberately - see the call site for why.
+ * Call exactly ONCE, from main() after CAMERA_CAPTURE_Deinit() - see
+ * BOARD_SetRegulatorsOverdriveVoltage()'s comment above for why this can't
+ * run before/during camera capture. Unlike the two regulator helpers above,
+ * this is NOT meant to be called repeatedly (re-running USB_EhciPhyInit()/
+ * CLOCK_EnableUsbhsPhyPllClock() on an already-enumerated session is
+ * untested and risky - see WORKLOG.md "periodic refresh" entry).
  */
 void USB_DeviceClockInit(void)
 {
@@ -43,38 +99,10 @@ void USB_DeviceClockInit(void)
     };
 
     SPC0->ACTIVE_VDELAY = 0x0500;
-    /*
-     * CONFIRMED HARDWARE CONFLICT (see WORKLOG.md for the full bisection
-     * done on real hardware) - not yet resolved:
-     *
-     *   - USB HS PHY genuinely needs DCDC_VDD_LVL raised: without this
-     *     line, CLOCK_EnableUsbhsPhyPllClock() (fsl_clock.c) spins forever
-     *     in its PLL_LOCK busy-wait - confirmed by halting the core over
-     *     the debug probe and reading PC. Not optional for USB HS to work.
-     *   - The SmartDMA-based camera capture (source/camera/camera_capture.c)
-     *     breaks under ANY DCDC_VDD_LVL change, whether to Overdrive (this
-     *     line's value) or Normal - and regardless of whether the change
-     *     happens before or after SmartDMA has started, ruling out a
-     *     transition/timing hazard. It's a steady-state incompatibility:
-     *     frames stop advancing (or come back flat/all-zero) a frame or two
-     *     after boot, silently - no HardFault. CORELDO_VDD_LVL was ruled
-     *     out separately as not being the cause.
-     *
-     * Net effect: with USB streaming enabled as currently implemented,
-     * camera capture does NOT reliably keep working. This line is kept
-     * (matching NXP's own stock requirement for the USB HS PHY) so USB
-     * itself functions - the camera-side half of this conflict is an open
-     * problem, not something worked around here. Likely needs NXP
-     * documentation/errata on this DCDC/SmartDMA interaction, or retuning
-     * SmartDMA's own clock configuration for the raised voltage domain
-     * (untested) - see WORKLOG.md before spending more time on this blind.
-     */
-    SPC0->ACTIVE_CFG &= ~SPC_ACTIVE_CFG_CORELDO_VDD_DS_MASK;
-    SPC0->ACTIVE_CFG |= SPC_ACTIVE_CFG_DCDC_VDD_LVL(0x3) | SPC_ACTIVE_CFG_CORELDO_VDD_LVL(0x3) |
-                        SPC_ACTIVE_CFG_SYSLDO_VDD_DS_MASK | SPC_ACTIVE_CFG_DCDC_VDD_DS(0x2u);
-    while (SPC0->SC & SPC_SC_BUSY_MASK)
-    {
-    }
+    BOARD_SetRegulatorsOverdriveVoltage();
+
+    SPC0->ACTIVE_CFG |= SPC_ACTIVE_CFG_SYSLDO_VDD_DS_MASK;
+
     if (0u == (SCG0->LDOCSR & SCG_LDOCSR_LDOEN_MASK))
     {
         SCG0->TRIM_LOCK = 0x5a5a0001U;
@@ -120,40 +148,12 @@ void BOARD_InitHardware(void)
     BOARD_InitBootClocks();
     BOARD_InitDebugConsole();
 
-    /* Set the LDO_CORE VDD regulator to 1.0 V voltage level (needed for the
-     * SmartDMA core clock used by the camera capture firmware). */
-    spc_active_mode_core_ldo_option_t ldoOpt = {
-        .CoreLDOVoltage       = kSPC_CoreLDO_MidDriveVoltage,
-        .CoreLDODriveStrength = kSPC_CoreLDO_NormalDriveStrength,
-    };
-    SPC_SetActiveModeCoreLDORegulatorConfig(SPC0, &ldoOpt);
-
-    spc_active_mode_dcdc_option_t dcdcOpt = {
-        .DCDCVoltage       = kSPC_DCDC_MidVoltage,
-        .DCDCDriveStrength = kSPC_DCDC_NormalDriveStrength,
-    };
-    SPC_SetActiveModeDCDCRegulatorConfig(SPC0, &dcdcOpt);
-
-    /*
-     * USB_DeviceClockInit() (above) raises DCDC/CoreLDO from the Mid level
-     * just set above to Overdrive, among other one-time PHY/PLL bring-up.
-     * This HAS to happen here, before CAMERA_CAPTURE_Init() (called from
-     * main() after BOARD_InitHardware() returns) starts the SmartDMA
-     * running - changing the chip's core supply voltage while SmartDMA is
-     * already actively clocking mid-capture glitches it and hangs the
-     * whole system. Confirmed on real hardware: first frame logged fine,
-     * then everything (camera AND UART output) went silent right after USB
-     * init ran from USB_VideoCamera_Init() (previously called *after*
-     * CAMERA_CAPTURE_Init(), from main()). Doing it here instead means the
-     * voltage is already stable before anything downstream depends on it -
-     * Overdrive is a strictly higher voltage than SmartDMA needs, so
-     * raising it up front is safe; it's changing voltage under an already-
-     * active clock domain that's the hazard, not which stable level ends
-     * up chosen.
-     */
-#if !DEMO_USB_STREAM_DISABLE
-    USB_DeviceClockInit();
-#endif
+    /* Boot at Mid voltage - see BOARD_SetRegulatorsMidVoltage()'s comment
+     * above for why. main() switches to Overdrive itself later, only after
+     * camera capture has produced a few frames and stopped for good (or,
+     * for the periodic-refresh loop, drops back to Mid again briefly on
+     * each cycle) - see main() for the full time-multiplexed sequencing. */
+    BOARD_SetRegulatorsMidVoltage();
 
     /* Camera XCLK: route main clock out through CLKOUT (P2_2), divided down
      * to a clock rate the OV7670 accepts. */

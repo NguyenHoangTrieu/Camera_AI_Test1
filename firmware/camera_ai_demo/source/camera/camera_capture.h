@@ -18,6 +18,19 @@
 /*! @brief Init camera (SCCB/I2C + OV7670 registers) and boot the SmartDMA capture firmware. */
 void CAMERA_CAPTURE_Init(void);
 
+/*! @brief Stop the SmartDMA capture engine and gate its clock. The last captured frame stays
+ * intact in the buffer returned by CAMERA_CAPTURE_GetFrameBuffer() (it's just SRAM, untouched
+ * by this call) - only new capture stops. See WORKLOG.md "time-multiplex fallback" entry for
+ * why this exists: SmartDMA only runs reliably with DCDC at Mid voltage, so this must be called
+ * (camera capture fully stopped) before switching DCDC away from Mid for USB HS. */
+void CAMERA_CAPTURE_Deinit(void);
+
+/*! @brief Restart SmartDMA capture after CAMERA_CAPTURE_Deinit(), without re-running the OV7670
+ * SCCB/I2C init (the sensor itself doesn't need re-configuring, only the SmartDMA pixel pipe
+ * does). Caller must be at DCDC Mid voltage (BOARD_SetRegulatorsMidVoltage()) before calling
+ * this - see WORKLOG.md "periodic refresh" entry. */
+void CAMERA_CAPTURE_Reinit(void);
+
 /*! @brief True once a new frame has landed in the capture buffer since the last call. */
 bool CAMERA_CAPTURE_IsFrameReady(void);
 

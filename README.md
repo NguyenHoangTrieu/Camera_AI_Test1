@@ -1,33 +1,36 @@
 # Camera_AI_Test1
 
-Camera + AI + USB webcam-streaming project for **FRDM-MCXN947**, built against
-the local `mcuxsdk` checkout (`../mcuxsdk`). Captures frames from an **OV7670**
-camera via SmartDMA, feeds them into a placeholder AI-model hook, and streams
-them to a host PC over **USB High-Speed** as a standard USB Video Class (UVC)
-webcam (uncompressed YUY2, 320x240 @ 30fps) - no vendor driver needed, any
-Windows/macOS/Linux camera app should see it as a normal webcam.
+Camera + AI project for **FRDM-MCXN947**, built against the local `mcuxsdk`
+checkout (`../mcuxsdk`). Captures frames from an **OV7670** camera via
+SmartDMA and feeds them into a placeholder AI-model hook. **Default build:
+camera + AI loop only, no display, no USB** - continuous, proven stable
+(700+ clean frames).
 
-> **USB video streaming is confirmed working on a real host (Linux, `uvcvideo`
-> + GStreamer) - but it currently streams one frozen frame, not live video.**
-> Verified end-to-end: `lsusb -v` shows a clean UVC descriptor set, the host
-> creates a `/dev/videoN` node, and `gst-launch-1.0` successfully captures
-> real 320x240 YUY2 frames (correct size, real varying pixel data, not
-> garbage). Two real bugs were found and fixed to get here (malformed
-> descriptor byte count; missing `GET_MIN`/`GET_MAX`/`GET_RES`/`GET_DEF`
-> control responses that Linux's UVC driver requires). What's left: SmartDMA
-> (the camera capture coprocessor) genuinely stops - both its completion
-> interrupt and its pixel writes - after capturing ~2 frames, so the same
-> real still frame gets streamed over and over instead of a live feed. See
-> [WORKLOG.md](WORKLOG.md) "Current status" for the full verification trail,
-> the root cause (a DCDC voltage-level conflict between the USB HS PHY and
-> SmartDMA), and next-step ideas for getting SmartDMA to keep capturing.
+> **USB Video Class (UVC) webcam streaming over USB High-Speed is
+> ABANDONED - a genuine hardware/board limitation, not a bug in this
+> project's code.** Root cause (see [WORKLOG.md](WORKLOG.md) "USB streaming
+> pipeline abandoned" for the full trail): SmartDMA camera capture only runs
+> reliably with the chip's DCDC regulator at Mid voltage (1.0V); the USB HS
+> PHY only locks its PLL at Overdrive (1.2V) - confirmed via multiple
+> independent hardware tests that this is unrelated to voltage *transitions*
+> or to anything USB-specific being active, it's the DCDC level itself. The
+> chip does have a second, independent USB Full-Speed module that doesn't
+> need Overdrive - but FRDM-MCXN947's single USB Type-C connector (J11) is
+> hard-wired to the HS controller only (confirmed in NXP's UM12018 board
+> user manual, section 2.3), so there's no way to reach the FS module without
+> a hardware rework. A software time-multiplex workaround (periodic
+> Mid-voltage recapture / Overdrive-streaming switching) was built and
+> confirmed stable on real hardware - low-frame-rate but genuinely live - but
+> given the underlying conflict can't be fixed, USB streaming is no longer
+> the active build. The code is still in the tree (`source/usb/`, still
+> builds) in case NXP ever publishes a fix or this is revisited; see
+> "USB (UVC webcam, abandoned)" below.
 >
 > This project originally targeted a TFT panel on the board's J8 FlexIO/LCD
-> header instead of USB output - that path made real progress (a diagnostic
-> bit-bang driver displayed a correct image) but was abandoned in favor of USB
-> streaming; see "LCD (abandoned)" below and WORKLOG.md's "LCD history"
-> section for the full debugging trail. The LCD driver code is still in the
-> tree (`source/display/`), just no longer called from `main.c`.
+> header before that - also abandoned, for unrelated (signal-integrity)
+> reasons; see "LCD (abandoned)" below and WORKLOG.md's "LCD history" section
+> for that debugging trail. Both abandoned paths' code stays in the tree,
+> just not called from `main.c` by default.
 
 Source of truth: [requirement.md](requirement.md) (note: predates the pivot to
 USB and still describes a TFT panel). Camera wiring/pinout is confirmed
@@ -37,12 +40,13 @@ against the mcuxsdk pin tables (not just a photo).
 
 - FRDM-MCXN947 board
 - OV7670 camera module -> **J9 (SmartDMA/Camera header)**
-- A USB cable from the board's **USB High-Speed device port** to the host PC
-  (this is a separate port from the MCU-Link debug-probe USB connection used
-  for flashing - see "Building and flashing" below).
+- The MCU-Link debug-probe USB connection (for flashing/serial console -
+  `./build.sh flash`/`monitor`). The board's other USB Type-C port (J11, USB
+  HS device) is only needed if opting back into the abandoned USB-streaming
+  build - see "USB (UVC webcam, abandoned)" below.
 - Optional/abandoned: a TFT panel (`HSD024131-C1` per requirement.md) wired to
   the J8 FlexIO/LCD header - see "LCD (abandoned)" below. Not needed for the
-  current USB-streaming build.
+  default build.
 
 ## Pinout
 
@@ -114,31 +118,35 @@ it can't be changed at runtime; if you swap to a 16-bit panel later, that macro
 and the pin table above both need updating together (the removed `LCD_D8..D15`
 rows in an earlier revision of this README show the full 16-bit table).
 
-## USB (UVC webcam)
+## USB (UVC webcam, abandoned)
 
-> **Enumeration and format negotiation both confirmed working on a real
-> host** (Linux `uvcvideo` + GStreamer - see WORKLOG.md "Current status" for
-> the full trail). **Streams one frozen real frame, not live video** -
-> SmartDMA stops capturing new frames a couple frames after boot (see the
-> banner at the top of this file); the image itself is real and
-> correctly-colored, it just doesn't update.
+> **ABANDONED - see the banner at the top of this file and WORKLOG.md "USB
+> streaming pipeline abandoned" for why.** Not a code bug: SmartDMA camera
+> capture and the USB HS PHY need mutually exclusive DCDC voltage levels on
+> this chip, and this board only exposes the HS USB controller on its one
+> connector. The code below still builds and still works (as a
+> low-frame-rate, time-multiplexed feed - confirmed stable on hardware), it's
+> just not the default anymore and isn't being developed further.
 
-The board enumerates as a standard USB Video Class device - format
-"Uncompressed YUY2", 320x240, 30fps, over USB High-Speed (see
-`source/usb/usb_device_descriptor.c` for the exact descriptor bytes and
-`source/usb/usb_video_camera.c` for the class glue that fills each USB
-packet from the live camera buffer). To view it:
+To opt back into this build: `./build.sh rebuild -DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF`
+(the default is now `ON` - camera-only). The board then enumerates as a
+standard USB Video Class device - format "Uncompressed YUY2", 320x240, 30fps,
+over USB High-Speed (see `source/usb/usb_device_descriptor.c` for the exact
+descriptor bytes and `source/usb/usb_video_camera.c` for the class glue that
+fills each USB packet from the camera buffer):
 
-1. Plug the board's **USB HS device port** (not the MCU-Link debug port)
-   into the host PC.
+1. Plug the board's **USB HS device port (J11)** (not the MCU-Link debug
+   port) into the host PC.
 2. Open the host OS's stock camera app (Windows Camera, `cheese` on Linux,
    etc.) or a browser camera picker (e.g. `webcammictest.com`) and look for
-   a device named per `g_UsbDeviceString3` in `usb_device_descriptor.c`
-   ("OV7670 on J9"). On Linux, `v4l2-ctl --list-devices` or
+   `Camera_AI_Test1`. On Linux, `v4l2-ctl --list-devices` or
    `udevadm info --name=/dev/videoN` (matching `ID_MODEL=Camera_AI_Test1`)
    will confirm which `/dev/videoN` node is the board.
-3. A real image should appear, but it will be static (not updating) until
-   the SmartDMA issue above is fixed.
+3. The image updates roughly every `DEMO_OVERDRIVE_HOLD_MS` (5 seconds by
+   default, `source/main.c`) - not truly live, but not a single frozen
+   image either. See WORKLOG.md for the periodic-refresh design and why it
+   can't be made faster/continuous without the underlying voltage conflict
+   being fixed.
 
 ## LCD (abandoned) troubleshooting
 
@@ -196,10 +204,10 @@ Camera_AI_Test1/
         hardware_init.c                <- BOARD_InitHardware()
         prj.conf                       <- board-port Kconfig (inputmux, pinmux_project_folder)
     source/
-      main.c                         <- capture -> AI hook -> USB streaming loop
+      main.c                         <- capture -> AI hook loop (default); USB path (abandoned) behind USB_STREAM_DIAGNOSTIC_DISABLE=OFF
       camera/camera_capture.c/h      <- OV7670 + SmartDMA (from NXP reference)
-      usb/usb_video_camera.c/h       <- UVC class glue, RGB565->YUY2 conversion (active display path)
-      usb/usb_device_descriptor.c/h  <- UVC descriptors (uncompressed YUY2, 320x240)
+      usb/usb_video_camera.c/h       <- UVC class glue, RGB565->YUY2 conversion (abandoned, still builds)
+      usb/usb_device_descriptor.c/h  <- UVC descriptors (abandoned, still builds)
       display/lcd_flexio_mculcd.c/h  <- FlexIO + ST7796S driver (abandoned, still built but unused)
       ai/model_runner.c/h            <- AI integration stub (see below)
       ai/model_data.h                <- placeholder for an exported model
@@ -248,13 +256,11 @@ Camera: frame #16 ready, 792 samples, pixel range 0xC0C6..0xFBEB, avg=0xE330
 Camera: frame #46 ready, 792 samples, pixel range 0xC0C4..0xFDF1, avg=0xDE26
 ```
 
-**USB streaming is confirmed working end-to-end on a real host** (enumeration,
-UVC format negotiation, and actual frame delivery all verified via `lsusb`,
-`dmesg`, and `gst-launch-1.0` capturing real 320x240 YUY2 frames - see
-WORKLOG.md "Current status"). **The one open problem: SmartDMA stops
-capturing new frames a couple frames after boot**, so what streams is a real
-but frozen still image, not live video - see "USB (UVC webcam)" below and
-WORKLOG.md "Current status" for the full bisection of that conflict.
+**USB streaming, when opted back into, is confirmed working end-to-end on a
+real host** as a periodic-refresh feed (enumeration, UVC format negotiation,
+frame delivery, and multi-cycle stability all verified via `lsusb`, `dmesg`,
+and a continuous `gst-launch-1.0` capture session - see WORKLOG.md) - but see
+the banner at the top of this file for why it's not the default build.
 
 ## AI model integration
 
@@ -274,23 +280,15 @@ only touches `model_runner.c`/`.cpp` and `CMakeLists.txt`.
 
 ## Known limitations
 
-- **Live video doesn't work yet - SmartDMA stops capturing new frames a
-  couple frames after boot** whenever USB is also active, so the same real
-  still frame streams over and over instead of updating. USB streaming
-  itself (enumeration, format negotiation, packet delivery) is confirmed
-  working - see the banner at the top of this file and WORKLOG.md "Current
-  status" for the full bisection and root cause (a DCDC voltage-level
-  conflict between the USB HS PHY and SmartDMA). This is the main open
-  problem in this project right now.
-- (Once SmartDMA capture keeps running) it overwrites the single live camera
-  buffer continuously in the background; USB packet-fill reads directly from
-  it while it's being sent, same as the old LCD draw path did - possible for
-  a frame boundary to land mid-tear under bad timing (visually: a brief
-  horizontal split in one frame). Accepted tradeoff for this preview use
-  case, same as the abandoned LCD path already accepted (see WORKLOG.md
-  "History").
+- **USB streaming is abandoned - a hardware/board limitation, not fixable
+  from this project's code.** See the banner at the top of this file and
+  WORKLOG.md "USB streaming pipeline abandoned" for the full reasoning
+  (DCDC voltage conflict between SmartDMA and USB HS PHY; no accessible
+  USB FS alternative on this board). If built anyway (opt-in, see "USB
+  (UVC webcam, abandoned)" above), it works as a periodic-refresh feed
+  (~1 new frame every few seconds), not continuous live video.
 - The camera capture resolution (320x240) is fixed by `DEMO_BUFFER_WIDTH/HEIGHT`
-  in `app.h`; the UVC descriptor's advertised frame size
+  in `app.h`; the (abandoned) UVC descriptor's advertised frame size
   (`source/usb/usb_device_descriptor.h`) has to be kept in sync with it manually
   if that ever changes.
 - `source/ai/model_runner.c` has no real model wired in yet by design.

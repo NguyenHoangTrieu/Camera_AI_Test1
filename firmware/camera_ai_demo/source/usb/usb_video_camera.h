@@ -70,8 +70,15 @@ typedef struct _usb_video_virtual_camera_struct
  * API
  ******************************************************************************/
 
+/* MCXN947-specific SPC/SCG/SYSCON bring-up for the USB HS PHY's PLL - raises DCDC/CoreLDO to
+ * Overdrive among other things (board_port/cm33_core0/hardware_init.c). Call once from main(),
+ * after CAMERA_CAPTURE_Deinit() has cleanly stopped SmartDMA - see WORKLOG.md "time-multiplex
+ * fallback" entry for why camera capture and USB HS can't be active at the same time on this
+ * chip, and CAMERA_CAPTURE_Deinit()'s doc comment (camera_capture.h) for the ordering rule. */
+void USB_DeviceClockInit(void);
+
 /* Registers the UVC class, brings up the USB HS controller and starts the device running.
- * Call once from main(), after CAMERA_CAPTURE_Init(). Streaming to the host only actually
+ * Call once from main(), after USB_DeviceClockInit(). Streaming to the host only actually
  * starts once a host selects the streaming alternate setting (i.e. an app opens the camera). */
 void USB_VideoCamera_Init(void);
 

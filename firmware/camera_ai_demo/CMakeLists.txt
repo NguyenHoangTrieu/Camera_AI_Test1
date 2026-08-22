@@ -1,8 +1,16 @@
-# FRDM-MCXN947 — Camera_AI_Test1: OV7670 (J9) -> AI hook -> USB Video Class
-# (UVC) webcam over USB High-Speed. See WORKLOG.md - this replaced an
-# earlier J8 FlexIO/TFT display path; that code (source/display/,
-# LCD_BITBANG_DIAGNOSTIC below) is still built but no longer called from
-# main.c, kept around in case LCD work is resumed later.
+# FRDM-MCXN947 — Camera_AI_Test1: OV7670 (J9) capture -> AI hook. Default
+# build is camera-only (no display, no USB) - see WORKLOG.md. Two earlier
+# output paths were tried and abandoned, both kept in the tree (still build,
+# just not called from main.c / not the default) in case either is
+# revisited:
+#   - J8 FlexIO/TFT display (source/display/, LCD_BITBANG_DIAGNOSTIC below) -
+#     abandoned for signal-integrity reasons on the specific panel in hand.
+#   - USB Video Class (UVC) webcam over USB HS (source/usb/,
+#     USB_STREAM_DIAGNOSTIC_DISABLE below) - abandoned because SmartDMA
+#     camera capture and the USB HS PHY require mutually exclusive DCDC
+#     voltage levels on this chip, and this board's single USB connector is
+#     hard-wired to the HS controller only (no way to use the alternative,
+#     Mid-voltage-compatible USB FS module instead).
 #
 # Out-of-tree ("freestanding") MCUXpresso SDK application, same pattern as
 # ../../touch_rgb and ../../wifi_sensing_npu: source lives here, outside the
@@ -49,12 +57,24 @@ else()
     mcux_add_macro(CC "-DDEMO_LCD_BITBANG=0")
 endif()
 
-# Diagnostic switch: skip all USB bring-up (USB_DeviceClockInit() /
-# USB_VideoCamera_Init() / USB_VideoCamera_Task() calls become no-ops) to
-# isolate whether a hang seen on hardware is caused by the USB HS PHY/EHCI
-# bring-up itself versus something else - see WORKLOG.md. Off by default
-# (normal USB streaming path).
-option(USB_STREAM_DIAGNOSTIC_DISABLE "Skip USB bring-up entirely - camera+AI loop only, no USB (diagnostic)" OFF)
+# USB streaming (UVC webcam over USB HS) is ABANDONED as of this entry - see
+# WORKLOG.md "USB streaming pipeline abandoned" for the full reasoning. Root
+# cause: SmartDMA camera capture only works with DCDC at Mid voltage, USB HS
+# PHY only works at Overdrive, and FRDM-MCXN947's single USB Type-C connector
+# (J11) is hard-wired to the HS controller only - the chip's separate USB FS
+# module (which wouldn't need Overdrive) has no accessible connector on this
+# board (confirmed in NXP's UM12018 board user manual, section 2.3), so
+# there's no way to route around the conflict without a hardware rework. A
+# software time-multiplex workaround (periodic Mid/Overdrive switching) was
+# built and confirmed stable on real hardware, but the underlying conflict is
+# a genuine chip/board limitation, not something fixable from this project's
+# code - same status as the abandoned LCD path below (source/display/), kept
+# in the tree in case NXP ever publishes a fix or this needs revisiting.
+#
+# ON by default now (camera+AI loop only, no USB) - this is the
+# actively-used build. Set to OFF to opt back into the abandoned USB
+# streaming path (still there, still builds, just not the default anymore).
+option(USB_STREAM_DIAGNOSTIC_DISABLE "Skip USB bring-up entirely - camera+AI loop only, no USB (USB streaming is abandoned, see WORKLOG.md)" ON)
 if(USB_STREAM_DIAGNOSTIC_DISABLE)
     mcux_add_macro(CC "-DDEMO_USB_STREAM_DISABLE=1")
 else()

@@ -183,8 +183,11 @@ static void LCD_InitPanel(void)
     LCD_WriteCommand(0x11U); /* Sleep out */
     SDK_DelayAtLeastUs(150000, SystemCoreClock);
 
-    /* MADCTL: memory access control (row/column exchange + BGR order). */
-    LCD_WriteCommandData(0x36U, (const uint8_t[]){0x68U}, 1U);
+    /* MADCTL: memory access control (row/column exchange + BGR order).
+     * 0x60, not 0x68 - see lcd_flexio_mculcd.c's LCD_InitPanel() comment:
+     * the camera buffer is RGB565 and is sent unmodified, so the BGR bit
+     * (0x08) must stay clear or R/B come out swapped (red/magenta tint). */
+    LCD_WriteCommandData(0x36U, (const uint8_t[]){0x60U}, 1U);
 
     LCD_WriteCommandData(0x3AU, (const uint8_t[]){0x55U}, 1U); /* Pixel format: 16bpp RGB565 */
 

@@ -97,6 +97,17 @@ void CAMERA_CAPTURE_Init(void)
     CAMERA_CAPTURE_InitSmartDma();
 }
 
+void CAMERA_CAPTURE_Deinit(void)
+{
+    NVIC_DisableIRQ(SMARTDMA_IRQn);
+    SMARTDMA_Deinit();
+}
+
+void CAMERA_CAPTURE_Reinit(void)
+{
+    CAMERA_CAPTURE_InitSmartDma();
+}
+
 bool CAMERA_CAPTURE_IsFrameReady(void)
 {
     return s_frameReady;

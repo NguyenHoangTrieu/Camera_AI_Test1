@@ -132,8 +132,16 @@ static void LCD_InitPanel(void)
     /* MADCTL: memory access control (row/column exchange + BGR order). See
      * README.md "If the screen still shows nothing" / "LCD bring-up tips"
      * for what to try if colors are swapped or the image is rotated/
-     * mirrored once something recognizable is on screen. */
-    LCD_WriteCommandData(0x36U, (const uint8_t[]){0x68U}, 1U);
+     * mirrored once something recognizable is on screen.
+     *
+     * Bit 3 (0x08) here previously requested BGR pixel order (0x68), but the
+     * OV7670 camera buffer is RGB565 (see camera_capture.c's
+     * kVIDEO_PixelFormatRGB565), and LCD_PushPixels() sends it through
+     * unmodified - so the panel was decoding R and B swapped, producing a
+     * strong red/magenta tint over the whole image (blue sky rendering
+     * pink, skin tones over-saturated red). Clearing that bit (0x60) makes
+     * the panel expect the same RGB order the camera already produces. */
+    LCD_WriteCommandData(0x36U, (const uint8_t[]){0x60U}, 1U);
 
     LCD_WriteCommandData(0x3AU, (const uint8_t[]){0x55U}, 1U); /* Pixel format: 16bpp RGB565 */
 

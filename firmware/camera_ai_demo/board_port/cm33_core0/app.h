@@ -170,4 +170,12 @@
  ******************************************************************************/
 void BOARD_InitHardware(void);
 
+/* SmartDMA camera capture only works with DCDC at Mid; USB HS PHY needs
+ * Overdrive - see hardware_init.c and WORKLOG.md "time-multiplex fallback".
+ * These just flip the regulator level (no USB PHY/clock bring-up, no camera
+ * re-init) - main() uses them to switch back and forth on its periodic
+ * refresh cycle. */
+void BOARD_SetRegulatorsMidVoltage(void);
+void BOARD_SetRegulatorsOverdriveVoltage(void);
+
 #endif /* _APP_H_ */
