@@ -1,11 +1,9 @@
 /*
- * model_runner.h - AI inference scaffold
+ * model_runner.h - AI inference scaffold.
  *
- * This is the extension point requested in requirement.md ("khuon code de
- * tich hop model AI ve sau"): a small, framework-agnostic C API that
- * main.c calls once per captured frame. The .c file is currently a stub
- * (always returns "no model") - see model_runner.c for how to wire in a
- * real TensorFlow Lite Micro or Edge Impulse model without changing main.c.
+ * Small, framework-agnostic C API that main.c calls once per captured
+ * frame. model_runner.c is currently a stub (always returns "no model") -
+ * see that file for how to wire in a real model without changing main.c.
  */
 #ifndef _MODEL_RUNNER_H_
 #define _MODEL_RUNNER_H_

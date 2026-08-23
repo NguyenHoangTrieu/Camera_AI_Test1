@@ -1,21 +1,14 @@
 /*
- * usb_device_descriptor.h - Camera_AI_Test1 USB Video Class (UVC) descriptors
+ * usb_device_descriptor.h - Camera_AI_Test1 USB Video Class (UVC)
+ * descriptors. Abandoned path - see WORKLOG.md.
  *
- * Adapted from mcuxsdk's usb_device_video_virtual_camera example
- * (examples/usb_examples/usb_device_video_virtual_camera/bm/), retargeted
- * from a single synthetic 176x144 MJPEG stream to a 320x240 *uncompressed*
- * YUY2 stream sourced from the real OV7670 camera (see
- * source/usb/usb_video_camera.c). YUY2 was picked over MJPEG because the
- * MCXN947 has no hardware JPEG encoder and the camera capture path
- * (source/camera/camera_capture.c) produces raw RGB565, not JPEG - YUY2 is
- * a standard "no compression, no vendor driver needed" UVC format that
- * every major OS's stock webcam stack already understands. See
- * WORKLOG.md for the format-choice discussion.
- *
- * Identifiers still say "VIRTUAL_CAMERA" in a few places purely because
- * that's what the class driver plumbing in usb_video_camera.c (itself
- * adapted near-verbatim from the SDK's virtual_camera.c) expects - it's a
- * cosmetic leftover, not a functional one.
+ * Adapted from mcuxsdk's usb_device_video_virtual_camera example,
+ * retargeted from a synthetic 176x144 MJPEG stream to a 320x240
+ * *uncompressed* YUY2 stream from the real OV7670 camera - YUY2 because
+ * MCXN947 has no hardware JPEG encoder and the camera path produces raw
+ * RGB565. Identifiers still say "VIRTUAL_CAMERA" in places because that's
+ * what usb_video_camera.c's class driver plumbing expects - cosmetic, not
+ * functional.
  */
 
 #ifndef __USB_DEVICE_DESCRIPTOR_H__
@@ -86,12 +79,9 @@
 #define USB_VIDEO_VIRTUAL_CAMERA_STREAM_ENDPOINT_COUNT (1U)
 #define USB_VIDEO_VIRTUAL_CAMERA_STREAM_ENDPOINT_IN (2U)
 
-/* 1024B/microframe is the largest packet a HS isochronous endpoint can use
- * without also encoding the "extra transactions per microframe"
- * high-bandwidth bits - 1024 * 8000 microframes/s = ~65.5 Mbit/s, comfortably
- * above the ~36.9 Mbit/s a 320x240 YUY2 stream needs at 30fps (see
- * USB_VIDEO_VIRTUAL_CAMERA_UNCOMPRESSED_FRAME_MAX_BIT_RATE below), so a
- * single-transaction packet is enough - no need for the extra complexity. */
+/* 1024B/microframe is the largest packet a HS isochronous endpoint can use without the
+ * "extra transactions per microframe" high-bandwidth bits - ~65.5 Mbit/s, comfortably above
+ * the ~36.9 Mbit/s a 320x240 YUY2 stream needs at 30fps, so one transaction is enough. */
 #define HS_STREAM_IN_PACKET_SIZE (1024U)
 #define FS_STREAM_IN_PACKET_SIZE (512U)
 #define HS_STREAM_IN_INTERVAL (0x04U) /* 2^(4-1) = 1ms */

@@ -2,23 +2,21 @@
  * main.c - Camera_AI_Test1
  *
  * Default build: OV7670 capture (via SmartDMA, J9 header) -> AI model hook
- * (stub, see source/ai/model_runner.c) -> J8 LCD (source/display/, live
- * preview, whatever fps CAMERA_CAPTURE_IsFrameReady()/LCD_DrawImage() settle
- * at - the FlexIO push is the bottleneck, low fps is expected and fine),
- * no USB.
+ * (stub, see source/ai/model_runner.c) -> Arduino-header LCD (GPIO
+ * bit-bang, live preview), no USB. See WORKLOG.md "LCD history" for why
+ * Arduino-header bit-bang (not J8/FlexIO) is the active default.
  *
- * USB Video Class (UVC) streaming over USB HS (source/usb/usb_video_camera.c)
- * is ABANDONED - see WORKLOG.md "USB streaming pipeline abandoned" entry for
- * the full reasoning (short version: SmartDMA camera capture and the USB HS
- * PHY need mutually exclusive DCDC voltage levels on this chip, and this
- * board's one USB connector is hard-wired to the HS controller only, so
- * there's no way around it in software). The code is still here and still
- * builds (CMakeLists.txt's USB_STREAM_DIAGNOSTIC_DISABLE=OFF) in case this
- * is revisited - if built, it runs time-multiplexed (periodic Mid-voltage
- * recapture / Overdrive-streaming switching, confirmed stable on hardware),
- * not truly live - see the #else branch below for that path's details.
+ * USB Video Class (UVC) streaming over USB High-Speed (source/usb/) is
+ * ABANDONED - SmartDMA camera capture and the USB HS PHY need mutually
+ * exclusive DCDC voltage levels on this chip, and this board's one USB
+ * connector is hard-wired to the HS controller only, so there's no
+ * software-only fix. Still builds (opt-in via CMakeLists.txt's
+ * USB_STREAM_DIAGNOSTIC_DISABLE=OFF); runs time-multiplexed (periodic
+ * Mid-voltage recapture / Overdrive-streaming switching) - see the #else
+ * branch below and WORKLOG.md.
  */
 
+#include <string.h>
 #include "app.h"
 #include "board.h"
 #include "camera_capture.h"
@@ -29,12 +27,10 @@
 #include "usb_video_camera.h"
 
 /*
- * Cheap "is the camera actually sending real image data" signature: min/max/
- * average over a strided sample of pixels (not the whole 76800-pixel frame,
- * to keep this fast). A dead/disconnected sensor tends to produce a flat
- * buffer (all-0x0000 or a fixed pattern), so min==max and avg is constant
- * frame to frame. A live camera pointed at anything but a perfectly uniform
- * surface produces min!=max, and the avg drifts as the scene changes.
+ * Cheap "is the camera actually sending real image data" signature:
+ * min/max/average over a strided pixel sample. A dead/disconnected sensor
+ * tends to produce a flat buffer (min==max, constant avg); a live one
+ * doesn't.
  */
 static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
                                              const uint16_t *frame) {
@@ -65,37 +61,28 @@ static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
 }
 
 #if !DEMO_USB_STREAM_DISABLE
-/*
- * Everything below, down to DEMO_CaptureFramesAtMidVoltage(), only exists
+/* Everything below, down to DEMO_CaptureFramesAtMidVoltage(), only exists
  * for the abandoned USB-streaming path - see the file-level comment above.
  *
- * Camera runs at Mid voltage (see BOARD_InitHardware()) - capture this many
- * frames before stopping SmartDMA and switching to Overdrive/USB. More than
- * 1 so the OV7670's auto-exposure/auto-gain have a few frames to converge
- * first (frame #1 alone tends to come back flat/underexposed - see
- * WORKLOG.md) - the frame streamed until the next refresh is whichever one
- * is on the buffer when this count is reached.
+ * Camera runs at Mid voltage - capture this many frames before stopping
+ * SmartDMA and switching to Overdrive/USB. More than 1 so auto-exposure/
+ * auto-gain have a few frames to converge (frame #1 tends to come back
+ * flat/underexposed).
  */
 #define DEMO_MID_VOLTAGE_WARMUP_FRAMES 10U
 
 /*
- * PERIODIC REFRESH (see WORKLOG.md "periodic refresh" entry): how long to
- * stay at Overdrive/streaming before dropping back to Mid to grab a fresh
- * frame. Confirmed stable on real hardware (see WORKLOG.md) at the 5000 ms
- * value below - a continuous v4l2 capture session survived multiple refresh
- * cycles with no disconnects. Don't set this too low: the host needs real
- * time to enumerate/negotiate over USB each time the PHY comes back up, and
- * DEMO_MID_VOLTAGE_WARMUP_FRAMES needs to actually complete (at ~10fps
- * effective) within a reasonable fraction of this window too - a WARMUP_FRAMES
- * that takes longer than HOLD_MS to capture means USB barely ever gets a
- * turn (this exact mistake happened once - see WORKLOG.md "why flashing
- * looked broken" entry).
+ * PERIODIC REFRESH: how long to stay at Overdrive/streaming before
+ * dropping back to Mid to grab a fresh frame. Confirmed stable at 5000 ms
+ * on real hardware (see WORKLOG.md). Keep this comfortably longer than
+ * DEMO_MID_VOLTAGE_WARMUP_FRAMES takes to capture plus USB enumeration
+ * overhead, or USB barely gets a turn.
  */
 #define DEMO_OVERDRIVE_HOLD_MS 5000U
 
 /* Capture (or re-capture) DEMO_MID_VOLTAGE_WARMUP_FRAMES frames at Mid
  * voltage, log the last one, then stop SmartDMA. Caller must already be at
- * DCDC Mid (BOARD_SetRegulatorsMidVoltage()) before calling this. */
+ * DCDC Mid before calling this. */
 static void DEMO_CaptureFramesAtMidVoltage(void) {
   uint16_t *frame = NULL;
   uint32_t frameNumber = 0U;
@@ -121,7 +108,11 @@ int main(void) {
   PRINTF("\r\nCamera_AI_Test1 - FRDM-MCXN947\r\n");
   PRINTF("Camera: OV7670 on J9 SmartDMA/Camera header\r\n");
 #if DEMO_USB_STREAM_DISABLE
+#if DEMO_LCD_ARDUINO_HEADER
+  PRINTF("Display: Arduino-header LCD live preview (camera + AI hook)\r\n\r\n");
+#else
   PRINTF("Display: J8 LCD live preview (camera + AI hook)\r\n\r\n");
+#endif
 #else
   PRINTF("Display: USB Video Class (UVC) webcam over USB High-Speed "
          "(abandoned path, time-multiplexed - see WORKLOG.md)\r\n\r\n");
@@ -132,12 +123,18 @@ int main(void) {
 
 #if DEMO_USB_STREAM_DISABLE
   /* Default build: camera + AI loop + LCD preview, continuous, DCDC stays
-   * at Mid the whole time (see BOARD_InitHardware()) - proven to run 700+
-   * clean frames. Pushing each frame out over the FlexIO/bit-bang LCD bus
-   * is much slower than the camera's own ~30fps capture rate, so the
-   * on-screen refresh rate ends up well below that - expected and fine
-   * (this is a live low-fps preview, not meant to be smooth video). */
+   * at Mid the whole time. Pushing each frame over the bit-bang LCD bus is
+   * much slower than the camera's ~30fps capture, so on-screen refresh
+   * ends up well below that - expected (low-fps preview, not smooth
+   * video). */
   LCD_Init();
+
+  /* Anti-tearing snapshot: SmartDMA keeps writing new frames into the live
+   * camera buffer at ~30fps while LCD_DrawImage() bit-bangs the previous
+   * one out over ~0.5s - reading straight from the live buffer during that
+   * push tore the image into multi-frame streaks. Copying it here first
+   * (<1ms) keeps the LCD rendering one consistent frame. */
+  static uint16_t s_lcdSnapshot[DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT];
 
   while (1) {
     if (CAMERA_CAPTURE_IsFrameReady()) {
@@ -146,13 +143,13 @@ int main(void) {
       uint16_t *frame = CAMERA_CAPTURE_GetFrameBuffer();
       uint32_t frameNumber = CAMERA_CAPTURE_GetFrameCount();
 
-      /* Every 15th frame (~2x/sec at 30fps) so the log stays readable
-       * instead of flooding the 115200-baud UART every frame. */
+      /* Every 15th frame (~2x/sec at 30fps) so the log stays readable. */
       if ((frameNumber % 15U) == 1U) {
         CAMERA_CAPTURE_LogFrameSignature(frameNumber, frame);
       }
 
-      LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, frame);
+      memcpy(s_lcdSnapshot, frame, sizeof(s_lcdSnapshot));
+      LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, s_lcdSnapshot);
 
       ai_model_result_t aiResult;
       AI_MODEL_RunInference(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
@@ -166,10 +163,10 @@ int main(void) {
     }
   }
 #else
-  /* USB streaming build: time-multiplexed, see the file-level comment at
-   * the top of this file. Mid-voltage capture phase first - wait for a
-   * few settled frames, then stop SmartDMA (capture and USB HS can't run
-   * at the same time on this chip). */
+  /* USB streaming build: time-multiplexed (see the file-level comment
+   * above). Mid-voltage capture phase first - wait for a few settled
+   * frames, then stop SmartDMA (capture and USB HS can't run at the same
+   * time on this chip). */
   DEMO_CaptureFramesAtMidVoltage();
   PRINTF("Camera: switching to Overdrive for USB.\r\n");
 
@@ -184,19 +181,15 @@ int main(void) {
   }
 
   /* USB_DeviceClockInit() (full PHY/PLL bring-up + enumeration) runs
-   * exactly ONCE here. The periodic refresh loop below only ever calls
-   * the lighter BOARD_SetRegulatorsMidVoltage()/
-   * BOARD_SetRegulatorsOverdriveVoltage() pair afterwards - see
-   * hardware_init.c's comments for why re-running the full PHY bring-up
-   * on an already-enumerated session is deliberately avoided. */
+   * exactly ONCE here. The periodic refresh loop below only calls the
+   * lighter regulator-level helpers afterwards - see hardware_init.c. */
   USB_DeviceClockInit();
   USB_VideoCamera_Init();
 
   while (1) {
     USB_VideoCamera_Task();
 
-    /* PERIODIC REFRESH - see the DEMO_OVERDRIVE_HOLD_MS comment above
-     * for the risk being tested here. */
+    /* PERIODIC REFRESH - see the DEMO_OVERDRIVE_HOLD_MS comment above. */
     SDK_DelayAtLeastUs(DEMO_OVERDRIVE_HOLD_MS * 1000U,
                        SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
 

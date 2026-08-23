@@ -1,9 +1,8 @@
 /*
  * usb_video_camera.h - USB Video Class (UVC) device streaming the OV7670
  * camera over USB High-Speed as a standard uncompressed-YUY2 webcam.
- *
- * Adapted from mcuxsdk's usb_device_video_virtual_camera example
- * (examples/usb_examples/usb_device_video_virtual_camera/bm/virtual_camera.h).
+ * Abandoned path - see WORKLOG.md. Adapted from mcuxsdk's
+ * usb_device_video_virtual_camera example.
  */
 
 #ifndef __USB_VIDEO_CAMERA_H__
@@ -71,20 +70,16 @@ typedef struct _usb_video_virtual_camera_struct
  ******************************************************************************/
 
 /* MCXN947-specific SPC/SCG/SYSCON bring-up for the USB HS PHY's PLL - raises DCDC/CoreLDO to
- * Overdrive among other things (board_port/cm33_core0/hardware_init.c). Call once from main(),
- * after CAMERA_CAPTURE_Deinit() has cleanly stopped SmartDMA - see WORKLOG.md "time-multiplex
- * fallback" entry for why camera capture and USB HS can't be active at the same time on this
- * chip, and CAMERA_CAPTURE_Deinit()'s doc comment (camera_capture.h) for the ordering rule. */
+ * Overdrive (hardware_init.c). Call once from main(), after CAMERA_CAPTURE_Deinit() has cleanly
+ * stopped SmartDMA - camera capture and USB HS can't be active at the same time on this chip. */
 void USB_DeviceClockInit(void);
 
 /* Registers the UVC class, brings up the USB HS controller and starts the device running.
- * Call once from main(), after USB_DeviceClockInit(). Streaming to the host only actually
- * starts once a host selects the streaming alternate setting (i.e. an app opens the camera). */
+ * Call once from main(), after USB_DeviceClockInit(). */
 void USB_VideoCamera_Init(void);
 
-/* Pumps USB device stack housekeeping (control transfers, enumeration, etc). Call in the main
- * loop's while(1); actual frame payloads are produced from CAMERA_CAPTURE_GetFrameBuffer() on
- * demand from the USB IN-endpoint-complete callback, not from this function. */
+/* Pumps USB device stack housekeeping. Call in the main loop; frame payloads are produced from
+ * CAMERA_CAPTURE_GetFrameBuffer() on demand from the USB IN-endpoint-complete callback. */
 void USB_VideoCamera_Task(void);
 
 #endif /* __USB_VIDEO_CAMERA_H__ */

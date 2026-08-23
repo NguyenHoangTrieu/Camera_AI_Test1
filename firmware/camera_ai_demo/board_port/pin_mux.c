@@ -1,20 +1,10 @@
 /*
  * pin_mux.c - Camera_AI_Test1 (FRDM-MCXN947)
  *
- * See pin_mux.h and ../../../README.md for background. Three groups of pins are
- * configured here:
- *   1. Debug UART      - copied from the stock frdmmcxn947 project_template.
- *   2. OV7670 camera    - copied from the verified NXP example
- *                         `display_examples/smartdma_camera_flexio_mculcd`
- *                         (board port for frdmmcxn947), because that example's
- *                         camera wiring (J9 SmartDMA/Camera header, pin 5..22)
- *                         is exactly the hardware described in requirement.md.
- *   3. J8 FlexIO/LCD header - copied verbatim (mux/pin numbers) from the
- *                         same NXP smartdma_camera_flexio_mculcd board
- *                         port, since this is the hardware-accelerated,
- *                         officially-supported way to drive a 16-bit
- *                         parallel LCD on this exact board - see
- *                         ../../../README.md for J8 pinout/wiring.
+ * See pin_mux.h and ../../../README.md. Four groups of pins are configured
+ * here: debug UART, OV7670 camera (J9, copied from NXP's
+ * smartdma_camera_flexio_mculcd example), J8 FlexIO/LCD header (abandoned,
+ * kept for reference), and Arduino header LCD (current default).
  */
 
 #include "fsl_common.h"
@@ -65,7 +55,6 @@ void BOARD_InitDebugUartPins(void)
 
 /* ---------------------------------------------------------------------- */
 /* 2. OV7670 camera pins - J9 SmartDMA/Camera header                       */
-/*    (copied from the NXP smartdma_camera_flexio_mculcd board port)       */
 /* ---------------------------------------------------------------------- */
 
 void BOARD_InitCameraPins(void)
@@ -87,8 +76,7 @@ void BOARD_InitCameraPins(void)
     PORT_SetPinMux(PORT0, 5U, kPORT_MuxAlt0);
     PORT0->PCR[5] = ((PORT0->PCR[5] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 
-    /* Camera 8-bit data bus D0..D7, routed to EZH/SmartDMA GPIO (ALT7),
-     * matching the SmartDMA camera firmware's expected pin group. */
+    /* Camera 8-bit data bus D0..D7, routed to EZH/SmartDMA GPIO (ALT7). */
     PORT_SetPinMux(PORT1, 4U, kPORT_MuxAlt7);  /* P1_4  = D0 */
     PORT1->PCR[4] = ((PORT1->PCR[4] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
     PORT_SetPinMux(PORT1, 5U, kPORT_MuxAlt7);  /* P1_5  = D1 */
@@ -120,9 +108,7 @@ void BOARD_InitCameraPins(void)
 }
 
 /* ---------------------------------------------------------------------- */
-/* 3. J8 FlexIO/LCD header - 8-bit parallel MIPI-DBI/8080 bus              */
-/*    (panel in hand only has LCD_D0..D7, not the full 16-bit bus J8       */
-/*    supports - see FLEXIO_MCULCD_DATA_BUS_WIDTH=8 in CMakeLists.txt)     */
+/* 3. J8 FlexIO/LCD header - 8-bit parallel MIPI-DBI/8080 bus (abandoned)  */
 /* ---------------------------------------------------------------------- */
 
 void BOARD_InitFlexioPins(void)
@@ -131,23 +117,16 @@ void BOARD_InitFlexioPins(void)
     CLOCK_EnableClock(kCLOCK_Port2);
     CLOCK_EnableClock(kCLOCK_Port4);
 
-    /* LCD_CS (P0_12) and LCD_RS/DC (P0_7) - plain GPIO, driven by the
-     * ST7796S driver's chip-select/data-command callbacks. */
+    /* LCD_CS (P0_12) and LCD_RS/DC (P0_7) - plain GPIO. */
     PORT_SetPinMux(PORT0, 12U, kPORT_MuxAlt0);
     PORT0->PCR[12] = ((PORT0->PCR[12] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
     PORT_SetPinMux(PORT0, 7U, kPORT_MuxAlt0);
     PORT0->PCR[7] = ((PORT0->PCR[7] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 
 #if DEMO_LCD_BITBANG
-    /*
-     * Diagnostic bit-bang mode (LCD_BITBANG_DIAGNOSTIC=ON in CMakeLists.txt):
-     * mux the same 10 signals below as plain GPIO (Alt0) instead of FlexIO
-     * (Alt6), so lcd_bitbang_j8.c can toggle them directly with
-     * GPIO_PinWrite() loops - see WORKLOG.md "Have not tried reverting to
-     * bit-banged GPIO on J8's pins" for why this exists. Pin numbers are
-     * identical to the FlexIO path below; only the mux ALT function and
-     * (for the data pins) the GPIO direction differ.
-     */
+    /* Diagnostic bit-bang mode (LCD_BITBANG_DIAGNOSTIC=ON): mux the same
+     * 10 signals as plain GPIO (Alt0) instead of FlexIO (Alt6), so
+     * lcd_bitbang.c can toggle them directly. */
     CLOCK_EnableClock(kCLOCK_Port2);
 
     PORT_SetPinMux(PORT0, 8U, kPORT_MuxAlt0); /* P0_8  = LCD_RD (GPIO) */
@@ -172,19 +151,11 @@ void BOARD_InitFlexioPins(void)
     PORT_SetPinMux(PORT4, 15U, kPORT_MuxAlt0); /* P4_15 = LCD_D7 (GPIO) */
     PORT4->PCR[15] = ((PORT4->PCR[15] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 #else
-    /*
-     * LCD_RD (P0_8) is plain GPIO here, NOT FlexIO0_D0 - deliberately not
-     * muxed to FlexIO. The SDK's FLEXIO_MCULCD driver only actively drives
-     * the RD pin during an explicit read transfer; between reads (i.e.
-     * during every write, which is all this project ever does other than
-     * the now-removed diagnostic ID read) its timer config reverts to
-     * "output disabled" and the pin floats. That floating RD line during
-     * writes was suspected as a real contributor to the "solid white, no
-     * image" bring-up bug - see WORKLOG.md. lcd_flexio_mculcd.c instead
-     * drives this pin as a continuously-held-high plain GPIO output (same
-     * as the bit-bang diagnostic driver already did, and that one displays
-     * an image correctly), so it can never float mid-write.
-     */
+    /* LCD_RD (P0_8) is plain GPIO here, NOT FlexIO0_D0 - the SDK's
+     * FLEXIO_MCULCD driver only drives RD during a read transfer, leaving
+     * it floating between writes, which was a suspected cause of the
+     * "solid white, no image" bring-up bug. Held continuously high here
+     * instead. */
     PORT_SetPinMux(PORT0, 8U, kPORT_MuxAlt0);
     PORT0->PCR[8] = ((PORT0->PCR[8] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 
@@ -193,8 +164,7 @@ void BOARD_InitFlexioPins(void)
     PORT0->PCR[9] = ((PORT0->PCR[9] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 
     /* 8-bit data bus LCD_D0..D7 = FLEXIO0_D16..D23. FLEXIO0_D24..D31
-     * (LCD_D8..D15, P4_16..P4_23) are intentionally left unconfigured -
-     * not used in 8-bit mode, and not wired to this panel anyway. */
+     * (LCD_D8..D15) are unused in 8-bit mode and not wired to this panel. */
     PORT_SetPinMux(PORT2, 8U, kPORT_MuxAlt6); /* P2_8  = FLEXIO0_D16 = LCD_D0 */
     PORT2->PCR[8] = ((PORT2->PCR[8] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
     PORT_SetPinMux(PORT2, 9U, kPORT_MuxAlt6); /* P2_9  = FLEXIO0_D17 = LCD_D1 */
@@ -217,8 +187,58 @@ void BOARD_InitFlexioPins(void)
     PORT_SetPinMux(PORT4, 7U, kPORT_MuxAlt0);
     PORT4->PCR[7] = ((PORT4->PCR[7] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
 
-    /* LCD_BLK / backlight enable (P4_6) - plain GPIO, driven high in
-     * LCD_Init(). See app.h for why this exists. */
+    /* LCD_BLK / backlight enable (P4_6) - plain GPIO, driven high in LCD_Init(). */
     PORT_SetPinMux(PORT4, 6U, kPORT_MuxAlt0);
     PORT4->PCR[6] = ((PORT4->PCR[6] & ~PORT_PCR_IBE_MASK) | PORT_PCR_IBE(1U));
+}
+
+/* ---------------------------------------------------------------------- */
+/* 4. Arduino header - GPIO bit-bang 8080 8-bit bus (current default)      */
+/* ---------------------------------------------------------------------- */
+
+void BOARD_InitArduinoLcdPins(void)
+{
+    const gpio_pin_config_t outputConfig   = {.pinDirection = kGPIO_DigitalOutput, .outputLogic = 0U};
+    const gpio_pin_config_t idleHighConfig = {.pinDirection = kGPIO_DigitalOutput, .outputLogic = 1U};
+
+    CLOCK_EnableClock(kCLOCK_Port0);
+    CLOCK_EnableClock(kCLOCK_Port1);
+    CLOCK_EnableClock(kCLOCK_Port4);
+
+    /* Data bus D0..D7. */
+    PORT_SetPinMux(PORT0, DEMO_LCD_D0_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_D1_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_D2_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT1, DEMO_LCD_D3_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_D4_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT1, DEMO_LCD_D5_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT1, DEMO_LCD_D6_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_D7_PIN, kPORT_MuxAlt0);
+    GPIO_PinInit(DEMO_LCD_D0_GPIO, DEMO_LCD_D0_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D1_GPIO, DEMO_LCD_D1_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D2_GPIO, DEMO_LCD_D2_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D3_GPIO, DEMO_LCD_D3_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D4_GPIO, DEMO_LCD_D4_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D5_GPIO, DEMO_LCD_D5_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D6_GPIO, DEMO_LCD_D6_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_D7_GPIO, DEMO_LCD_D7_PIN, &outputConfig);
+
+    /* RS/CS/RST - plugged in directly (Arduino A2/A3/A4). */
+    PORT_SetPinMux(PORT0, DEMO_LCD_RS_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_CS_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT0, DEMO_LCD_RST_PIN, kPORT_MuxAlt0);
+    GPIO_PinInit(DEMO_LCD_RS_GPIO, DEMO_LCD_RS_PIN, &outputConfig);
+    GPIO_PinInit(DEMO_LCD_CS_GPIO, DEMO_LCD_CS_PIN, &idleHighConfig);
+    GPIO_PinInit(DEMO_LCD_RST_GPIO, DEMO_LCD_RST_PIN, &idleHighConfig);
+
+    /* RD/WR - jumper-wired to Arduino D0/D1 (GPIO4); their native A0/A1
+     * socket positions have no GPIO function - see app.h. */
+    PORT_SetPinMux(PORT4, DEMO_LCD_RD_PIN, kPORT_MuxAlt0);
+    PORT_SetPinMux(PORT4, DEMO_LCD_WR_PIN, kPORT_MuxAlt0);
+    GPIO_PinInit(DEMO_LCD_RD_GPIO, DEMO_LCD_RD_PIN, &idleHighConfig);
+    GPIO_PinInit(DEMO_LCD_WR_GPIO, DEMO_LCD_WR_PIN, &idleHighConfig);
+
+    /* BLK (Arduino A5) - see app.h; safe default even if unconnected. */
+    PORT_SetPinMux(PORT0, DEMO_LCD_BLK_PIN, kPORT_MuxAlt0);
+    GPIO_PinInit(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, &outputConfig);
 }

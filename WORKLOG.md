@@ -1,5 +1,84 @@
 # WORKLOG - Camera_AI_Test1
 
+## Dropped the camera/LCD rotation experiment, trimmed code comments
+
+An in-progress experiment had added a `LCD_ROTATE_MODE` knob
+(`source/display/lcd_bitbang.c`) to rotate the 320x240 camera buffer 90°
+into a 240x320 portrait window on the LCD, with `LCD_DrawImageOriented()`
+doing the per-pixel strided reindexing. **Per explicit direction, this is
+reverted** - back to plain landscape, no rotation, matching what was
+already flash-tested working (see "Reverted to Arduino-header LCD" below).
+
+**What changed:**
+- `source/display/lcd_bitbang.c/.h`: removed `LCD_ROTATE_MODE` and
+  `LCD_DrawImageOriented()`. `LCD_InitPanel()`'s MADCTL is back to a fixed
+  landscape value (MV=1, BGR=1 - `0x28`), matching the 320x240 camera
+  buffer directly.
+- `source/main.c`: calls `LCD_DrawImage(0, 0, DEMO_BUFFER_WIDTH,
+  DEMO_BUFFER_HEIGHT, s_lcdSnapshot)` unconditionally now (both LCD
+  backends share this signature, so the old `#if DEMO_LCD_BITBANG` split
+  around the draw call is gone too).
+- `board_port/cm33_core0/app.h`: `DEMO_PANEL_WIDTH`/`DEMO_PANEL_HEIGHT`
+  back to `320`/`240`.
+- Also did a pass shortening comments across all of `source/` and
+  `board_port/` - the long investigation narratives stay here in
+  WORKLOG.md; the code itself now only carries short why-comments.
+
+Flash-tested: builds clean (`-Werror`, no warnings) via `./build.sh build`.
+
+---
+
+## Reverted to Arduino-header LCD (fallback from J8), confirmed building/booting on hardware
+
+Per explicit direction, dropped the J8/FlexIO detour and reverted to the
+project's original design: TFT on the **Arduino header**, GPIO bit-bang.
+USB streaming (separately abandoned, see entries below) is untouched by this
+- still opt-in via `USB_STREAM_DIAGNOSTIC_DISABLE=OFF`, unrelated to this
+LCD-path change.
+
+**What changed:**
+- `source/display/lcd_bitbang_j8.c/.h` renamed to `lcd_bitbang.c/.h` and its
+  comments generalized - the driver was already 100% pin-agnostic (only ever
+  touched `DEMO_LCD_*` macros from app.h, never a hardcoded J8 pin), so no
+  driver logic changed, just which pin set it's pointed at.
+- `board_port/cm33_core0/app.h`: added `DEMO_LCD_ARDUINO_HEADER` (default 1)
+  and a full Arduino-header pin block (`DEMO_LCD_D0..D7`, `RS/CS/RST`,
+  `RD/WR`, `BLK`), reusing the exact mapping confirmed working in an earlier
+  session before the J8 detour (see README.md's Pinout section for the full
+  table + jumper-wiring notes). The pre-existing J8 pin block is kept,
+  selected when `DEMO_LCD_ARDUINO_HEADER=0`.
+- `board_port/pin_mux.c`: added `BOARD_InitArduinoLcdPins()` (new), kept
+  `BOARD_InitFlexioPins()` (J8, unchanged) for the opt-in path.
+- `board_port/cm33_core0/hardware_init.c`: calls whichever pin-init function
+  `DEMO_LCD_ARDUINO_HEADER` selects; added the missing `kCLOCK_Gpio1` enable
+  (Arduino D3/D5/D6 sit on GPIO1, which nothing previously needed).
+- `CMakeLists.txt`: new `LCD_ARDUINO_HEADER_BITBANG` option, default `ON` -
+  selects `lcd_bitbang.c` + `-DDEMO_LCD_ARDUINO_HEADER=1`. Set `OFF` to fall
+  through to the pre-existing `LCD_BITBANG_DIAGNOSTIC` J8 switch (FlexIO vs.
+  J8 bit-bang), unchanged from before.
+- `source/main.c`: banner text now reports which LCD path is active instead
+  of unconditionally saying "J8".
+
+**Flash-tested on real hardware:** clean build (`-Werror`, no warnings),
+flashed, and the serial log confirms both the new pin path and the
+still-untouched camera path:
+```
+Display: Arduino-header LCD live preview (camera + AI hook)
+Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
+LCD: bit-bang GPIO on the Arduino header
+```
+Boots past `LCD_Init()` without hanging (same driver code path as the J8
+bit-bang variant that was already confirmed to display a correct image -
+just re-pointed at different pins now). **The physical picture on the
+Arduino-wired panel has not yet been visually re-confirmed in this session**
+- next step for whoever picks this up: check the screen after wiring the 2
+LCD_RD/LCD_WR jumpers described in README.md, and report back whether it
+matches the earlier J8-bit-bang bring-up's correct image or needs further
+adjustment (MADCTL orientation, RD/WR jumper target, etc - see README.md "If
+the screen shows nothing/garbled").
+
+---
+
 ## Why flashing looked broken after tuning DEMO_MID_VOLTAGE_WARMUP_FRAMES/DEMO_OVERDRIVE_HOLD_MS
 
 Not a flashing bug - `./build.sh flash` always succeeded. `main.c`'s
@@ -537,13 +616,14 @@ For the stable reference doc (pinout, build instructions), see
 [README.md](README.md) - this file is the messier "what's been tried and
 what happened" history, kept separate so README doesn't get cluttered.
 
-## Current status (most recent first)
+## Earlier: board boot reliability crisis (resolved - board is reachable and flashing normally as of the top entry in this file)
 
-**PAUSED: board currently boots unreliably (hangs very early, before camera
-or USB init even run) even with the known-good firmware, after a stressful
-recovery sequence - looks like leftover hardware/analog state, not a code
-regression. Needs a long power-off wait (minutes, not seconds) before the
-next session picks this back up.**
+**At the time, this was logged as PAUSED: board booting unreliably (hangs
+very early, before camera or USB init even run) even with known-good
+firmware, after a stressful recovery sequence. Since resolved** - the board
+has flashed and run correctly in every session since (see the top of this
+file for the most recent confirmation). Kept below for the recovery
+technique that worked, in case this recurs.
 
 What happened, in order:
 
@@ -1022,18 +1102,23 @@ This stayed working through every LCD-side change during the (now
 abandoned) LCD bring-up - if it ever stops working while adding USB, that's
 a NEW regression, not a pre-existing issue.
 
-## LCD history (abandoned)
+## LCD history (J8/FlexIO abandoned; project is back on the Arduino header - see the top of this file)
 
 The project spent several sessions bringing up an 8-bit-parallel TFT panel
 (`HSD024131-C1` per requirement.md, almost certainly ILI9341-family,
-240x320) on the board's J8 FlexIO/LCD header. Firmware code for this
-(`source/display/lcd_flexio_mculcd.c`, `source/display/lcd_bitbang_j8.c`,
-the LCD-related pin muxing in `board_port/pin_mux.c`, and the
+240x320) on the board's J8 FlexIO/LCD header, detouring away from the
+Arduino header the project started on. Firmware code for the J8 path
+(`source/display/lcd_flexio_mculcd.c`, the J8 half of
+`source/display/lcd_bitbang.c` (then named `lcd_bitbang_j8.c`) via
+`DEMO_LCD_ARDUINO_HEADER=0`, the LCD-related pin muxing in
+`board_port/pin_mux.c`'s `BOARD_InitFlexioPins()`, and the
 `LCD_BITBANG_DIAGNOSTIC` CMake option) is still present in the tree in case
-this is revisited later, but is no longer the active goal - **don't spend
-time re-debugging it unless the user explicitly asks to resume LCD work.**
+J8 is revisited later, but is no longer the active goal - **don't spend time
+re-debugging J8 unless the user explicitly asks to resume it.** The project
+has since reverted to the Arduino header (its original design) - see the
+top of this file for that change.
 
-Progress made before the pivot, for reference if resumed:
+Progress made on J8 before the pivot back, for reference if resumed:
 - Wiring, panel, and the generic MIPI-DCS init sequence were all confirmed
   good (a diagnostic GPIO bit-bang driver on the same J8 pins displayed a
   correct image).
@@ -1053,17 +1138,20 @@ Progress made before the pivot, for reference if resumed:
   divider, ~100 kHz/pin) that was built but never flashed/tested before the
   decision to abandon this path.
 
-## Key files touched by the (abandoned) LCD work
+## Key files touched by the (abandoned) J8 LCD work
 
 - `firmware/camera_ai_demo/source/display/lcd_flexio_mculcd.c` - FlexIO
-  hardware-bus LCD driver
-- `firmware/camera_ai_demo/source/display/lcd_bitbang_j8.c` - diagnostic
-  GPIO bit-bang LCD driver (proved wiring/panel/init sequence are fine)
+  hardware-bus LCD driver (J8 only, abandoned)
+- `firmware/camera_ai_demo/source/display/lcd_bitbang.c` (was
+  `lcd_bitbang_j8.c`) - generic GPIO bit-bang LCD driver, now the active
+  default (Arduino header) but originally written/proved out against J8's
+  pins
 - `firmware/camera_ai_demo/source/display/lcd_display.h` - selects between
   the two above via `DEMO_LCD_BITBANG`
 - `firmware/camera_ai_demo/board_port/pin_mux.c` - `BOARD_InitFlexioPins()`
-  has the J8 LCD pin muxing (both FlexIO and bit-bang variants)
+  has the J8 LCD pin muxing (both FlexIO and J8-bit-bang variants);
+  `BOARD_InitArduinoLcdPins()` (current default) is separate
 - `firmware/camera_ai_demo/board_port/cm33_core0/app.h` - LCD pin/geometry/
-  bus-speed macros
+  bus-speed macros for both pin sets, selected by `DEMO_LCD_ARDUINO_HEADER`
 - `firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c` - FlexIO
-  clock divider setup
+  clock divider setup (J8 only, harmless no-op when Arduino header is active)

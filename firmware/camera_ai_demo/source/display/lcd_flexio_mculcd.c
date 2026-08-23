@@ -1,17 +1,11 @@
 /*
  * lcd_flexio_mculcd.c - see lcd_flexio_mculcd.h
  *
- * Uses the SDK's FLEXIO_MCULCD driver (FlexIO peripheral, hardware-
- * accelerated 8080 bus - same transport NXP's own
- * `display_examples/smartdma_camera_flexio_mculcd` example uses on J8), but
- * NOT the SDK's ST7796S panel driver on top of it: the panel in hand turned
- * out not to actually be ST7796S silicon (confirmed by first bring-up:
- * ST7796S_Init()'s chip-specific commands produced backlight-on-but-no-image
- * flicker, whereas a generic MIPI-DCS init sequence - the same one this
- * project used successfully on the earlier bit-banged Arduino-header
- * revision - does not). So this file talks to the panel directly with that
- * same generic sequence, just over the fast FlexIO bus instead of bit-banged
- * GPIO.
+ * Uses the SDK's FLEXIO_MCULCD driver but NOT its ST7796S panel driver on
+ * top: the panel in hand isn't actually ST7796S silicon (its chip-specific
+ * init produced backlight-on-but-no-image). This talks to the panel
+ * directly with a generic MIPI-DCS init sequence instead, over FlexIO.
+ * Abandoned path (signal-integrity issues) - see WORKLOG.md.
  */
 
 #include "lcd_flexio_mculcd.h"
@@ -66,24 +60,14 @@ static void LCD_InitFlexioMcuLcd(void)
     GPIO_PinInit(DEMO_LCD_CS_GPIO, DEMO_LCD_CS_PIN, &pinConfig);
     GPIO_PinInit(DEMO_LCD_RS_GPIO, DEMO_LCD_RS_PIN, &pinConfig);
 
-    /*
-     * LCD_RD held high (inactive) as a plain GPIO output, continuously, for
-     * this driver's whole lifetime - NOT routed through FlexIO. The SDK's
-     * FLEXIO_MCULCD driver only actively drives RD during an explicit read
-     * transfer; between reads (i.e. during every write) its pin reverts to
-     * "output disabled" and floats. That floating RD line during writes was
-     * a real, previously-unidentified difference from the bit-bang
-     * diagnostic driver (which drove RD high the whole time and - unlike
-     * this file, before this fix - showed a correct image). See
-     * WORKLOG.md. There is no read path left in this file anymore as a
-     * result (the old LCD_DiagnosticReadId() diagnostic required FlexIO to
-     * own the RD pin, so it's gone too - see pin_mux.c for the matching
-     * pin-mux change).
-     */
+    /* LCD_RD held high (inactive) as a plain GPIO output, NOT routed
+     * through FlexIO - the SDK's FLEXIO_MCULCD driver only drives RD
+     * during an explicit read transfer, floating it between reads (i.e.
+     * during every write). A floating RD line during writes was a
+     * suspected contributor to the "solid white, no image" bring-up bug -
+     * see WORKLOG.md. */
     GPIO_PinInit(DEMO_LCD_RD_GPIO, DEMO_LCD_RD_PIN, &pinConfig);
 
-    /* Backlight: init as output and turn on immediately. Doesn't hurt if
-     * your panel's backlight is always-on / not wired to this pin. */
     GPIO_PinInit(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, &pinConfig);
     LCD_SetBacklight(true);
 
@@ -129,18 +113,10 @@ static void LCD_InitPanel(void)
     LCD_WriteCommand(0x11U); /* Sleep out */
     SDK_DelayAtLeastUs(150000, SystemCoreClock);
 
-    /* MADCTL: memory access control (row/column exchange + BGR order). See
-     * README.md "If the screen still shows nothing" / "LCD bring-up tips"
-     * for what to try if colors are swapped or the image is rotated/
-     * mirrored once something recognizable is on screen.
-     *
-     * Bit 3 (0x08) here previously requested BGR pixel order (0x68), but the
-     * OV7670 camera buffer is RGB565 (see camera_capture.c's
-     * kVIDEO_PixelFormatRGB565), and LCD_PushPixels() sends it through
-     * unmodified - so the panel was decoding R and B swapped, producing a
-     * strong red/magenta tint over the whole image (blue sky rendering
-     * pink, skin tones over-saturated red). Clearing that bit (0x60) makes
-     * the panel expect the same RGB order the camera already produces. */
+    /* MADCTL: memory access control. BGR cleared (0x60, not 0x68) since
+     * the OV7670 camera buffer is RGB565 and LCD_PushPixels() sends it
+     * unmodified - see README.md "LCD bring-up tips" if colors are
+     * swapped/rotated once something is on screen. */
     LCD_WriteCommandData(0x36U, (const uint8_t[]){0x60U}, 1U);
 
     LCD_WriteCommandData(0x3AU, (const uint8_t[]){0x55U}, 1U); /* Pixel format: 16bpp RGB565 */
@@ -171,12 +147,9 @@ void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 
 void LCD_PushPixels(const uint16_t *pixels, uint32_t count)
 {
-    /* The 8-bit-wide FLEXIO_MCULCD_WriteDataArrayBlocking() sends raw bytes
-     * in the order given, with no endianness handling - so each RGB565
-     * pixel has to be pre-swapped into wire order (high byte first) here.
-     * Batched into small chunks so this doesn't need a full-frame temp
-     * buffer (and never touches the caller's source buffer, which may be
-     * the live camera frame). */
+    /* Sends raw bytes with no endianness handling, so each RGB565 pixel
+     * needs pre-swapping to wire order (high byte first). Batched into
+     * chunks so this doesn't need a full-frame temp buffer. */
     uint8_t chunk[128]; /* 64 pixels per chunk */
 
     while (count > 0U)

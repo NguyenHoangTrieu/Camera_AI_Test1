@@ -44,17 +44,26 @@ mcux_add_macro(
     CC "-DFLEXIO_MCULCD_DATA_BUS_WIDTH=8"
 )
 
-# Diagnostic switch: bypass the FlexIO peripheral and bit-bang the same J8
-# pins with plain GPIO instead - see source/display/lcd_bitbang_j8.c and
-# WORKLOG.md "Have not tried reverting to bit-banged GPIO on J8's pins" for
-# why this exists. Off by default (normal FlexIO path).
-option(LCD_BITBANG_DIAGNOSTIC "Bit-bang the J8 LCD bus via GPIO instead of FlexIO (diagnostic)" OFF)
-if(LCD_BITBANG_DIAGNOSTIC)
-    set(LCD_BACKEND_SOURCE source/display/lcd_bitbang_j8.c source/display/lcd_bitbang_j8.h)
-    mcux_add_macro(CC "-DDEMO_LCD_BITBANG=1")
+# Which LCD connector/transport to build for - see WORKLOG.md "LCD history"
+# for the full story. Default (ON): GPIO bit-bang on the Arduino header,
+# the project's original design (requirement.md) and the one confirmed to
+# display a correct image. Set OFF to instead build for J8 (abandoned -
+# signal-integrity issues never fully resolved on the FlexIO hardware-bus
+# path); LCD_BITBANG_DIAGNOSTIC then additionally selects J8 bit-bang
+# (diagnostic-only, see source/display/lcd_bitbang.c) vs. J8 FlexIO.
+option(LCD_ARDUINO_HEADER_BITBANG "Drive the TFT via GPIO bit-bang on the Arduino header (fallback from J8 - see WORKLOG.md)" ON)
+if(LCD_ARDUINO_HEADER_BITBANG)
+    set(LCD_BACKEND_SOURCE source/display/lcd_bitbang.c source/display/lcd_bitbang.h)
+    mcux_add_macro(CC "-DDEMO_LCD_ARDUINO_HEADER=1 -DDEMO_LCD_BITBANG=1")
 else()
-    set(LCD_BACKEND_SOURCE source/display/lcd_flexio_mculcd.c source/display/lcd_flexio_mculcd.h)
-    mcux_add_macro(CC "-DDEMO_LCD_BITBANG=0")
+    option(LCD_BITBANG_DIAGNOSTIC "Bit-bang the J8 LCD bus via GPIO instead of FlexIO (diagnostic)" OFF)
+    if(LCD_BITBANG_DIAGNOSTIC)
+        set(LCD_BACKEND_SOURCE source/display/lcd_bitbang.c source/display/lcd_bitbang.h)
+        mcux_add_macro(CC "-DDEMO_LCD_ARDUINO_HEADER=0 -DDEMO_LCD_BITBANG=1")
+    else()
+        set(LCD_BACKEND_SOURCE source/display/lcd_flexio_mculcd.c source/display/lcd_flexio_mculcd.h)
+        mcux_add_macro(CC "-DDEMO_LCD_ARDUINO_HEADER=0 -DDEMO_LCD_BITBANG=0")
+    endif()
 endif()
 
 # USB streaming (UVC webcam over USB HS) is ABANDONED as of this entry - see
@@ -97,6 +106,28 @@ mcux_add_source(
             source/usb/usb_video_camera.c
             source/usb/usb_video_camera.h
 )
+
+# The whole SDK build defaults to -O0 (west's "debug" CMAKE_BUILD_TYPE,
+# not overridable per-app without touching SDK-wide config - see
+# WORKLOG.md). At -O0 every GPIO_PinWrite()/GPIO_PortSet() call in the LCD
+# bit-bang driver is a real function call (SDK headers mark them
+# "static inline", but -O0 mostly ignores that), so per-byte overhead is
+# dominated by call/return overhead, not the actual register write.
+#
+# -O2 here (scoped to just this one file) was tried and confirmed WRONG on
+# real hardware - the image came out glitched/noisy, i.e. with
+# LCD_BITBANG_DELAY_US=0 (lcd_bitbang.c) the panel's bus timing margin
+# comes entirely from GPIO_PinWrite()/GPIO_PortSet() instruction latency,
+# and -O2's inlining made those too fast for this panel to latch data
+# correctly. Left at -O0 (the SDK-wide default) instead - do not re-enable
+# without also raising LCD_BITBANG_DELAY_US back off 0 to compensate, and
+# re-test on hardware either way.
+# if(LCD_ARDUINO_HEADER_BITBANG OR LCD_BITBANG_DIAGNOSTIC)
+#     set_source_files_properties(
+#         ${CMAKE_CURRENT_SOURCE_DIR}/source/display/lcd_bitbang.c
+#         PROPERTIES COMPILE_OPTIONS "-O2"
+#     )
+# endif()
 
 # So source/main.c can #include "camera_capture.h" etc. by simple name.
 # NOTE: mcux_add_include() joins INCLUDES onto CMAKE_CURRENT_LIST_DIR itself

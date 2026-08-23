@@ -1,24 +1,13 @@
 /*
- * usb_video_camera.c - see usb_video_camera.h
+ * usb_video_camera.c - see usb_video_camera.h. Abandoned path, see
+ * WORKLOG.md.
  *
- * Adapted from mcuxsdk's usb_device_video_virtual_camera example
- * (examples/usb_examples/usb_device_video_virtual_camera/bm/virtual_camera.c).
- * Differences from the stock example:
- *   - The payload-fill function (USB_DeviceVideoPrepareVideoData) no longer
- *     walks a static MJPEG byte array looking for a 0xFFD9 end-of-image
- *     marker. It instead reads real pixels straight out of the live camera
- *     buffer (CAMERA_CAPTURE_GetFrameBuffer(), RGB565) and converts them to
- *     YUY2 on the fly, two source pixels (one YUY2 macropixel) at a time,
- *     tracking progress with a plain pixel counter instead of a marker scan.
- *   - Still-image capture (method 2 in the stock example) is dropped
- *     entirely - this device's descriptor doesn't advertise it (see
- *     usb_device_descriptor.c), so there's no still-probe/commit state to
- *     carry.
- *   - Frame-interval negotiation is trivial: only one frame interval
- *     (30fps, the camera's fixed capture rate) is offered, so there's
- *     nothing to throttle - every completed IN transfer immediately starts
- *     filling the next one, and frames are sent back-to-back as fast as USB
- *     bandwidth allows.
+ * Adapted from mcuxsdk's usb_device_video_virtual_camera example.
+ * Differences: the payload-fill function reads real pixels straight from
+ * the live camera buffer (RGB565) and converts to YUY2 on the fly instead
+ * of scanning a static MJPEG array; still-image capture is dropped (not
+ * advertised in the descriptor); only one frame interval (30fps, the
+ * camera's fixed rate) is offered, so there's nothing to throttle.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,11 +173,10 @@ static void USB_DeviceVideoPrepareVideoData(void)
 
     if (g_UsbDeviceVideoVirtualCamera.framePixelOffset >= totalPixels)
     {
-        /* Finished streaming this frame - mark end-of-frame, toggle the frame ID, and start over from pixel 0.
-         * CAMERA_CAPTURE_GetFrameBuffer() always points at the camera's single live capture buffer (SmartDMA
-         * keeps overwriting it in the background at 30fps - see camera_capture.c), so the next packet naturally
-         * starts pulling from whatever the camera has most recently captured. Same tearing tradeoff the LCD path
-         * already accepted (see WORKLOG.md "History") - acceptable for a preview stream. */
+        /* Finished streaming this frame - mark end-of-frame, toggle the frame ID, and start over
+         * from pixel 0. CAMERA_CAPTURE_GetFrameBuffer() always points at the camera's single live
+         * capture buffer (SmartDMA keeps overwriting it at 30fps), so the next packet naturally
+         * pulls from the most recent capture - same tearing tradeoff the LCD path accepts. */
         payloadHeader->headerInfoUnion.headerInfoBits.endOfFrame = 1U;
         g_UsbDeviceVideoVirtualCamera.framePixelOffset           = 0U;
         g_UsbDeviceVideoVirtualCamera.currentFrameId ^= 1U;
@@ -229,12 +217,9 @@ static usb_status_t USB_DeviceVideoRequest(class_handle_t handle, uint32_t event
             g_UsbDeviceVideoVirtualCamera.probeStruct->bFrameIndex  = probe->bFrameIndex;
             break;
         case USB_DEVICE_VIDEO_GET_CUR_VS_PROBE_CONTROL:
-        /* GET_MIN/GET_MAX/GET_RES/GET_DEF all fall through to the same answer as GET_CUR: this device
-         * only ever supports exactly one configuration (320x240 YUY2 @ 30fps - see
-         * usb_device_descriptor.c), so there's no actual range to report - min == max == res == def == cur.
-         * Without these, Linux's uvcvideo logs "Failed to query (GET_MIN) UVC probe control : -32" (a
-         * STALL) and fails format negotiation outright (confirmed via dmesg on real hardware - see
-         * WORKLOG.md); it has a workaround for a missing GET_DEF but not for a missing GET_MIN. */
+        /* GET_MIN/GET_MAX/GET_RES/GET_DEF fall through to the same answer as GET_CUR: this device
+         * only supports one configuration (320x240 YUY2 @ 30fps), so min == max == res == def == cur.
+         * Without these, Linux's uvcvideo STALLs and fails format negotiation - see WORKLOG.md. */
         case USB_DEVICE_VIDEO_GET_MIN_VS_PROBE_CONTROL:
         case USB_DEVICE_VIDEO_GET_MAX_VS_PROBE_CONTROL:
         case USB_DEVICE_VIDEO_GET_RES_VS_PROBE_CONTROL:
@@ -525,10 +510,8 @@ static usb_status_t USB_DeviceCallback(usb_device_handle handle, uint32_t event,
 
 void USB_VideoCamera_Init(void)
 {
-    /* USB_DeviceClockInit() already ran from main() - after
-     * CAMERA_CAPTURE_Deinit() cleanly stopped SmartDMA and raised DCDC to
-     * Overdrive - see the time-multiplex comment at the top of main.c and
-     * WORKLOG.md for why capture and USB HS can't run at the same time. */
+    /* USB_DeviceClockInit() already ran from main() - after CAMERA_CAPTURE_Deinit() cleanly
+     * stopped SmartDMA and raised DCDC to Overdrive - see WORKLOG.md. */
 #if (defined(FSL_FEATURE_SOC_SYSMPU_COUNT) && (FSL_FEATURE_SOC_SYSMPU_COUNT > 0U))
     SYSMPU_Enable(SYSMPU, 0);
 #endif /* FSL_FEATURE_SOC_SYSMPU_COUNT */

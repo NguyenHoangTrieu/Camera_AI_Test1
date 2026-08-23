@@ -1,18 +1,11 @@
 /*
  * fault_handler.c - diagnostic HardFault dump.
  *
- * The default HardFault_Handler (startup_MCXN947_cm33_core0.S) is just an
- * infinite loop - matches the "log stops completely, forever" symptom seen
- * when the board hangs shortly after USB streaming starts, but gives no clue
- * *why*. This overrides it (it's a weak symbol) to print the fault status
- * registers and the PC/LR that were active when the fault happened, before
- * looping forever - temporary, for tracking down that hang. Remove once
- * the hang is understood and fixed.
- *
- * MemManage/Bus/Usage faults aren't individually enabled anywhere in this
- * project (SCB->SHCSR MEMFAULTENA/BUSFAULTENA/USGFAULTENA are 0 by default),
- * so any of those escalate straight to HardFault_Handler too - one handler
- * is enough to catch all of them.
+ * Overrides the default (weak) HardFault_Handler, which is just an
+ * infinite loop, to print the fault status registers and PC/LR before
+ * looping forever. MemManage/Bus/Usage faults aren't individually enabled
+ * in this project, so they all escalate here too - one handler catches
+ * all of them.
  */
 #include <stdint.h>
 #include "fsl_device_registers.h"

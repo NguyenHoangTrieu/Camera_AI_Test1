@@ -1,9 +1,11 @@
 /*
  * hardware_init.c - Camera_AI_Test1 (FRDM-MCXN947)
  *
- * Clock/regulator bring-up copied from the NXP smartdma_camera_flexio_mculcd
- * board port (proven to work with this exact OV7670-on-J9 + FlexIO/ST7796S-
- * on-J8 combination).
+ * Camera clock bring-up copied from NXP's smartdma_camera_flexio_mculcd
+ * board port. LCD pin init calls whichever of
+ * BOARD_InitArduinoLcdPins()/BOARD_InitFlexioPins() (pin_mux.c)
+ * DEMO_LCD_ARDUINO_HEADER (app.h) selects - Arduino header is the current
+ * default.
  */
 
 #include "pin_mux.h"
@@ -22,18 +24,14 @@
 #include "usb_phy.h"
 
 /*
- * CONFIRMED (see WORKLOG.md "decisive isolation test" entry): SmartDMA
- * camera capture only runs reliably with DCDC_VDD_LVL at Mid (1.0V) - *any*
- * other level (Normal 1.1V or Overdrive 1.2V) makes it stop after ~2
- * frames, silently (no HardFault). USB HS PHY genuinely needs DCDC_VDD_LVL
- * raised to Overdrive (CLOCK_EnableUsbhsPhyPllClock() spins forever in its
- * PLL_LOCK busy-wait otherwise). Since both can't be true at once, these two
- * helpers isolate just the regulator-level switch (no USB clock/PHY
- * bring-up, no camera re-init) so callers can flip between the two voltage
- * levels repeatedly - see main()'s periodic-refresh loop, which drops back
- * to Mid every few seconds to grab a fresh frame, then returns to Overdrive
- * - without having to redo either USB_DeviceClockInit()'s one-time PHY/PLL
- * bring-up or CAMERA_CAPTURE_Init()'s OV7670 SCCB init each cycle.
+ * CONFIRMED (see WORKLOG.md): SmartDMA camera capture only runs reliably
+ * with DCDC_VDD_LVL at Mid (1.0V) - any other level stops it after ~2
+ * frames, silently. USB HS PHY needs DCDC_VDD_LVL at Overdrive
+ * (CLOCK_EnableUsbhsPhyPllClock() spins forever in PLL_LOCK otherwise).
+ * Since both can't be true at once, these two helpers isolate just the
+ * regulator-level switch (no USB clock/PHY bring-up, no camera re-init)
+ * so callers can flip between them repeatedly - see main()'s
+ * periodic-refresh loop.
  */
 void BOARD_SetRegulatorsMidVoltage(void)
 {
@@ -52,11 +50,9 @@ void BOARD_SetRegulatorsMidVoltage(void)
 
 void BOARD_SetRegulatorsOverdriveVoltage(void)
 {
-    /* NOTE: do NOT try raising CORELDO_VDD_LVL alone without DCDC_VDD_LVL -
-     * tried this on real hardware (see WORKLOG.md) and it left the chip's
-     * SWD/debug port completely unreachable (pyOCD couldn't reconnect even
-     * under reset, needed a physical power cycle to recover). Always raise
-     * both together, matching NXP's stock example, or neither. */
+    /* Do NOT raise CORELDO_VDD_LVL alone without DCDC_VDD_LVL - left the
+     * chip's SWD/debug port completely unreachable on real hardware (see
+     * WORKLOG.md). Always raise both together, or neither. */
     spc_active_mode_dcdc_option_t usbDcdcOpt = {
         .DCDCVoltage       = kSPC_DCDC_OverdriveVoltage,
         .DCDCDriveStrength = kSPC_DCDC_NormalDriveStrength,
@@ -75,20 +71,14 @@ void BOARD_SetRegulatorsOverdriveVoltage(void)
 
 /*
  * USB High-Speed (EHCI + dedicated HS PHY) bring-up for the UVC camera
- * stream (source/usb/usb_video_camera.c). Copied near-verbatim from the SDK
- * board port for this exact board+example
- * (examples/_boards/frdmmcxn947/usb_examples/usb_device_video_virtual_camera/
- * bm/hardware_init.c) - this sequence is MCXN947-specific SPC/SCG/SYSCON
- * register bring-up for the USB HS PHY's PLL, not something worth
- * re-deriving. No pin muxing is needed: unlike the camera/LCD signals, the
- * USB HS D+/D- lines are dedicated pins, not routed through PORT/pin mux.
+ * stream (source/usb/usb_video_camera.c). Copied near-verbatim from the
+ * SDK board port for this exact board+example - MCXN947-specific
+ * SPC/SCG/SYSCON register bring-up for the USB HS PHY's PLL.
  *
- * Call exactly ONCE, from main() after CAMERA_CAPTURE_Deinit() - see
- * BOARD_SetRegulatorsOverdriveVoltage()'s comment above for why this can't
- * run before/during camera capture. Unlike the two regulator helpers above,
- * this is NOT meant to be called repeatedly (re-running USB_EhciPhyInit()/
- * CLOCK_EnableUsbhsPhyPllClock() on an already-enumerated session is
- * untested and risky - see WORKLOG.md "periodic refresh" entry).
+ * Call exactly ONCE, from main() after CAMERA_CAPTURE_Deinit() - camera
+ * capture and USB HS can't run at the same time on this chip (see
+ * BOARD_SetRegulatorsOverdriveVoltage() above). Unlike the two regulator
+ * helpers above, don't call this repeatedly.
  */
 void USB_DeviceClockInit(void)
 {
@@ -148,46 +138,32 @@ void BOARD_InitHardware(void)
     BOARD_InitBootClocks();
     BOARD_InitDebugConsole();
 
-    /* Boot at Mid voltage - see BOARD_SetRegulatorsMidVoltage()'s comment
-     * above for why. main() switches to Overdrive itself later, only after
-     * camera capture has produced a few frames and stopped for good (or,
-     * for the periodic-refresh loop, drops back to Mid again briefly on
-     * each cycle) - see main() for the full time-multiplexed sequencing. */
+    /* Boot at Mid voltage - main() switches to Overdrive itself later,
+     * only after camera capture has produced a few frames and stopped
+     * for good (or drops back to Mid briefly each periodic-refresh
+     * cycle). */
     BOARD_SetRegulatorsMidVoltage();
 
-    /* Camera XCLK: route main clock out through CLKOUT (P2_2), divided down
-     * to a clock rate the OV7670 accepts. */
+    /* Camera XCLK: route main clock out through CLKOUT (P2_2), divided
+     * down to a clock rate the OV7670 accepts. */
     CLOCK_AttachClk(kMAIN_CLK_to_CLKOUT);
     CLOCK_SetClkDiv(kCLOCK_DivClkOut, 25U);
 
     /*
      * FlexIO clock, for the J8 8-bit parallel LCD bus. Divided down from
-     * PLL0 (150 MHz) to 37.5 MHz here (was /1 = 150 MHz) so
-     * FLEXIO_MCULCD_SetBaudRate()'s 8-bit timer divider (max 256) can reach
-     * a slower per-pin write rate than the un-divided clock allowed - see
-     * DEMO_FLEXIO_BAUDRATE_BPS in app.h for why: at 150 MHz source, the
-     * divider maxed out around 293 kHz/pin, which turned out to still be
-     * fast enough to corrupt pixel data on this specific (cheap/slow) panel
-     * (black/white noise instead of a clean image - see WORKLOG.md).
-     *
-     * NOTE: an earlier attempt at /50 (3 MHz FlexIO clock, ~10 kHz/pin) hung
-     * completely (LCD_Init() never returns - confirmed via serial log
-     * showing no output at all past the boot banner, not even the
-     * subsequent camera init line) - apparently below some real minimum
-     * operating point for this peripheral/mode, not just the software
-     * divider-field ceiling. /4 keeps the resulting SetBaudRate() divider
-     * value (~188) in the same range that's already proven to work (the
-     * un-divided 400 kHz/pin case used essentially the same divider
-     * magnitude, just against a 150 MHz source instead of 37.5 MHz) - a
-     * smaller, safer step to actually test the noise/speed hypothesis
-     * instead of jumping to an extreme that broke something else. See
-     * WORKLOG.md before changing this divider further.
+     * PLL0 (150 MHz) to 37.5 MHz so FLEXIO_MCULCD_SetBaudRate()'s divider
+     * can reach a slower per-pin rate than the undivided clock allowed -
+     * see DEMO_FLEXIO_BAUDRATE_BPS in app.h. See WORKLOG.md before
+     * changing this divider further (values below ~3 MHz have hung
+     * LCD_Init() completely on this panel).
      */
     CLOCK_SetClkDiv(kCLOCK_DivFlexioClk, 4u);
     CLOCK_AttachClk(kPLL0_to_FLEXIO);
 
-    /* GPIO module clocks for the LCD RST/CS/RS pins (GPIO0, GPIO4). */
+    /* GPIO module clocks for the LCD pins (GPIO0/GPIO4 for both pin sets;
+     * GPIO1 additionally needed for the Arduino header's D3/D5/D6). */
     CLOCK_EnableClock(kCLOCK_Gpio0);
+    CLOCK_EnableClock(kCLOCK_Gpio1);
     CLOCK_EnableClock(kCLOCK_Gpio4);
 
     /* Camera I2C (SCCB) clock. */
@@ -204,5 +180,9 @@ void BOARD_InitHardware(void)
     INPUTMUX_Deinit(INPUTMUX0); /* Only needed during setup, save power. */
 
     BOARD_InitCameraPins();
+#if DEMO_LCD_ARDUINO_HEADER
+    BOARD_InitArduinoLcdPins();
+#else
     BOARD_InitFlexioPins();
+#endif
 }

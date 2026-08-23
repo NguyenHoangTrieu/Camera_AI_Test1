@@ -1,12 +1,10 @@
 /*
  * usb_device_descriptor.c - see usb_device_descriptor.h
  *
- * VC (video control) side - input terminal / output terminal / processing
- * unit - is unchanged UVC boilerplate, copied as-is from the SDK's
- * usb_device_video_virtual_camera example. The VS (video streaming) format
- * and frame descriptors are rewritten for uncompressed YUY2 320x240 instead
- * of MJPEG 176x144, and the still-image-capture descriptor is dropped
- * (this device doesn't support still capture).
+ * VC (video control) side is unchanged UVC boilerplate from the SDK
+ * example. VS (video streaming) format/frame descriptors are rewritten
+ * for uncompressed YUY2 320x240 instead of MJPEG 176x144, and the
+ * still-image-capture descriptor is dropped (unsupported by this device).
  */
 
 #include "usb_device_config.h"
@@ -297,14 +295,10 @@ uint8_t g_UsbDeviceConfigurationDescriptor[] = {
     0x00U, 0x00U,  /* Not control supported */
     0x00U,         /* Index of a string descriptor */
     /* No bmVideoStandards byte here: that field only exists in UVC 1.1/1.5 Processing Unit
-     * descriptors, and USB_VIDEO_VIRTUAL_CAMERA_VC_PROCESSING_UNIT_LENGTH (0x0B, 11 bytes) is the
-     * UVC 1.0 length (bcdUVC 0x0100, see usb_device_descriptor.h) that does NOT include it. Adding
-     * this byte anyway - it was here before as an unconditional copy-paste from the stock example's
-     * #if USB_DEVICE_VIDEO_CLASS_VERSION_1_1/1_5-gated byte - desynced this descriptor from its own
-     * declared bLength, which corrupted the *entire rest* of the descriptor byte stream one byte
-     * off from where the parser expected it (confirmed on hardware: USB_DeviceSetSpeed()'s
-     * descriptor walk landed on a garbage bLength=0 and spun forever the moment a real host sent a
-     * bus reset - see WORKLOG.md). */
+     * descriptors, and USB_VIDEO_VIRTUAL_CAMERA_VC_PROCESSING_UNIT_LENGTH (0x0B) is the UVC 1.0
+     * length that excludes it. Adding it unconditionally (as a stray copy-paste once did) desyncs
+     * this descriptor from its own bLength and corrupts the rest of the byte stream - see
+     * WORKLOG.md for the hardware symptom this caused. */
 
     /* Standard VC Interrupt Endpoint Descriptor */
     USB_DESCRIPTOR_LENGTH_ENDPOINT, /* Size of this descriptor, in bytes: 7U */
@@ -582,12 +576,9 @@ usb_status_t USB_DeviceGetStringDescriptor(usb_device_handle handle,
     return kStatus_USB_Success;
 }
 
-/* Due to the difference of HS and FS descriptors, the device descriptors and configurations need to be updated to match
- * current speed.
- * As the default, the device descriptors and configurations are configured by using FS parameters for both EHCI and
- * KHCI.
- * When the EHCI is enabled, the application needs to call this function to update device by using current speed.
- * The updated information includes endpoint max packet size, endpoint interval, etc. */
+/* HS and FS descriptors differ, so device descriptors/configurations need to be updated to match
+ * the current speed once negotiated (default is FS parameters). Updates endpoint max packet size,
+ * interval, etc. */
 usb_status_t USB_DeviceSetSpeed(usb_device_handle handle, uint8_t speed)
 {
     usb_descriptor_union_t *descriptorHead;

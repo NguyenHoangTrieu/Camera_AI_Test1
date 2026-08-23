@@ -1,13 +1,8 @@
 /*
- * camera_capture.h - OV7670 capture via SmartDMA, J9 SmartDMA/Camera header
+ * camera_capture.h - OV7670 capture via SmartDMA, J9 SmartDMA/Camera header.
  *
- * Thin wrapper around the same camera + SmartDMA driver combination used by
- * the verified NXP example `display_examples/smartdma_camera_flexio_mculcd`.
- * The display side of this project (see ../display/lcd_flexio_mculcd.h) is
- * now also that same example's J8 FlexIO + ST7796S combination, which is
- * fast enough to draw directly from the live buffer below without the
- * anti-tearing snapshot/downscale step an earlier (GPIO bit-bang) revision
- * of this project needed.
+ * Thin wrapper around the camera + SmartDMA driver combination from NXP's
+ * `display_examples/smartdma_camera_flexio_mculcd` example.
  */
 #ifndef _CAMERA_CAPTURE_H_
 #define _CAMERA_CAPTURE_H_
@@ -18,17 +13,14 @@
 /*! @brief Init camera (SCCB/I2C + OV7670 registers) and boot the SmartDMA capture firmware. */
 void CAMERA_CAPTURE_Init(void);
 
-/*! @brief Stop the SmartDMA capture engine and gate its clock. The last captured frame stays
- * intact in the buffer returned by CAMERA_CAPTURE_GetFrameBuffer() (it's just SRAM, untouched
- * by this call) - only new capture stops. See WORKLOG.md "time-multiplex fallback" entry for
- * why this exists: SmartDMA only runs reliably with DCDC at Mid voltage, so this must be called
- * (camera capture fully stopped) before switching DCDC away from Mid for USB HS. */
+/*! @brief Stop the SmartDMA capture engine and gate its clock. The last frame stays intact in
+ * the buffer. Must be called (capture fully stopped) before switching DCDC away from Mid for
+ * USB HS - SmartDMA only runs reliably at DCDC Mid, see WORKLOG.md. */
 void CAMERA_CAPTURE_Deinit(void);
 
-/*! @brief Restart SmartDMA capture after CAMERA_CAPTURE_Deinit(), without re-running the OV7670
- * SCCB/I2C init (the sensor itself doesn't need re-configuring, only the SmartDMA pixel pipe
- * does). Caller must be at DCDC Mid voltage (BOARD_SetRegulatorsMidVoltage()) before calling
- * this - see WORKLOG.md "periodic refresh" entry. */
+/*! @brief Restart SmartDMA capture after CAMERA_CAPTURE_Deinit(), without re-running OV7670
+ * SCCB/I2C init (sensor doesn't need reconfiguring, only the pixel pipe does). Caller must be
+ * at DCDC Mid voltage before calling this. */
 void CAMERA_CAPTURE_Reinit(void);
 
 /*! @brief True once a new frame has landed in the capture buffer since the last call. */
