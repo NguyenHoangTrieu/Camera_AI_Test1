@@ -1,9 +1,11 @@
 /*
- * model_runner.h - AI inference scaffold.
+ * model_runner.h - AI inference API.
  *
  * Small, framework-agnostic C API that main.c calls once per captured
- * frame. model_runner.c is currently a stub (always returns "no model") -
- * see that file for how to wire in a real model without changing main.c.
+ * frame. Backed by an Edge Impulse FOMO object-detection model
+ * (source/ai/edge_impulse/ - "Test_Drowsy_NXP" project, closed_eye/
+ * open_eye/yawning) - see model_runner.cpp for the run_classifier()
+ * integration.
  */
 #ifndef _MODEL_RUNNER_H_
 #define _MODEL_RUNNER_H_
@@ -11,11 +13,25 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define AI_MODEL_MAX_BOXES 10U
+
 typedef struct
 {
-    bool valid;      /* false until a model is actually wired in */
-    int32_t classId; /* index into your label list */
-    float score;     /* 0..1 confidence */
+    const char *label; /* one of the model's class labels, e.g. "closed_eye" */
+    uint16_t x, y;      /* top-left corner, in AI_MODEL_GetInputWidth/Height() space */
+    uint16_t width, height;
+    float score; /* 0..1 confidence */
+} ai_bbox_t;
+
+typedef struct
+{
+    bool valid; /* true if at least one box was detected */
+    uint32_t boxCount;
+    ai_bbox_t boxes[AI_MODEL_MAX_BOXES];
 } ai_model_result_t;
 
 /*! @brief One-time setup (allocate tensor arena, load model, etc). */
@@ -27,8 +43,18 @@ void AI_MODEL_Init(void);
  * @param pixels RGB565 frame, `width * height` pixels.
  * @param width  frame width in pixels.
  * @param height frame height in pixels.
- * @param result output classification/detection result.
+ * @param result output detection result (bounding boxes).
  */
 void AI_MODEL_RunInference(const uint16_t *pixels, uint16_t width, uint16_t height, ai_model_result_t *result);
+
+/*! @brief Model's own input resolution - bbox coords in ai_model_result_t are
+ *  in this space, not the camera's; scale by DEMO_BUFFER_WIDTH/HEIGHT
+ *  divided by these before drawing on the (320x240) camera frame. */
+uint16_t AI_MODEL_GetInputWidth(void);
+uint16_t AI_MODEL_GetInputHeight(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _MODEL_RUNNER_H_ */

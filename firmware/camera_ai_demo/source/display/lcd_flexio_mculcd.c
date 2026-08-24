@@ -145,7 +145,7 @@ void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     /* Transfer stays open (CS asserted) - LCD_PushPixels() closes it. */
 }
 
-void LCD_PushPixels(const uint16_t *pixels, uint32_t count)
+void LCD_PushPixelsOpen(const uint16_t *pixels, uint32_t count)
 {
     /* Sends raw bytes with no endianness handling, so each RGB565 pixel
      * needs pre-swapping to wire order (high byte first). Batched into
@@ -167,8 +167,17 @@ void LCD_PushPixels(const uint16_t *pixels, uint32_t count)
         pixels += n;
         count -= n;
     }
+}
 
+void LCD_EndWindow(void)
+{
     FLEXIO_MCULCD_StopTransfer(&s_flexioLcdDev);
+}
+
+void LCD_PushPixels(const uint16_t *pixels, uint32_t count)
+{
+    LCD_PushPixelsOpen(pixels, count);
+    LCD_EndWindow();
 }
 
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height, const uint16_t *pixels)

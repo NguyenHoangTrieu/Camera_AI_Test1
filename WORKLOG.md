@@ -1,1157 +1,808 @@
 # WORKLOG - Camera_AI_Test1
 
-## Dropped the camera/LCD rotation experiment, trimmed code comments
-
-An in-progress experiment had added a `LCD_ROTATE_MODE` knob
-(`source/display/lcd_bitbang.c`) to rotate the 320x240 camera buffer 90°
-into a 240x320 portrait window on the LCD, with `LCD_DrawImageOriented()`
-doing the per-pixel strided reindexing. **Per explicit direction, this is
-reverted** - back to plain landscape, no rotation, matching what was
-already flash-tested working (see "Reverted to Arduino-header LCD" below).
-
-**What changed:**
-- `source/display/lcd_bitbang.c/.h`: removed `LCD_ROTATE_MODE` and
-  `LCD_DrawImageOriented()`. `LCD_InitPanel()`'s MADCTL is back to a fixed
-  landscape value (MV=1, BGR=1 - `0x28`), matching the 320x240 camera
-  buffer directly.
-- `source/main.c`: calls `LCD_DrawImage(0, 0, DEMO_BUFFER_WIDTH,
-  DEMO_BUFFER_HEIGHT, s_lcdSnapshot)` unconditionally now (both LCD
-  backends share this signature, so the old `#if DEMO_LCD_BITBANG` split
-  around the draw call is gone too).
-- `board_port/cm33_core0/app.h`: `DEMO_PANEL_WIDTH`/`DEMO_PANEL_HEIGHT`
-  back to `320`/`240`.
-- Also did a pass shortening comments across all of `source/` and
-  `board_port/` - the long investigation narratives stay here in
-  WORKLOG.md; the code itself now only carries short why-comments.
-
-Flash-tested: builds clean (`-Werror`, no warnings) via `./build.sh build`.
-
----
-
-## Reverted to Arduino-header LCD (fallback from J8), confirmed building/booting on hardware
-
-Per explicit direction, dropped the J8/FlexIO detour and reverted to the
-project's original design: TFT on the **Arduino header**, GPIO bit-bang.
-USB streaming (separately abandoned, see entries below) is untouched by this
-- still opt-in via `USB_STREAM_DIAGNOSTIC_DISABLE=OFF`, unrelated to this
-LCD-path change.
-
-**What changed:**
-- `source/display/lcd_bitbang_j8.c/.h` renamed to `lcd_bitbang.c/.h` and its
-  comments generalized - the driver was already 100% pin-agnostic (only ever
-  touched `DEMO_LCD_*` macros from app.h, never a hardcoded J8 pin), so no
-  driver logic changed, just which pin set it's pointed at.
-- `board_port/cm33_core0/app.h`: added `DEMO_LCD_ARDUINO_HEADER` (default 1)
-  and a full Arduino-header pin block (`DEMO_LCD_D0..D7`, `RS/CS/RST`,
-  `RD/WR`, `BLK`), reusing the exact mapping confirmed working in an earlier
-  session before the J8 detour (see README.md's Pinout section for the full
-  table + jumper-wiring notes). The pre-existing J8 pin block is kept,
-  selected when `DEMO_LCD_ARDUINO_HEADER=0`.
-- `board_port/pin_mux.c`: added `BOARD_InitArduinoLcdPins()` (new), kept
-  `BOARD_InitFlexioPins()` (J8, unchanged) for the opt-in path.
-- `board_port/cm33_core0/hardware_init.c`: calls whichever pin-init function
-  `DEMO_LCD_ARDUINO_HEADER` selects; added the missing `kCLOCK_Gpio1` enable
-  (Arduino D3/D5/D6 sit on GPIO1, which nothing previously needed).
-- `CMakeLists.txt`: new `LCD_ARDUINO_HEADER_BITBANG` option, default `ON` -
-  selects `lcd_bitbang.c` + `-DDEMO_LCD_ARDUINO_HEADER=1`. Set `OFF` to fall
-  through to the pre-existing `LCD_BITBANG_DIAGNOSTIC` J8 switch (FlexIO vs.
-  J8 bit-bang), unchanged from before.
-- `source/main.c`: banner text now reports which LCD path is active instead
-  of unconditionally saying "J8".
-
-**Flash-tested on real hardware:** clean build (`-Werror`, no warnings),
-flashed, and the serial log confirms both the new pin path and the
-still-untouched camera path:
-```
-Display: Arduino-header LCD live preview (camera + AI hook)
-Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-LCD: bit-bang GPIO on the Arduino header
-```
-Boots past `LCD_Init()` without hanging (same driver code path as the J8
-bit-bang variant that was already confirmed to display a correct image -
-just re-pointed at different pins now). **The physical picture on the
-Arduino-wired panel has not yet been visually re-confirmed in this session**
-- next step for whoever picks this up: check the screen after wiring the 2
-LCD_RD/LCD_WR jumpers described in README.md, and report back whether it
-matches the earlier J8-bit-bang bring-up's correct image or needs further
-adjustment (MADCTL orientation, RD/WR jumper target, etc - see README.md "If
-the screen shows nothing/garbled").
-
----
-
-## Why flashing looked broken after tuning DEMO_MID_VOLTAGE_WARMUP_FRAMES/DEMO_OVERDRIVE_HOLD_MS
-
-Not a flashing bug - `./build.sh flash` always succeeded. `main.c`'s
-`DEMO_MID_VOLTAGE_WARMUP_FRAMES` got changed to `5000` (from `10`) and
-`DEMO_OVERDRIVE_HOLD_MS` to `100` (from `5000`) at the same time, which
-together make the board functionally unusable as a webcam even though it's
-running correctly:
-
-- At ~10-12fps effective capture rate, 5000 frames takes roughly **7-8
-  minutes** per Mid-voltage capture phase (confirmed by halting over the
-  debug probe and watching `s_frameCount` advance normally, ~10fps, not
-  stuck).
-- `DEMO_OVERDRIVE_HOLD_MS=100` then only holds Overdrive/USB up for
-  **100 milliseconds** before dropping straight back to Mid for another
-  ~7-8 minute capture phase - nowhere near enough time for a host to
-  actually enumerate the device (USB enumeration/driver binding typically
-  takes several hundred ms to a few seconds on its own).
-
-Net effect: the board spends the overwhelming majority of its time in a
-multi-minute Mid-voltage capture phase, and even when it briefly reaches
-Overdrive, drops back down again before USB can do anything useful - so
-from the host's point of view, the webcam functionally never appears,
-looking identical to a failed flash. Confirmed via debug-probe halt+PC read
-that the board was alive and correctly executing `DEMO_CaptureFramesAtMidVoltage()`'s
-poll loop the whole time, not hung.
-
-**Takeaway for anyone retuning these two values** (now only relevant if
-opting back into the abandoned USB path - see the entry below): keep
-`DEMO_OVERDRIVE_HOLD_MS` comfortably longer than the real wall-clock time
-`DEMO_MID_VOLTAGE_WARMUP_FRAMES` takes to capture (frames / ~10-12fps
-effective), with enough extra margin for USB enumeration overhead. The
-values reverted to and left in place (10 frames / 5000 ms hold) are the
-ones already confirmed stable on hardware in the periodic-refresh testing
-below.
-
----
-
-## USB streaming pipeline abandoned - reverted to camera-only default
-
-**Decision: stop pursuing USB (UVC) webcam streaming as the active build.**
-Not a code bug - a confirmed hardware/board limitation with no remaining
-software fix, and no accessible hardware workaround on this specific board
-either. Reasoning, in order:
-
-1. The periodic-refresh time-multiplex workaround (previous entry below)
-   works and is stable, but it's fundamentally a workaround for a real
-   hardware conflict (SmartDMA needs DCDC Mid, USB HS PHY needs DCDC
-   Overdrive, confirmed mutually exclusive on this chip - see "decisive
-   isolation test" entry further below) - not a fix. Asked: is there a
-   genuinely better option, or should this be abandoned?
-2. Checked whether switching from USB High-Speed (EHCI) to USB Full-Speed
-   (KHCI) - which doesn't need DCDC Overdrive at all, confirmed by reading
-   the SDK's own KHCI `USB_DeviceClockInit()` path (`middleware/usb/config/
-   device/khci/`, and the stock `usb_device_video_virtual_camera` example's
-   `hardware_init.c`) - would sidestep the whole conflict, since the
-   MCXN947 silicon genuinely has two independent USB modules (confirmed via
-   `USBFS0_BASE`/`USB_BASE_PTRS` in `devices/MCX/MCXN/MCXN947/
-   MCXN947_cm33_core0_COMMON.h` - a real, separate FS controller, not just a
-   HS-PHY low-speed mode).
-3. **This does NOT work on FRDM-MCXN947 specifically.** NXP's own board user
-   manual (UM12018, downloaded and grepped - "2.3 USB interface" section)
-   states outright: *"The target MCU (MCXN947) features two USB modules (FS
-   USB and HS USB)... On the FRDM-MCXN947 board, only the HS USB controller
-   and PHY interface is used and it is connected to the USB Type-C
-   connector (J11)."* Confirmed independently: grepped the board's own
-   `pin_mux.c`/`pin_mux.h` for any USB0/USBFS reference - none exist. There
-   is exactly one USB Type-C connector for the target MCU on this board
-   (J11), and it's hard-wired to the HS controller only. The FS module's
-   D+/D- pins aren't broken out to any accessible connector or header - no
-   way to reach it without soldering directly to the MCU package (not a
-   real option). So the one lead that would have been a genuine fix
-   (not a workaround) is a dead end specific to this board's hardware
-   design, not something fixable in firmware.
-
-With no remaining better option, and per explicit direction, USB streaming
-is now **abandoned** (deprecated, matching how the earlier LCD path was
-handled - kept in the tree, not deleted, not the default, in case NXP
-publishes a fix or this is revisited):
-
-- `CMakeLists.txt`: `USB_STREAM_DIAGNOSTIC_DISABLE` default flipped from
-  `OFF` to `ON` - **camera-only (no USB) is now the default build**. Set
-  `OFF` to opt back into the abandoned USB path (still builds clean, still
-  works as the periodic-refresh feed described in the previous entry).
-- `source/main.c`: the USB-only helper function/macros
-  (`DEMO_CaptureFramesAtMidVoltage()`, `DEMO_MID_VOLTAGE_WARMUP_FRAMES`,
-  `DEMO_OVERDRIVE_HOLD_MS`) are now wrapped in `#if !DEMO_USB_STREAM_DISABLE`
-  so the new default build doesn't fail `-Werror=unused-function`. Boot
-  banner text is now conditional too (says "Display: none" on the default
-  build instead of always claiming USB).
-- `README.md`: rewritten top banner, "USB (UVC webcam)" section (renamed
-  "...abandoned"), "Known limitations", and "Building and flashing" to
-  reflect camera-only as the default and USB as opt-in/abandoned.
-- Flash-tested the new default build on real hardware: builds clean, and
-  `s_frameCount` (halted via debug probe) advances normally (81 -> 117 over
-  3 seconds, ~12fps effective) - camera-only path works as expected. Also
-  confirmed the abandoned USB variant (`-DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF`)
-  still builds clean, unchanged behavior from the previous entry.
-
-**If this is ever revisited:** the two real remaining options are (a) get
-NXP to confirm/fix this as a chip erratum (nothing found in the current
-public errata sheet - see "decisive isolation test" entry below for what
-was already checked), or (b) a hardware rework to route the USB FS module's
-D+/D- to an accessible connector/header on a modified board (not the stock
-FRDM-MCXN947). Software-only fixes on this exact board are exhausted.
-
----
-
-## Earlier: periodic refresh implemented and confirmed stable on hardware - live-ish video now works
-
-Followed up on the single-shot time-multiplex fallback's "known limitation"
-(frozen forever, no refresh) by implementing and testing the previously-
-flagged-as-risky periodic refresh: drop back to Mid every
-`DEMO_OVERDRIVE_HOLD_MS` (5000 ms) to grab a fresh frame, then return to
-Overdrive, repeating for the life of the session - instead of a single
-capture-once-then-freeze-forever.
-
-**Implementation** (`board_port/cm33_core0/hardware_init.c`,
-`source/camera/camera_capture.c/.h`, `source/main.c`):
-- `hardware_init.c`: split the old one-shot `USB_DeviceClockInit()` into
-  `BOARD_SetRegulatorsMidVoltage()` / `BOARD_SetRegulatorsOverdriveVoltage()`
-  (just the DCDC/CoreLDO regulator switch, reusable, no USB clock/PHY
-  bring-up) plus the full `USB_DeviceClockInit()` (still calls
-  `BOARD_SetRegulatorsOverdriveVoltage()` internally, but also does the
-  one-time SYSLDO/LDOCSR/SOSC/PLL/PHY bring-up - deliberately called only
-  ONCE per boot, never repeated, since re-running PHY/PLL bring-up on an
-  already-enumerated session was the untested/risky part, not the DCDC
-  level switch itself).
-- `camera_capture.c/.h`: added `CAMERA_CAPTURE_Reinit()` - restarts SmartDMA
-  without re-running the OV7670 SCCB/I2C init (sensor doesn't need
-  reconfiguring, just the pixel pipe).
-- `main.c`: extracted the capture-N-frames-then-deinit logic into
-  `DEMO_CaptureFramesAtMidVoltage()`, reused for both the initial boot
-  capture and every refresh. The main loop (USB-enabled build) now, after
-  the one-time `USB_DeviceClockInit()`/`USB_VideoCamera_Init()`: waits
-  `DEMO_OVERDRIVE_HOLD_MS`, drops to Mid
-  (`BOARD_SetRegulatorsMidVoltage()`), re-captures
-  (`CAMERA_CAPTURE_Reinit()` + `DEMO_CaptureFramesAtMidVoltage()`), returns
-  to Overdrive (`BOARD_SetRegulatorsOverdriveVoltage()`), and repeats
-  forever. `USB_VideoCamera_Task()` is a true no-op in this bare-metal EHCI
-  build (`USB_DEVICE_CONFIG_USE_TASK=0` for the `ehci` USB config, confirmed
-  in `middleware/usb/config/device/ehci/usb_device_config.h`) - all USB
-  housekeeping is IRQ-driven, so blocking the main loop for the whole
-  Mid-voltage recapture window doesn't stall anything USB-side.
-
-**Flash-tested and confirmed stable on real hardware**, several ways:
-- `lsusb` polled every 5-10s for a continuous 30s window: same
-  `Bus 003 Device NNN` the entire time (no re-enumeration) - i.e. multiple
-  refresh cycles happened with the device just sitting idle (not actively
-  streamed) and nothing visibly changed on the host side.
-- Captured a frame, waited 6s (past a refresh boundary), captured again:
-  bytes differed - confirms the refresh is actually re-capturing new pixel
-  data, not just holding the same buffer.
-- **The real test - a single continuous v4l2 capture session spanning
-  multiple refresh cycles while actively open and streaming**:
-  `gst-launch-1.0 v4l2src device=/dev/videoN ! ... ! multifilesink ...` run
-  for 35 continuous seconds (~7 refresh cycles at the 5s interval) without
-  ever closing/reopening the device. Result: 223 frames captured, zero
-  pipeline errors, zero USB disconnects in `dmesg` during the session -
-  and exactly 2 real content changes across those 223 frames (an MD5 diff
-  per frame), landing right where the ~5s refresh boundaries would be
-  expected within a 35s window - i.e. the image visibly updates roughly
-  every 5 seconds while the USB connection stays up the entire time. This
-  directly answers the open question from the previous entry: dropping DCDC
-  back to Mid and returning to Overdrive, while the USB HS PHY is already
-  enumerated and actively mid-stream, does *not* disconnect or corrupt the
-  session.
-- Caveat worth recording: earlier in this same testing session, a handful
-  of `usb 3-9: USB disconnect` / re-enumeration events *did* show up in
-  `dmesg`, but at irregular intervals (60s-370s apart, not the fixed 5s
-  refresh period) that lined up with when short-lived, repeated
-  `gst-launch-1.0` invocations were being opened and closed one after
-  another (each a fresh device open/close) - not with the firmware's
-  refresh timer itself. The clean 35s continuous-session test (one
-  open, held through several refreshes) is the more direct test of "does
-  refreshing disrupt an active session," and it showed no issues - but if
-  disconnects are ever seen in real usage, checking whether they correlate
-  with the host app repeatedly reopening the device (vs. one long-lived
-  session) is the first thing to check before blaming the refresh logic
-  again.
-
-**Net result: this is now a low-frame-rate but genuinely live camera** (a
-new image roughly every `DEMO_OVERDRIVE_HOLD_MS`, not a single frozen
-frame) - a real improvement over the single-shot fallback, given the
-underlying SmartDMA/DCDC hardware conflict still can't be fixed directly.
-`DEMO_OVERDRIVE_HOLD_MS` (`source/main.c`) can be tuned - shorter means more
-frequent updates but more time spent in the Mid-voltage capture phase
-(where USB is nominally still enumerated but not delivering fresh isochronous
-data - not tested how a host handles a long stall there beyond the 5s used
-here).
-
----
-
-## Earlier: time-multiplex fallback implemented and confirmed working on hardware
-
-Followed up on the "Remaining leads" list from the decisive isolation test
-below, in order:
-
-1. **SmartDMA clock divider retuning - dead end, confirmed from the driver
-   itself.** `kCLOCK_Smartdma` (`devices/MCX/MCXN/MCXN947/drivers/
-   fsl_clock.h`) is just an AHB clock gate (`CLK_GATE_DEFINE(AHB_CLK_CTRL1,
-   31)`) - no clock source select, no divider. SmartDMA runs straight off
-   the fixed 150 MHz AHB clock, which doesn't change with DCDC voltage
-   level in this SDK's design. There is nothing to retune - this idea
-   doesn't apply.
-2. **NXP errata / community search - no matching entry found.** Downloaded
-   and grepped NXP's official `MCXNx4x_0P02G` mask-set errata PDF
-   (nxp.com/docs/en/errata/MCXNx4x_0P02G.pdf) for every SmartDMA/SPC/DCDC/
-   CORELDO/SRAM-voltage mention:
-   - `ERR052088` (SmartDMA: FlexIO_IRQ misrouted to SMARTDMAARCHB_INMUX) -
-     unrelated, this project's camera signals go through GPIO INPUTMUX
-     paths, not FLEXIO_IRQ.
-   - `ERR051379` (SRAM: incorrect reads with Auto-clock-gating + ECC both
-     enabled, on misaligned accesses) - not voltage-related, doesn't match.
-   - `ERR051704` (DCDC: failure changing to *Low drive-strength* in
-     low-power mode) - this project only ever uses Normal drive strength in
-     Active mode; doesn't apply.
-   Also checked AN14191 ("How to Use SmartDMA to Implement Camera Interface
-   in MCXN MCU", the official app note this project's camera code is based
-   on) for any voltage-level guidance - none mentioned at all. Web-searched
-   NXP's community forum for this exact symptom - nothing matching found,
-   and the two potentially-relevant threads ("MCXN947, voltages domain!"
-   and "Simultaneous use of Ethernet and camera on the FRDM-MXCN947 board")
-   couldn't be fetched (community.nxp.com blocks non-browser HTTP clients;
-   no interactive browser session was available in this environment either)
-   - if this needs to be followed up further, a logged-in browser session or
-   posting a new question directly is the way to do it, referencing this
-   file's "decisive isolation test" entry below for the precise, already-
-   proven symptom description.
-3. **Fallback: time-multiplex - implemented and confirmed working on real
-   hardware.** Since capture and USB HS provably can't run at the same time
-   on this chip (previous entry below), restructured the firmware so they
-   run sequentially instead of simultaneously:
-   - `board_port/cm33_core0/hardware_init.c`: `BOARD_InitHardware()` now
-     *always* leaves DCDC/CoreLDO at Mid (both USB and non-USB build
-     variants - no more special-casing). `USB_DeviceClockInit()` (raises to
-     Overdrive) is no longer called from `BOARD_InitHardware()` at all.
-   - `source/camera/camera_capture.c/.h`: added `CAMERA_CAPTURE_Deinit()` -
-     stops the SmartDMA IRQ and gates its clock (`SMARTDMA_Deinit()`). The
-     last frame stays intact in the buffer (plain SRAM, untouched by this
-     call).
-   - `source/usb/usb_video_camera.h`: `USB_DeviceClockInit()` is now
-     declared here (was previously private to hardware_init.c/
-     usb_video_camera.c) so `main.c` can call it directly.
-   - `source/main.c`: for the normal (USB-enabled) build, `main()` now:
-     boots at Mid, runs `CAMERA_CAPTURE_Init()`, busy-waits for
-     `DEMO_MID_VOLTAGE_WARMUP_FRAMES` (10) frames to be captured (more than
-     1 so the OV7670's auto-exposure/auto-gain converge past the
-     often-flat/underexposed frame #1), calls `CAMERA_CAPTURE_Deinit()`,
-     runs the AI stub once on that final frame, then calls
-     `USB_DeviceClockInit()` (raises to Overdrive) and
-     `USB_VideoCamera_Init()` - from then on the main loop is just
-     `USB_VideoCamera_Task()`, no more camera polling. The
-     `USB_STREAM_DIAGNOSTIC_DISABLE=ON` camera-only build path is
-     untouched - still loops forever at Mid voltage like before (still the
-     "is the camera itself healthy" sanity build, proven 700+ clean
-     frames).
-   
-   **Flash-tested and confirmed on real hardware:** board enumerates as
-   `1fc9:009a NXP Semiconductors Camera_AI_Test1` (`lsusb`), `/dev/video5`
-   appears, and `gst-launch-1.0 v4l2src device=/dev/video5 num-buffers=5 !
-   video/x-raw,format=YUY2,width=320,height=240 ! filesink ...` captured 5
-   frames (768000 bytes total = exactly 5 x 153600-byte YUY2 frames,
-   confirming clean format negotiation). Checked in Python: ~104-105
-   distinct byte values per frame (real image content, not a flat/corrupted
-   buffer) - and frames 1-4 are byte-for-byte identical to each other
-   (frame 0 differs slightly, likely a partial/boundary artifact from
-   however GStreamer's first buffer lines up with the USB packet stream) -
-   exactly the expected time-multiplexed behavior: one real, correctly
-   captured still frame, repeated indefinitely, not a live feed.
-
-   **Known limitation, by design:** this is NOT live video - the image
-   frozen at boot (from whichever frame `DEMO_MID_VOLTAGE_WARMUP_FRAMES`
-   lands on) is what streams for the entire session, until the board is
-   reset. If a later session wants to explore periodic refresh (e.g.
-   dropping back to Mid every few seconds to grab a fresh frame, then
-   raising to Overdrive again), that's a real possible enhancement, but
-   *unverified*: it's not yet confirmed whether dropping DCDC back to Mid
-   while the USB HS PHY is already enumerated and actively streaming would
-   glitch/disconnect the active USB session (the PHY's PLL-lock requirement
-   was only ever tested from an unconfigured/idle state, never tested for
-   staying locked through a DCDC drop after the fact) - would need dedicated
-   hardware testing before relying on it, ideally on a spare/non-critical
-   session given the multiple prior instances in this project of DCDC
-   register mistakes needing a physical power cycle to recover from.
-
----
-
-## Earlier: decisive isolation test - SmartDMA only works at DCDC Mid (1.0V), period. Not a transition/USB issue.
-
-Candidate fix #3 (below - zero post-boot DCDC transitions, stay at Overdrive
-from boot) was flash-tested and did **not** help either. But before giving
-up on it, ran one more targeted experiment to actually pin down the
-mechanism, since every previous test (in this session and the original
-bisection further below) always changed two things at once (DCDC level *and*
-USB HS PHY activity), so it was never possible to tell which one mattered:
-
-**Test setup:** built the project with `USB_STREAM_DIAGNOSTIC_DISABLE=ON`
-(USB fully compiled out - no EHCI/PHY code, no USB clocks enabled at all)
-plus a temporary one-off diagnostic flag forcing DCDC/CoreLDO to stay at
-Overdrive (instead of the normal camera-only build's Mid downgrade) - i.e.
-camera running completely alone, at Overdrive voltage, with literally zero
-DCDC/CoreLDO register writes happening anywhere after
-`BOARD_BootClockPLL150M()` set Overdrive at boot. Flashed and checked
-`s_frameCount` by halting over the debug probe (`pyocd commander -t mcxn947
--c halt -c "read32 0x20000504 4"` - address re-derived for that build via
-`arm-none-eabi-nm`).
-
-**Result: broke identically** - `s_frameCount` stuck at 2, PC parked inside
-`CAMERA_CAPTURE_IsFrameReady()`'s normal poll loop (confirmed via
-`arm-none-eabi-addr2line` - not stuck in a busy-wait, the main loop is
-perfectly healthy, `s_frameReady` just never becomes true again after frame
-#2). No USB code was even compiled in, and there was no voltage transition
-of any kind after boot.
-
-**Conclusion: this definitively rules out both "it's a transition/glitch
-hazard" (candidate fix #3's hypothesis) and "it's specifically the USB HS
-PHY/EHCI peripheral being active" as the cause.** Combined with the original
-bisection further below (which already showed both Normal 0x2 *and*
-Overdrive 0x3 break it, while Mid 0x1 is the only level that's ever worked),
-the pattern is now clear and confirmed from multiple independent angles:
-**SmartDMA camera capture only runs reliably with `DCDC_VDD_LVL` at exactly
-Mid (1.0V, `kSPC_DCDC_MidVoltage`) - any other level breaks it after ~2
-frames, regardless of how it got there (transition or not) and regardless of
-what else is running (USB or not).**
-
-This also retroactively clears up why the SRAM-voltage-margin theory (the
-very first candidate fix, further below) was a dead end: `SPC_SRAMCTL`'s
-voltage-margin field has been latched at `kSPC_sramOperateAt1P2V` since
-`BOARD_BootClockPLL150M()` ran at the very start of boot, in *every* test
-done in this project so far - including the ones where DCDC was at Mid and
-the camera ran cleanly to 700+ frames. Since that field is identical across
-both the working and broken cases, it was never a viable differentiator -
-the actual, now-confirmed differentiator is `DCDC_VDD_LVL` alone (paired
-with `CORELDO_VDD_LVL`, which every test has always changed together with
-it, per the "don't raise CORELDO alone" hardware constraint documented
-elsewhere in this file).
-
-**Where this leaves the project:** USB HS genuinely requires DCDC at
-Overdrive to lock its PHY PLL (`CLOCK_EnableUsbhsPhyPllClock()`,
-`fsl_clock.c` - confirmed via halt+PC read, spins forever in `PLL_LOCK`
-wait without it). SmartDMA camera capture genuinely requires DCDC at Mid to
-keep running past ~2 frames. As currently understood, on this chip, with
-this SDK, **there is no known regulator configuration where both work at the
-same time** - this isn't a sequencing bug in this project's code anymore,
-it looks like a real hardware/firmware limitation. `hardware_init.c` has
-been simplified accordingly (removed the now-disproven "avoid transitions"
-special-casing, added a comment recording this conclusion at the top of
-`BOARD_InitHardware()`'s regulator section) - USB builds still go straight
-to Overdrive from boot (needed for USB), camera-only builds still go to Mid
-(needed for camera); no fix currently makes both work together.
-
-**Remaining leads, in order of promise (unchanged from before, now with
-more confidence they're the *only* remaining leads - the transition/USB-
-activity theories are conclusively ruled out):**
-- SmartDMA clock divider retuning - still completely untested. Look at
-  whether SmartDMA's own clock source/divider (as opposed to the DCDC
-  voltage level) needs to change to match Overdrive, the way
-  `BOARD_InitBootClocks()`'s AHB clock does not change with voltage level
-  but *some* internal SmartDMA timing might implicitly assume Mid-voltage
-  characteristics.
-- MCXN947 chip errata - not found anywhere in this SDK checkout (grepped
-  driver sources for "errata"/notes on DCDC+SmartDMA interactions - nothing
-  relevant). Needs NXP's actual published errata sheet or a direct ask on
-  community.nxp.com with this exact symptom (DCDC_VDD_LVL != Mid breaks
-  SmartDMA, independent of USB/transitions - very likely something NXP
-  engineering would recognize immediately if it's known).
-- Fallback: time-multiplex instead of running both simultaneously - capture
-  what's needed at Mid voltage, then switch to Overdrive and start USB only
-  once camera capture is done for that session (if the use case tolerates
-  not truly live-streaming). This is the only currently-known way to get
-  correct behavior from both peripherals with this hardware, just not at
-  the same time.
-
-Sanity check also done in this session, unrelated to the above but worth
-recording: flashed NXP's own stock, unmodified
-`examples/usb_examples/usb_device_video_virtual_camera/bm` example (built
-directly via `west build`, no project changes) to confirm the board and USB
-tooling chain are fine in general - it enumerated correctly on a real Linux
-host (`lsusb` showed `1fc9:0099 NXP Semiconductors VIDEO DEMO`,
-`/dev/video5` appeared). Video capture itself failed
-(`uvcvideo: Failed to query (GET_MIN) UVC probe control : -32`), but that's
-the exact same known/already-fixed-in-this-project's-own-code UVC probe
-control gap (see "device wasn't enumerating" fix further below) - NXP's
-stock example just hasn't fixed it, it's not informative about the DCDC/
-SmartDMA question. Also: that stock example uses the USB Full-Speed (KHCI)
-controller, not High-Speed/EHCI, so it doesn't even exercise the code path
-this project cares about - not useful as a comparison point either way.
-
----
-
-## Earlier: candidate fix #2 (proper SPC sequencing) flash-tested - NO CHANGE. Candidate fix #3 (zero post-boot DCDC transitions) build-clean, NOT YET FLASH-TESTED
-
-Flash-tested candidate fix #2 below (proper `SPC_SetActiveModeDCDCRegulatorConfig()`/
-`SPC_SetActiveModeCoreLDORegulatorConfig()` API sequencing instead of the raw
-combined register write). Serial log:
-
-```
-Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-USB: video class (UVC) camera ready - 320x240 YUY2 @ 30fps over USB HS
-Camera: frame #1 ready, 792 samples, pixel range 0x   0..0x   0, avg=0x   0 (flat - lens cap on, or no real image data)
-AI_MODEL_RunInference: stub, always returns "no result".
-AI_MODEL_RunInference: stub, always returns "no result".
-```
-
-**No frame #16 ever printed** (main loop is alive - `AI_MODEL_RunInference`
-keeps running every iteration - but `CAMERA_CAPTURE_IsFrameReady()` never
-goes true again after frame #1, i.e. `s_frameCount` is stuck at 1). Frame #1
-itself came back flat (all-zero), matching bisection step 4 in the entry
-further below exactly. **Conclusion: proper regulator API sequencing made no
-observable difference** - rules out "the raw register write violates NXP's
-CORELDO drive-strength precondition" as the cause. Whatever breaks SmartDMA
-here isn't about *how* the DCDC/CORELDO register write is performed.
-
-This prompted a closer look at *when* the write happens: every test done so
-far (this session's #1 and #2 above, and the entire original bisection
-further below) always ran through the same fixed prefix first -
-`BOARD_BootClockPLL150M()` sets Overdrive at boot, then
-`BOARD_InitHardware()` unconditionally downgrades DCDC/CoreLDO to Mid,
-*then* whatever variant was under test ran on top of that. No test has ever
-isolated "does any DCDC transition break SmartDMA" from "does that specific
-Overdrive-then-Mid-then-back-to-Overdrive sequence break it" - both were
-always present together, since the Mid downgrade always ran unconditionally
-before the code under test.
-
-**Fix applied (candidate #3, `board_port/cm33_core0/hardware_init.c`):**
-`BOARD_InitHardware()` now skips the Overdrive-to-Mid downgrade entirely
-when USB streaming is enabled (`#if DEMO_USB_STREAM_DISABLE` now gates that
-block) - DCDC/CoreLDO simply stay at whatever `BOARD_BootClockPLL150M()`
-already set them to (Overdrive) all the way through. `USB_DeviceClockInit()`
-no longer re-raises DCDC/CoreLDO at all (removed those calls - they're
-redundant now that boot already leaves them at Overdrive). Net effect: with
-USB streaming enabled, there is now **zero** DCDC/CoreLDO voltage-level
-write anywhere after `BOARD_InitBootClocks()` returns - SmartDMA will start
-and run entirely at a constant, never-transitioning Overdrive supply, for
-the first time. Builds clean (`./build.sh build`, zero warnings). The
-non-USB (`DEMO_USB_STREAM_DISABLE`) build path is untouched - still
-downgrades to Mid as before, so the already-proven "camera alone, no USB"
-case (700+ frames clean) isn't at risk of a regression from this change.
-
-**Next step:** flash and check `s_frameCount`/serial log again (see "How to
-verify" further below). If this doesn't fix it either: that rules out
-"transition" as the mechanism entirely, and narrows the problem down to
-"SmartDMA fundamentally cannot run correctly with DCDC sitting at Overdrive,
-period" - at which point the remaining leads are the untested SmartDMA
-clock-divider-retuning idea and asking NXP directly (no SDK example anywhere
-combines SmartDMA + USB HS at Overdrive, and no MCXN947 errata on this was
-found in the SDK sources - would need NXP's actual published errata sheet,
-not in this SDK checkout).
-
----
-
-## Earlier: candidate fix #1/#2 background (superseded above, kept for the reasoning trail)
-
-Board was reported reachable and flashing normally again (the "board boots
-unreliably" entry below is resolved - presumably the long power-off wait
-worked). Picking back up on the SmartDMA-stops-after-2-frames issue with a
-different, more targeted root-cause candidate than the SRAM-voltage one
-already tried and reverted (see that entry below - kept, still relevant
-context for why NOT to re-try that exact idea).
-
-**New finding, from reading NXP's own `drivers/mcx_spc/fsl_spc.c`/`.h` (not
-example code - the actual regulator driver) closely:** the old
-`USB_DeviceClockInit()` (`board_port/cm33_core0/hardware_init.c`) raised
-DCDC/CoreLDO to Overdrive via one raw combined register write:
-
-```c
-SPC0->ACTIVE_CFG &= ~SPC_ACTIVE_CFG_CORELDO_VDD_DS_MASK;   // forces CoreLDO drive strength to Low
-...
-SPC0->ACTIVE_CFG |= SPC_ACTIVE_CFG_DCDC_VDD_LVL(0x3) | SPC_ACTIVE_CFG_CORELDO_VDD_LVL(0x3) | ...;  // changes CoreLDO voltage level in the same write
-```
-
-NXP's own driver function for this
-(`SPC_SetActiveModeCoreLDORegulatorVoltageLevel()`, `drivers/mcx_spc/
-fsl_spc.h`) documents - and *enforces*, returning
-`kStatus_SPC_CORELDOVoltageSetFail` if violated - that "the Core LDO voltage
-level should only be changed when the Core LDO is in normal drive strength."
-The raw write above does the opposite: forces drive strength to *Low*, then
-changes the voltage level in the very next statement, in the same combined
-write - violating a real, NXP-documented hardware precondition, every single
-time USB streaming was enabled. The proper driver API
-(`SPC_SetActiveModeDCDCRegulatorConfig()`/
-`SPC_SetActiveModeCoreLDORegulatorConfig()`) does this correctly: separate
-masked read-modify-write per field, drive strength before voltage level,
-each with its own busy-wait - exactly what NXP's own
-`BOARD_PowerMode_OD()`/`BOARD_BootClockPLL150M()`
-(`examples/_boards/frdmmcxn947/board.c` / `clock_config.c`) use, and both of
-those are already proven to run this exact chip to Overdrive successfully
-(this project's own boot sequence calls `BOARD_BootClockPLL150M()` at every
-startup, before downgrading back to Mid for the camera).
-
-A single glitched/marginal regulator transition (from violating that
-precondition) is a very plausible mechanism for silently stalling a
-coprocessor (SmartDMA) without ever tripping a HardFault - and matches the
-observed symptom (a clean stop, not corrupted/garbage data) noticeably
-better than the SRAM-timing-margin theory did.
-
-**Also clarified why the earlier `SPC_SetSRAMOperateVoltage()` attempt made
-things worse** (that entry below said the mechanism was unclear): re-reading
-`BOARD_BootClockPLL150M()` (`examples/_boards/frdmmcxn947/clock_config.c`)
-shows it already leaves SRAM latched at `kSPC_sramOperateAt1P2V` (Overdrive
-margin) from the very first boot, and `BOARD_InitHardware()`'s subsequent
-downgrade to Mid (right after `BOARD_InitBootClocks()` returns) never
-touches `SRAMCTL` to bring that back down. So by the time the old
-`USB_DeviceClockInit()` ran, SRAM was *already* sitting at 1.2V margin -
-re-issuing the same `SPC_SetSRAMOperateVoltage(..., kSPC_sramOperateAt1P2V,
-...)` REQ/ACK handshake for a value that's already active is the likely
-cause of that regression, not the SRAM-margin idea itself being wrong. Don't
-re-add that call without addressing this first.
-
-**Fix applied** (`board_port/cm33_core0/hardware_init.c`,
-`USB_DeviceClockInit()`): replaced the raw combined register write with
-`SPC_SetActiveModeDCDCRegulatorConfig()` then
-`SPC_SetActiveModeCoreLDORegulatorConfig()` (same end register state as
-before - Overdrive on both, Normal drive strength on both - just correct
-per-field sequencing and busy-waits this time, matching NXP's own proven
-sequence). `SYSLDO_VDD_DS` is still set directly (no documented ordering
-constraint found for that field). Builds clean (`./build.sh build`, zero
-warnings, `-Werror`). **NOT YET FLASH-TESTED - next step:** flash and check
-whether `s_frameCount` (`camera_capture.c`) keeps advancing past 2 instead
-of freezing there (see "How to verify" further below - same verification
-steps as the earlier SRAM-voltage attempt apply here). If this doesn't fix
-it either: the SRAM-voltage angle (this time done correctly, i.e. skipped
-entirely since it's already at the right value - or explicitly re-synced to
-Mid during the Mid-voltage phase instead) is still worth revisiting, as is
-asking NXP directly (no SDK example anywhere combines SmartDMA + USB HS at
-Overdrive simultaneously, confirmed via a full grep across the whole SDK
-tree, and no MCXN947 errata on this was found in the SDK sources - would
-need NXP's actual errata sheet, which isn't in this SDK checkout).
-
----
-
-
 Running log of this project's bring-up, for picking up in a fresh session.
 For the stable reference doc (pinout, build instructions), see
 [README.md](README.md) - this file is the messier "what's been tried and
 what happened" history, kept separate so README doesn't get cluttered.
 
-## Earlier: board boot reliability crisis (resolved - board is reachable and flashing normally as of the top entry in this file)
+> Older history (camera/LCD/USB bring-up, all of that now stable/working -
+> see README.md's "History" section for the summary) was trimmed from this
+> file to keep it focused on the current, unresolved problem below.
 
-**At the time, this was logged as PAUSED: board booting unreliably (hangs
-very early, before camera or USB init even run) even with known-good
-firmware, after a stressful recovery sequence. Since resolved** - the board
-has flashed and run correctly in every session since (see the top of this
-file for the most recent confirmation). Kept below for the recovery
-technique that worked, in case this recurs.
+## CURRENT STATUS: Edge Impulse AI integration WORKING END-TO-END on real hardware (2026-08-24) - both a CPU+CMSIS-NN path (~1.27s/inference) and a Neutron NPU path (~3.3ms/inference, ~370-390x faster, `AI_MODEL_USE_NPU` CMake option) confirmed running repeatedly without faults, both timed via the same DWT cycle-counter print for direct comparison (`ei_result.timing` is a dead stub on this SDK build). LCD status-color display (red/green/blue per detection state) was already wired up and runs every frame; had a real bug (only painted one row - see "Bug #4"), fixed but not yet visually re-confirmed on the physical panel. See "Bug #2"/"Bug #3" below for what was actually wrong with the original HardFault (stack overflow, misdiagnosed as alignment last session; then a `m_sramx`/SmartDMA memory collision), "NPU (Neutron) plan" for the full NPU integration story (Phases 1-6, all done), and "Next steps" sections throughout for what's left (further detection-quality validation on both paths, optional bbox display, minor NPU arena size tuning).
 
-What happened, in order:
+## NPU (Neutron) plan - Phase 1 DONE: raw `.tflite` located, no Studio re-export needed
 
-1. Tried the `SPC_SetSRAMOperateVoltage()` candidate fix (see the entry
-   below this one for the reasoning) - flashed it, and it made things worse:
-   boot got stuck in an early `SDK_DelayAtLeastUs()` busy-wait (confirmed via
-   halt+PC read over the debug probe, identical PC across a 3-second gap)
-   *before* camera init even ran, whereas the un-patched firmware at least
-   reached 1-2 camera frames. **Reverted** back to the exact code from the
-   "USB video streaming confirmed working" entry below (same
-   `USB_DeviceClockInit()` as before, no `SPC_SetSRAMOperateVoltage()` call)
-   - see the comment left at that call site for what was tried and why it
-   was undone, so nobody re-tries the identical placement blind.
-2. Separately (unrelated to the fix above - see the "CORELDO-only
-   experiment" entry further below), the board's SWD/debug port had gone
-   completely unreachable from an earlier experiment. **Recovered it**: the
-   normal FRDM-MCXN947 ISP entry sequence (hold SW3/ISP, plug in the debug
-   USB cable *while still holding it*, wait ~1s, release SW3) restored debug
-   port access - confirmed via `pyocd commander -c status` reporting
-   `Core 0 (cm33_core0): Running`. Multiple plain power-cycle attempts
-   (unplug/replug with no buttons) had already failed to fix this before
-   trying the ISP sequence, and the online research that led here is worth
-   keeping in mind if this recurs:
-   - [NXP Community: "Issue with External 1.8V Power on FRDM-MCXN947 Board
-     - MCU Unresponsive"](https://community.nxp.com/t5/MCX-Microcontrollers/Issue-with-External-1-8V-Power-on-FRDM-MCXN947-Board-MCU/td-p/2157654)
-     - a different root cause (external supply + DCDC/LDO jumper changes)
-     but the same class of symptom (debugger detects target voltage but
-     can't communicate), resolved there by reverting the hardware power
-     config.
-   - NXP's "LinkServer" tool has a documented scripted-retry recovery
-     technique for exactly this class of problem (loop trying to
-     halt-under-reset to catch the core before problematic startup code
-     runs) - see [MCU on Eclipse: "LinkServer Scripting, and how to Recover
-     MCUs with a
-     Script"](https://mcuoneclipse.com/2023/07/25/linkserver-scripting-and-how-to-recover-mcus-with-a-script/).
-     Didn't end up needing this (the ISP-button sequence worked first), but
-     if that stops working this is the next thing to try - pyOCD supports
-     `--connect under-reset` too, though a single attempt of that (without
-     the ISP button) did NOT work here.
-3. Flashed the reverted (known-good) firmware successfully once the debug
-   port was back. **But it now won't boot past that same early
-   `SDK_DelayAtLeastUs()` point either** - confirmed stuck at an identical
-   PC across a 3-second gap, `s_frameCount` stays `0` (never even reaches
-   camera init's first frame). This happened both right after the
-   ISP-sequence recovery *and* after a subsequent plain, no-buttons-held
-   power cycle - so it's not still "stuck in ISP mode" or anything like
-   that, and it's not the SRAM-voltage fix either (already reverted before
-   reflashing). This looks like the board is in some kind of degraded/
-   leftover analog state (crystal osc startup, PLL trim, bulk supply
-   capacitor charge, etc.) that a few seconds unplugged isn't clearing -
-   worth trying a much longer power-off wait (minutes) before the next
-   session resumes debugging the actual SmartDMA/DCDC conflict. The
-   firmware itself (in this repo, as currently committed/on-disk) has NOT
-   been proven broken by this - it's the same code that was working a few
-   hours earlier in this same session (see the "USB video streaming
-   confirmed working" entry below) - don't assume a code regression here
-   without re-testing after a proper power-off wait first.
+Goal (per user request): get the FOMO model running on this chip's Neutron16
+NPU instead of the CPU+CMSIS-NN path, to cut the ~1.27s/inference time
+measured above, with a build-time flag to compare NPU on/off using the
+same DWT timing print already added to `model_runner.cpp`. Full plan (5
+more phases after this one) discussed with the user before starting -
+not repeated in full here, see the phase list below for what's left.
 
----
+**Phase 1 result:** no need to log into Edge Impulse Studio and re-export
+- the plain quantized `.tflite` this Studio project already produced is
+sitting right next to the C++ library export that's already in the tree:
+`source/ai/edge_impulse/tflite-model/tflite_learn_1094697_39.tflite`
+(53.4KB). Confirmed this is the exact model currently running on-device -
+`1094697` matches `EI_CLASSIFIER_PROJECT_ID` in
+`model-parameters/model_metadata.h`.
 
-**A candidate fix for the SmartDMA hang is implemented and build-clean, but
-NOT YET FLASH-TESTED - the board's debug port is currently unreachable and
-needs a physical power cycle first (see "Board debug port went unreachable"
-below for what happened and why).**
+Peeked at the flatbuffer's embedded strings (no `tensorflow`/`tflite_runtime`
+Python package available in this environment to fully parse it, so this
+is `strings`-level inspection only, not a real flatbuffer dump):
+- Backbone is a MobileNetV2-style stack, `block_1` through `block_6`
+  (inverted-residual blocks - `expand`/`depthwise`/`project`/`add`,
+  standard fused Conv2D/DepthwiseConv2D/Relu6/BiasAdd naming), consistent
+  with FOMO's usual "truncated MobileNetV2 backbone + a small detection
+  head" architecture and the alpha=0.35 already noted for this Studio
+  project elsewhere in this file.
+- Head: `model_1/head/...` (Conv2D+BiasAdd+Relu) -> `model_1/logits/...`
+  (Conv2D+BiasAdd) -> `output_0`.
+- This is architecturally very close to the MobileNetV1 model NXP's own
+  `middleware/eiq/mpp/tests/test_camera_mobilenet_view` example already
+  runs on this exact board's Neutron16 NPU (int8, Conv2D/DepthwiseConv2D-
+  heavy) - a good sign for op-support compatibility, though not a
+  guarantee (won't know for sure until Phase 2's converter actually runs
+  on it).
 
-Before that happened, a research pass over the whole SDK (no combined
-SmartDMA+USB example exists anywhere in NXP's tree - this is genuinely
-uncharted territory) turned up a strong, concrete lead:
+### Remaining phases (unstarted)
 
-- NXP's own `BOARD_PowerMode_OD()` helper
-  (`examples/_boards/frdmmcxn947/board.c:232`) - their canonical "go to
-  Overdrive" sequence - always pairs the DCDC-to-Overdrive change with a
-  `SPC_SetSRAMOperateVoltage(SPC0, &(spc_sram_voltage_config_t){
-  .operateVoltage = kSPC_sramOperateAt1P2V, .requestVoltageUpdate = true })`
-  call, to retune the SRAM's read/write timing margin for the new voltage.
-- NXP's own SmartDMA camera example
-  (`examples/_boards/frdmmcxn947/display_examples/smartdma_camera_flexio_mculcd`)
-  never raises DCDC at all - stays at Mid the whole time - so it never had
-  reason to call this either.
-- **This project's `USB_DeviceClockInit()`** (adapted from NXP's own USB
-  example's raw-register-write DCDC bring-up) raises DCDC to Overdrive but
-  **never calls `SPC_SetSRAMOperateVoltage()`** - a real gap versus NXP's own
-  documented Overdrive-transition pattern.
-- SmartDMA writes captured pixels into SRAM via DMA at high throughput. A
-  stale/mismatched SRAM read/write timing margin after a DCDC voltage bump
-  is a very plausible mechanism for those writes to silently stop landing
-  correctly a frame or two in - without ever tripping a HardFault, which
-  matches the actual observed symptom exactly (see the SmartDMA-hang
-  write-up further below for the full characterization of what breaks).
+2. **Run `neutron_converter`** (Python package `eiq_neutron_sdk`, per
+   `middleware/eiq/executorch/backends/nxp/backend/neutron_converter_manager.py`'s
+   import) against the `.tflite` above, targeting the Neutron16 variant
+   (matches `APP_USE_NEUTRON16_MODEL` in NXP's own frdmmcxn947 NPU
+   example) - produces a new `.tflite` with supported subgraphs replaced
+   by one `NEUTRON_GRAPH` custom op. **Not yet confirmed this package is
+   installable/available in this environment** - may need an NXP/eIQ
+   account; check before assuming this phase is a quick step.
+3. **Convert the NPU `.tflite` to a C byte-array header**, same pattern as
+   NXP's own `mobilenetv1_model_data_npu16_tflite.h`.
+4. **Write `model_runner_npu.cpp`** - raw TFLM `MicroInterpreter` (not
+   `ei_run_classifier()`, which has no way to register the `NEUTRON_GRAPH`
+   custom op without patching EI's generated code) + `MicroMutableOpResolver`
+   registering `Register_NEUTRON_GRAPH()` plus whatever ops stay
+   un-offloaded (Dequantize/Softmax etc., per NXP's own
+   `mobilenetv1_ops_micro_tflite.cpp` pattern) + link
+   `middleware/eiq/neutron/mcxn/libNeutronDriver.a`/`libNeutronFirmware.a`.
+   Reuse the existing resize/quantize preprocessing from `model_runner.cpp`
+   (NPU only accelerates the conv/pool ops, not DSP preprocessing). FOMO's
+   grid-decode postprocessing needs to be hand-written here too, since
+   this path bypasses EI's `ei_run_classifier()` entirely (and thus its
+   postprocessing) - fairly small, it's a per-cell argmax+threshold over
+   the output grid tensor.
+5. **`CMakeLists.txt`**: add an `AI_MODEL_USE_NPU` option (default OFF)
+   selecting `model_runner.cpp` vs `model_runner_npu.cpp`, linking the
+   Neutron libs and enabling the `middleware.eiq.tensorflow_lite_micro.neutron`
+   Kconfig component only when ON.
+6. **Build both configs, flash each, compare** the existing `total
+   classifier time` DWT print (baseline already recorded above: ~1.27s,
+   CPU+CMSIS-NN, non-EON) against the NPU build's number.
 
-**Fix applied** (`board_port/cm33_core0/hardware_init.c`,
-`USB_DeviceClockInit()`): added the missing `SPC_SetSRAMOperateVoltage()`
-call, `kSPC_sramOperateAt1P2V`, right after the existing DCDC/CORELDO
-Overdrive register write - matching NXP's own `BOARD_PowerMode_OD()`
-sequencing. Builds clean. **Next step, once the board is reachable again:**
-reflash and check whether `s_frameCount` (`camera_capture.c`) keeps
-advancing past 2 instead of freezing there - see "How to verify" at the
-bottom of this entry.
+**Known risks, flagged before starting Phase 2:** `eiq_neutron_sdk`
+package availability in this environment is unverified; not all of the
+MobileNetV2-style graph is guaranteed to be Neutron-offloadable (partial
+offload is normal/expected, real speedup unknown until measured); the
+NPU-compiled model likely needs a different arena/scratch memory budget
+than the current CMSIS-NN path's ~93KB (re-check against the `m_sramx`
+budget worked out in "Bug #2"/"Bug #3" below before assuming it just
+fits).
 
-### Board debug port went unreachable - needs a physical power cycle
+## Phase 2 DONE (2026-08-24): `eiq_neutron_sdk` installed, model converted, results very promising
 
-While testing an unrelated hypothesis (whether raising `CORELDO_VDD_LVL`
-*alone*, leaving `DCDC_VDD_LVL` untouched, might be enough for the USB PHY's
-PLL to lock without breaking the camera - the opposite combination from
-everything tested in the bisection below), the board's SWD/debug port
-stopped responding entirely - `pyocd commander -c status` fails with
-`SWD/JTAG communication failure (WAIT ACK)` or `Invalid AP address`,
-consistently across many retries, at different SWD clock speeds, and even
-with `--connect under-reset`. This is a more severe failure mode than
-anything else seen in this project (no HardFault message, no serial output,
-and now not even basic debug-port attach) - raising CORELDO without also
-raising DCDC likely put the chip into some invalid/unsupported power state.
-**Do not try that combination again** - the code now has a comment at the
-call site warning about this.
-
-The only way found to potentially recover from this is a full physical power
-cycle (unplug the board's USB cable(s) completely, wait a few seconds,
-replug) - software-only recovery attempts (`pyocd commander -c reset`,
-`--connect under-reset`, `./build.sh erase`, multiple retries at lower SWD
-clock speeds) all failed identically. As of this entry, recovery hasn't been
-confirmed yet - whoever picks this up next should verify the board is
-reachable again (`pyocd commander -t mcxn947 -c status`, or just
-`./build.sh flash`) before doing anything else.
-
-### How to verify the SPC_SetSRAMOperateVoltage() fix once the board is back
-
-1. `./build.sh` (build + flash) - already built clean as of this entry, so
-   this should just work once the debug port is reachable.
-2. Reset and watch either the serial log (`./build.sh monitor`, look for
-   `frame #16`, `#31`, etc. to keep appearing instead of stopping after
-   `#1`) or, faster, halt over the debug probe and read `s_frameCount`
-   directly:
-   ```
-   pyocd commander -t mcxn947 -c halt -c "read32 0x20001504 4"
-   ```
-   (address is for this exact build - re-derive via
-   `arm-none-eabi-nm build/camera_ai_demo_cm33_core0.elf | grep s_frameCount`
-   if the binary changes). Resume (`-c go`), wait a second or two, halt and
-   read again - if the fix worked, the count should have visibly increased
-   instead of staying frozen at the same value.
-3. If it works: also re-verify actual USB video streaming shows a live,
-   updating image now (not just a frozen one) - `gst-launch-1.0 v4l2src
-   device=/dev/videoN num-buffers=10 ! video/x-raw,format=YUY2,width=320,height=240
-   ! filesink location=/tmp/frames.raw`, then check in Python (like before)
-   that consecutive frames in the dump actually differ from each other, not
-   just that each individual frame has pixel variance.
-4. If it does NOT work: revert the `SPC_SetSRAMOperateVoltage()` addition
-   (or leave it - it's harmless either way, just ineffective) and move on to
-   the other next-step ideas listed further below (chip errata search - none
-   found in the SDK itself, so this means asking NXP directly; or explore
-   SmartDMA clock divider retuning, still untested).
-
----
-
-**USB video streaming is now confirmed working end-to-end on a real Linux
-host - but it streams one static (frozen) real frame, not live video, because
-the underlying camera-hang issue is narrower than previously written up
-below.** Verified directly on the user's PC (which turned out to be reachable
-from this environment too - `lsusb`, `dmesg`, `gst-launch-1.0`, `v4l2`
-tooling all available):
-
-- `lsusb -d 1fc9:009a -v` shows a fully well-formed UVC 1.00 descriptor set
-  (Video Control + Video Streaming interfaces, Uncompressed/YUY2 format,
-  320x240 frame descriptor, isochronous endpoint) - no more warnings.
-- The Linux kernel's `uvcvideo` driver binds automatically and creates
-  `/dev/videoN` nodes (confirmed via `udevadm info`, `ID_MODEL=Camera_AI_Test1`).
-- `gst-launch-1.0 v4l2src device=/dev/videoN ! video/x-raw,format=YUY2,...`
-  successfully negotiates the format and captures real frames - dumped to a
-  raw file and checked in Python: 153,600 bytes/frame (the exact expected
-  YUY2 320x240 size) with ~206-207 distinct byte values per frame (i.e. real
-  image content, not a flat/constant buffer).
-- **But** the captured frames don't change between captures. Halting the
-  core over the debug probe and reading `s_frameBuffer`/`s_frameCount`
-  directly (`camera_capture.c`) shows why: `s_frameCount` is stuck at `2`
-  and the buffer bytes are bit-identical before and after resuming execution
-  for 1 full second. **SmartDMA genuinely stops (both the frame-complete
-  interrupt and the underlying pixel DMA writes) after capturing ~2 frames**
-  - but frame #2 itself was a real, valid capture, and it just sits frozen
-  in the buffer afterward. Since the USB streaming path
-  (`USB_VideoCamera_ConvertFrameChunk` in usb_video_camera.c) reads straight
-  from that buffer on every packet, with no dependency on the frame-ready
-  flag the serial log uses, it happily streams that one frozen frame
-  over and over - a real, correctly-colored still image, indefinitely
-  repeated, not motion video. This is the same underlying DCDC/SmartDMA
-  conflict documented further below, just a more precise characterization
-  of its actual effect (a full coprocessor hang, not "produces garbage") -
-  don't need to re-diagnose it, the fix ideas listed below still apply.
-
-On the way to finding this, two separate, real bugs were found and fixed
-(both independent of the DCDC/camera conflict, which remains the one open
-problem):
-
-1. **Fixed: device wasn't enumerating on a host PC at all**, because
-`USB_DeviceSetSpeed()` (usb_device_descriptor.c) spun forever the moment a
-real host sent a bus reset. The user asked "why don't I see the USB device
-on my PC" - halting the core over the debug probe while it was plugged into
-a real host caught PC stuck inside `USB_DeviceSetSpeed()`, oscillating
-between two addresses in that function - a live infinite loop, not a
-one-off.
-
-Root cause: `USB_DeviceSetSpeed()` walks the raw config descriptor byte
-array by advancing `bLength` bytes at a time. The Processing Unit descriptor
-in `g_UsbDeviceConfigurationDescriptor` (usb_device_descriptor.c) had an
-extra unconditional `0x00U /* bmVideoStandards */` byte left over from
-copy-pasting the stock example's `#if USB_DEVICE_VIDEO_CLASS_VERSION_1_1 ||
-_1_5` block, but `USB_VIDEO_VIRTUAL_CAMERA_VC_PROCESSING_UNIT_LENGTH` (0x0B
-= 11, the UVC *1.0* length that doesn't include that byte, matching bcdUVC
-0x0100 - see usb_device_descriptor.h) was never updated to match: 12 actual
-bytes, declared as 11. That one extra byte desynced every descriptor after
-it by one position. Confirmed by dumping the live `.data` section
-(`arm-none-eabi-objcopy -O binary --only-section=.data ...` + a small Python
-parser walking the `(bLength, bDescriptorType)` chain) - the walk landed on
-a garbage `bLength=0` entry, which is exactly what makes
-`descriptorHead = descriptorHead + descriptorHead->common.bLength` never
-advance. **Fix:** removed the extra byte. Re-parsed the corrected `.data`
-dump afterward - now a clean 14-entry chain, no zero-length entries,
-terminates exactly at the array's own length (180 bytes, matching
-`wTotalLength` in the descriptor itself). Confirmed on hardware: halted
-after reflashing, PC was back to normal - inside `main()`'s ordinary
-`CAMERA_CAPTURE_IsFrameReady()` poll, not stuck anywhere.
-
-2. **Fixed: real host (Linux `uvcvideo` driver) failed format negotiation
-with `-32` (STALL) errors**, confirmed via `sudo dmesg`:
-`uvcvideo 3-9.1.2:1.1: Failed to query (GET_MIN) UVC probe control : -32
-(exp. 26)`, and `gst-launch-1.0`'s `v4l2src` failing `TRY_FMT` with
-"Input/output error". Root cause: `USB_DeviceVideoRequest()`
-(usb_video_camera.c) only handled `GET_CUR`/`GET_LEN`/`GET_INFO`/`SET_CUR`
-for `VS_PROBE_CONTROL` - the same set the SDK's stock
-`usb_device_video_virtual_camera` example handles, copied over as-is. Linux's
-`uvcvideo` additionally queries `GET_MIN`/`GET_MAX`/`GET_RES`/`GET_DEF` to
-learn the valid parameter ranges; it has a workaround for a missing
-`GET_DEF` but not for a missing `GET_MIN`, and gives up entirely when that's
-STALLed. **Fix:** since this device only ever supports exactly one
-configuration (320x240 YUY2 @ 30fps), added `GET_MIN`/`GET_MAX`/`GET_RES`/
-`GET_DEF` as fallthroughs to the same `GET_CUR` answer (min == max == res ==
-def == cur when there's only one option). Confirmed fixed via `dmesg` (no
-more STALL errors) and `gst-launch-1.0` successfully negotiating caps
-(`video/x-raw(memory:DMABuf), format=YUYV, width=320, height=240,
-framerate=30/1`).
-
-Both fixes verified together on a real Linux host: `lsusb -d 1fc9:009a -v`
-shows a clean descriptor set, `uvcvideo` binds and creates `/dev/videoN`
-nodes, and `gst-launch-1.0 v4l2src ! video/x-raw,format=YUY2,...` captures
-real (if frozen, per above) frames.
-
-**Still open: confirmed real hardware conflict between USB HS PHY bring-up
-and SmartDMA camera capture.** Found via a full bisection done directly on
-hardware this
-session (board turned out to be reachable from this environment via pyOCD/
-MCU-Link, including reading back the halted CPU's PC over the debug probe -
-much faster than the earlier back-and-forth of asking for serial logs by
-hand). Full trail below; short version:
-
-- **USB HS PHY requires `SPC0->ACTIVE_CFG`'s `DCDC_VDD_LVL` raised to
-  Overdrive to work at all.** Without it, `CLOCK_EnableUsbhsPhyPllClock()`
-  (`mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.c:3310`) spins forever
-  in its `while (0 == (USBPHY->PLL_SIC & PLL_LOCK)) {}` busy-wait - the PHY's
-  480MHz PLL never locks. Confirmed by halting the core with
-  `pyocd commander -c halt -c reg` and reading PC/LR back to that exact line.
-  Not a bug - this is a real, required step for USB HS on this chip.
-- **The SmartDMA-based camera capture breaks under *any* `DCDC_VDD_LVL`
-  change** - tested both to Overdrive (0x3) and to Normal (0x2), same result
-  either way: frames stop advancing (or read back completely flat/all-zero)
-  within 1-2 frames of boot, silently, no HardFault (confirmed via a
-  temporary diagnostic `HardFault_Handler` override in
-  `source/fault_handler.c` that would have printed CFSR/PC/LR - it never
-  fired). This happens regardless of whether the DCDC change happens before
-  or after `CAMERA_CAPTURE_Init()` starts SmartDMA running - ruled out via
-  bisection that it's a "changing voltage while a coprocessor is active"
-  *transition* hazard; it's a steady-state incompatibility. Also ruled out
-  `CORELDO_VDD_LVL` specifically as the cause (changing it alone doesn't
-  break the camera) and the `SYSLDO_VDD_DS`/`DCDC_VDD_DS` drive-strength
-  bits (changing those alone doesn't either) - it's specifically
-  `DCDC_VDD_LVL`.
-- **Net result: no known-working configuration exists yet where both the
-  camera and USB HS work at the same time.** `DCDC_VDD_LVL` has to be raised
-  for USB; camera breaks whenever it's raised.
-
-Bisection method, in order (each step flashed + observed on real hardware,
-via a temporary `#if 1/#else` "TEMP bisection" pattern in
-`USB_DeviceClockInit()`/`USB_VideoCamera_Init()` - all since reverted):
-1. Skip all USB (`DEMO_USB_STREAM_DISABLE`, see `CMakeLists.txt`
-   `USB_STREAM_DIAGNOSTIC_DISABLE` option) - camera ran cleanly past frame
-   #700+ with zero issues. Confirms the problem is 100% USB-side.
-2. `USB_DeviceClockInit()` only (skip `USB_DeviceClassInit()`/`USB_DeviceRun()`
-   entirely) - still hung after ~1-2 frames. Confirms it's the clock/PHY
-   bring-up itself, not EHCI controller startup or host enumeration traffic
-   (also independently confirmed by testing with the USB-HS cable physically
-   unplugged from any PC - same hang).
-3. Stop right after the `SPC0->ACTIVE_CFG` write + busy-wait (skip
-   LDOCSR/AHBCLKCTRL/SOSC/PLL/PHY-init) - still hung. Narrows it to the SPC0
-   regulator register write itself.
-4. `DCDC_VDD_LVL(0x3)` (Overdrive) + drive-strength bits, `CORELDO_VDD_LVL`
-   left untouched - still hung, and frame #1 came back flat. Rules out
-   CORELDO being required for the break.
-5. `DCDC_VDD_LVL(0x2)` (Normal) instead of Overdrive - still hung. Rules out
-   "specifically Overdrive" - any level change breaks it.
-6. Drive-strength bits only (`SYSLDO_VDD_DS`, `DCDC_VDD_DS`), no
-   `DCDC_VDD_LVL`/`CORELDO_VDD_LVL` change at all - camera ran cleanly to
-   frame #700+. Isolates the cause to `DCDC_VDD_LVL` specifically.
-7. Restored full `USB_DeviceClockInit()` + `USB_DeviceClassInit()` +
-   `USB_DeviceRun()` with step 6's settings (no `DCDC_VDD_LVL` change) - the
-   core hung inside `CLOCK_EnableUsbhsPhyPllClock()`'s `PLL_LOCK` wait
-   (confirmed via halt+register read). Proves USB HS genuinely needs the
-   voltage bump - it's not something that can just be skipped.
-8. Restored `DCDC_VDD_LVL(0x3)` + `CORELDO_VDD_LVL(0x3)` (matching NXP's
-   stock example) - USB now completes init cleanly (`USB: video class (UVC)
-   camera ready` prints, PLL locks), but camera is back to the original
-   symptom (frame #1 flat, hangs after ~2 frames). Back to square one,
-   conflict confirmed both directions.
-
-**Where this leaves the code:** `board_port/cm33_core0/hardware_init.c`'s
-`USB_DeviceClockInit()` currently matches NXP's stock DCDC/CoreLDO Overdrive
-settings (so USB HS actually initializes), with a comment at that call site
-documenting this whole conflict and pointing back here. USB streaming itself
-works correctly (see above - real frames, correct size/format, confirmed on
-a real host); what doesn't work yet is SmartDMA continuing to capture *new*
-frames past the first couple, so the live feed is really a single frozen
-frame repeated - see the "USB video streaming is now confirmed working"
-entry at the top of this file for the precise, corrected characterization
-of what breaks (SmartDMA fully stops - both its completion interrupt and
-its pixel DMA writes - it doesn't produce garbage).
-
-**Ideas for next session** (untested, in rough order of how promising they
-seem):
-- Check whether `BOARD_InitBootClocks()`/`clock_config.c` needs to be
-  re-run, or specific clock dividers (SmartDMA's core clock, or whatever
-  `kMAIN_CLK_to_CLKOUT`/`kCLOCK_DivClkOut` actually derives from) need
-  retuning *for* the Overdrive voltage domain, rather than assuming voltage
-  and clock frequency are independent - many NXP parts require this kind of
-  co-tuning and it's plausible BOARD_InitHardware()'s existing camera clock
-  setup was only ever validated at Mid voltage.
-- Look for MCXN947 chip errata (NXP's errata sheet, not just the SDK) on
-  SmartDMA + DCDC/SPC interactions - this smells like exactly the kind of
-  thing that ends up in an errata document.
-- As a fallback if no fix is found: time-multiplex instead of running both
-  simultaneously - e.g. capture what's needed at Mid voltage, then only
-  raise to Overdrive and start USB once camera capture is done for that
-  session, if the use case tolerates not truly live-streaming.
-- Ask on NXP's community forum / community.nxp.com with the exact
-  DCDC_VDD_LVL + SmartDMA symptom - this looks like the kind of interaction
-  someone at NXP would recognize immediately if it's a known one.
-
-### Previous entries (kept for context; superseded above where they conflict)
-
-### Previous entry (kept for context; format-choice reasoning below is still current)
-
-**USB (UVC) camera streaming implemented and building clean - NOT YET
-FLASHED/TESTED ON HARDWARE (no board access this session).** Built on top of
-the previous session's plan (see "Plan" below, kept for the reasoning trail)
-of adapting the SDK's `usb_device_video_virtual_camera` example. One thing
-that plan didn't anticipate, discovered while actually reading that
-example's code: it only implements the **MJPEG** UVC payload format (its
-`USB_DeviceVideoPrepareVideoData()` scans transmitted bytes for a `0xFFD9`
-JPEG end-of-image marker to find frame boundaries) - not usable as-is for a
-sensor that produces raw pixels, and MCXN947 has no hardware JPEG encoder.
-Decided (with the user) to switch the UVC format to **uncompressed YUY2**
-instead of adding a software JPEG encoder - YUY2 is a standard "every OS's
-stock webcam stack understands it, no vendor driver" UVC format, and the
-device-side implementation is much simpler than JPEG (fixed frame size,
-no marker scanning). Camera capture stays exactly as before (RGB565,
-untouched); the RGB565->YUY2 conversion happens on the fly, two source
-pixels at a time, directly inside the USB IN-endpoint-complete callback -
-deliberately not a separate whole-frame conversion buffer, to keep RAM
-usage sane (see "Why no second frame buffer" below).
-
-New files (`firmware/camera_ai_demo/source/usb/`):
-- `usb_device_descriptor.c/.h` - UVC descriptors: VC (video control) side is
-  unchanged boilerplate from the stock example; VS (video streaming) side
-  is rewritten for one format (uncompressed YUY2, 320x240, 30fps) instead
-  of MJPEG 176x144, and the still-image-capture descriptor is dropped
-  entirely (not supported).
-- `usb_video_camera.c/.h` - the UVC class glue (adapted from the stock
-  example's `virtual_camera.c`) - control-request handling is basically
-  unchanged (that part was already format-agnostic UVC protocol
-  boilerplate, not MJPEG-specific), but `USB_DeviceVideoPrepareVideoData()`
-  is rewritten: instead of scanning a static byte array for a JPEG marker,
-  it reads `CAMERA_CAPTURE_GetFrameBuffer()` at a running pixel offset,
-  converts each 2-source-pixel chunk to a YUY2 macropixel
-  (`USB_VideoCamera_Rgb565ToYCbCr()`, standard BT.601 integer coefficients),
-  and tracks frame-end with a plain pixel counter instead of a marker scan.
-
-`board_port/cm33_core0/hardware_init.c` gained `USB_DeviceClockInit()` /
-`USB1_HS_IRQHandler()` / `USB_DeviceIsrEnable()`, copied near-verbatim from
-the SDK's own frdmmcxn947 board port for the same stock example (MCXN947-
-specific SPC/SCG/SYSCON register sequence to bring up the USB HS PHY's PLL -
-not something worth re-deriving). No pin muxing changes needed - USB HS
-D+/D- are dedicated pins, not routed through PORT/pin mux, unlike the
-camera/LCD signals.
-
-`source/main.c` no longer calls `LCD_Init()`/`LCD_DrawImage()` - the display
-path is now `USB_VideoCamera_Init()` (registers the UVC class + brings up
-the controller) plus `USB_VideoCamera_Task()` in the main loop (a no-op in
-this bare-metal, no-RTOS-task build; kept for symmetry in case that ever
-changes). Actual frame delivery isn't driven from the main loop at all -
-it's pulled on demand from the USB class callback whenever the host asks for
-the next packet, so the main loop's job is unchanged (AI hook + periodic
-debug log). LCD driver code in `source/display/` is untouched and still
-compiled (just unused - see CMakeLists.txt), same "don't touch unless
-resuming LCD work" status as before.
-
-**Why no second frame buffer:** m_data SRAM for this build is 312KB
-(`MCXN947_cm33_core0_ram.ld`). The RGB565 camera buffer alone is 320*240*2 =
-153,600 bytes. A second full YUY2-converted frame buffer would be another
-153,600 bytes - fine on its own, but combined with USB middleware buffers,
-stack, and everything else, cutting it uncomfortably close for comfort. Since
-YUY2 and RGB565 are both 2 bytes/pixel, converting a whole extra buffer
-wasn't actually necessary - converting just the ~1020 bytes needed for
-each individual USB packet, directly from the live RGB565 buffer, avoids
-the second buffer entirely. Actual build RAM usage: 163,288 / 319,488 bytes
-(51%) - see `./build.sh build` output.
-
-**Bandwidth note:** 320x240 YUY2 @ 30fps is ~36.9 Mbit/s, over what a
-512-byte/microframe USB HS isochronous pipe can carry (~32.8 Mbit/s cap).
-Bumped `HS_STREAM_IN_PACKET_SIZE` to 1024 bytes/microframe (the largest
-single-transaction HS isochronous packet size, no need for the extra
-"transactions per microframe" descriptor bits) - ~65.5 Mbit/s cap, comfortable
-headroom. Only one frame interval is advertised (30fps, matching the
-camera's fixed capture rate) since there's nothing to negotiate down to.
-
-**Not yet done:**
-- **Not flashed or tested on real hardware this session** - no board
-  access. `./build.sh build` succeeds clean (`-Werror`, zero warnings), but
-  nobody has confirmed the board actually enumerates as a webcam yet. Next
-  session (or whenever hardware is available): `./build.sh` (build+flash),
-  plug the board's USB port into a PC, check Windows Camera app / a
-  browser's camera picker / `webcammictest.com` for a device (advertised as
-  "OV7670 on J9" - see `g_UsbDeviceString3` in usb_device_descriptor.c) and
-  confirm a real, live, correctly-colored image appears - not just that
-  enumeration succeeds.
-- If the image looks corrupted/discolored: most likely spot to check first
-  is `USB_VideoCamera_Rgb565ToYCbCr()` (source/usb/usb_video_camera.c) -
-  the RGB565 bit layout or YCbCr coefficients would be the first suspects,
-  not the USB transport plumbing (that part is closely copied from a
-  working stock example).
-- If nothing enumerates at all: check the board's actual USB port - MCXN947
-  dev boards typically have both a USB-HS "device" port and a debug-probe
-  USB port; make sure the camera cable is in the device port, not the
-  MCU-Link probe port (which is a separate USB connection for flashing/
-  debug console, unrelated to this UVC device).
-
-### Plan (from last session, superseded by the above - kept for the reasoning trail)
-
-- **Hardware supports it.** MCXN947 has a genuine USB High-Speed device
-  controller (EHCI-compatible) with its own dedicated HS PHY - confirmed via
-  `CLOCK_EnableUsbhsPhyPllClock()` / `USB_EhciPhyInit()` in the SDK's
-  `fsl_clock.c`, and multiple USB-HS-capable examples already exist for
-  `frdmmcxn947` under `../mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/
-  usb_examples/`.
-- **Reference example to build from:** `usb_device_video_virtual_camera`
-  (also a `_lite` variant) in that same directory - a working USB Video
-  Class (UVC) device example for this exact board. UVC means the board
-  shows up as a standard webcam to any host PC, no custom driver needed.
-  The stock example streams a synthetic/generated test pattern, not a real
-  sensor - turned out to need a format switch (MJPEG -> YUY2) too, not just
-  a data-source swap - see above.
-
-## Goal (from requirement.md)
-
-FRDM-MCXN947 + OV7670 camera (J9), capture frames and get them onto a
-display - originally a TFT panel (see "LCD history" below, now abandoned
-in favor of USB streaming), with a placeholder hook for an AI model later.
-See [requirement.md](requirement.md) for the original ask (note: the
-original ask predates the pivot to USB and still describes a TFT panel).
-
-## Camera (J9) - fully confirmed working, do not need to re-debug
-
-Pin table and rework notes in [README.md](README.md#camera-ov7670---j9-smartdmacamera-header).
-Serial log proof (PID/VER readback + changing pixel data across frames):
+**Install:** the package is NOT on public PyPI - it's on NXP's own index,
+found by grepping the `mcuxsdk` checkout for install instructions
+(`middleware/eiq/executorch/backends/nxp/requirements-eiq.txt` and
+`docs/nxp/topics/overview.md`):
 ```
-Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-Camera: frame #16 ready, 792 samples, pixel range 0xC0C6..0xFBEB, avg=0xE330
-Camera: frame #46 ready, 792 samples, pixel range 0xC0C4..0xFDF1, avg=0xDE26
+pip install --index-url https://eiq.nxp.com/repository eiq_neutron_sdk==3.1.1
 ```
-This stayed working through every LCD-side change during the (now
-abandoned) LCD bring-up - if it ever stops working while adding USB, that's
-a NEW regression, not a pre-existing issue.
+Confirmed with the user before running (installing from a third-party
+index isn't something to do silently). Installed cleanly into this
+project's `tools/westenv` venv (140MB wheel). Provides CLI tools, not a
+Python API to `import` directly - `neutron_converter`, `tflite_profiler`,
+`tflite_quantizer` all land on `PATH` inside the venv.
 
-## LCD history (J8/FlexIO abandoned; project is back on the Arduino header - see the top of this file)
+**Target name for this chip:** `neutron_converter --show-targets` lists
+`mcxn54x`/`mcxn94x`/`imxrt700`/`imx95`/`imx943`/`imx952`/`s32k5`/`s32n79`.
+**MCXN947 is `mcxn94x`** (MCX N94x family). Note this contradicts the
+ExecuTorch Neutron backend's own README (`backends/nxp/README.md`), which
+claims only "eIQ Neutron N3-64 (i.MX RT700)" is supported - that's a
+narrower, higher-level ExecuTorch-specific backend; the lower-level
+`neutron_converter` CLI used here (the same tool, invoked directly)
+supports MCX N94x directly and is what NXP's own TFLM-based mcxn947
+examples (`middleware/eiq/mpp/tests/test_camera_mobilenet_view`) actually
+use under the hood.
 
-The project spent several sessions bringing up an 8-bit-parallel TFT panel
-(`HSD024131-C1` per requirement.md, almost certainly ILI9341-family,
-240x320) on the board's J8 FlexIO/LCD header, detouring away from the
-Arduino header the project started on. Firmware code for the J8 path
-(`source/display/lcd_flexio_mculcd.c`, the J8 half of
-`source/display/lcd_bitbang.c` (then named `lcd_bitbang_j8.c`) via
-`DEMO_LCD_ARDUINO_HEADER=0`, the LCD-related pin muxing in
-`board_port/pin_mux.c`'s `BOARD_InitFlexioPins()`, and the
-`LCD_BITBANG_DIAGNOSTIC` CMake option) is still present in the tree in case
-J8 is revisited later, but is no longer the active goal - **don't spend time
-re-debugging J8 unless the user explicitly asks to resume it.** The project
-has since reverted to the Arduino header (its original design) - see the
-top of this file for that change.
+**Ran it against the exact model in this project** (Phase 1's
+`tflite_learn_1094697_39.tflite`):
+```
+neutron_converter --input tflite_learn_1094697_39.tflite --target mcxn94x \
+  --output tflite_learn_1094697_39_npu.tflite --dump-header-file-output true
+```
+**Result: 31 of 32 operators (96.9%) got offloaded into a single
+`NeutronGraph` custom op** - only one operator stayed as a regular
+builtin op. Converter's own cycle estimate for the NPU-accelerated part:
+**353,039 cycles**. At this board's 150MHz core clock
+(`BOARD_BOOTCLOCKPLL150M_CORE_CLOCK`, `examples/_boards/frdmmcxn947/clock_config.h`
+- not yet confirmed this is the exact clock config this project's
+`BOARD_InitHardware()` actually selects, so treat as an estimate, not a
+promise) that's roughly **~2.35ms** for the NPU-accelerated portion -
+compare against the ~1.27s (1270ms) CPU+CMSIS-NN baseline measured
+earlier this session. That's a very large potential speedup (~500x) on
+paper, but **this is the converter's static cycle estimate for the NPU
+graph alone**, not a real on-device measurement - it does NOT include the
+DSP resize/quantize preprocessing (still runs on CPU regardless of NPU),
+the one un-offloaded operator, or any Neutron driver/data-marshalling
+overhead. Treat as "very promising, worth pursuing" not "confirmed 500x
+faster" until Phase 4-6 actually run it on hardware with the same DWT
+timing method used for the CPU baseline.
 
-Progress made on J8 before the pivot back, for reference if resumed:
-- Wiring, panel, and the generic MIPI-DCS init sequence were all confirmed
-  good (a diagnostic GPIO bit-bang driver on the same J8 pins displayed a
-  correct image).
-- The FlexIO hardware-bus path had two real, fixed bugs: (1) LCD_RD was
-  left floating during writes by the SDK's FlexIO MCULCD driver - fixed by
-  driving it as a plain always-high GPIO instead; (2)
-  `DEMO_PANEL_WIDTH`/`HEIGHT` were wrong (480x320, leftover from an initial
-  wrong ST7796S assumption) causing out-of-range GRAM addressing on every
-  boot - fixed to 320x240.
-- After those fixes, the FlexIO path went from "solid white, nothing at
-  all" to "panel responds, but pixel data comes out as black/white noise"
-  - a bus-speed/signal-integrity symptom. Lowering the FlexIO bus speed
-  further was in progress: an aggressive slowdown (FlexIO clock /50, ~10
-  kHz/pin) caused a full hang (stuck waiting on a FlexIO timer completion
-  flag - looked like a real minimum-operating-frequency issue, not just a
-  software divider-field limit), backed off to a smaller step (/4 clock
-  divider, ~100 kHz/pin) that was built but never flashed/tested before the
-  decision to abandon this path.
+**Memory footprint (from the converter's own report) is smaller than the
+current CMSIS-NN arena, too:** NPU path needs 73,984 bytes of data
+(inputs+outputs+scratch) + 25,840 bytes of weights = ~99.8KB total vs. the
+current path's ~93KB tensor arena - roughly comparable, maybe fits the
+same `m_sramx` budget, but not yet checked against the exact
+`ei_sramx_alloc.c` allocator (which is EI-SDK-specific and won't be used
+by the NPU path's raw TFLM interpreter anyway - Phase 4 needs its own
+memory plan, likely simpler since it's not sharing an allocator with EI's
+DSP step).
 
-## Key files touched by the (abandoned) J8 LCD work
+**Bonus - the converter tells you exactly what op resolver to write**,
+right in a comment at the top of the generated header
+(`tflite_learn_1094697_39_npu.h`):
+```cpp
+static tflite::MicroMutableOpResolver<2> s_microOpResolver;
+s_microOpResolver.AddSoftmax();
+s_microOpResolver.AddCustom(tflite::GetString_NEUTRON_GRAPH(), tflite::Register_NEUTRON_GRAPH());
+```
+Only 2 ops needed (simpler than NXP's own MobileNetV1 example, which
+needed 3) - directly usable in Phase 4's `model_runner_npu.cpp`.
 
-- `firmware/camera_ai_demo/source/display/lcd_flexio_mculcd.c` - FlexIO
-  hardware-bus LCD driver (J8 only, abandoned)
-- `firmware/camera_ai_demo/source/display/lcd_bitbang.c` (was
-  `lcd_bitbang_j8.c`) - generic GPIO bit-bang LCD driver, now the active
-  default (Arduino header) but originally written/proved out against J8's
-  pins
-- `firmware/camera_ai_demo/source/display/lcd_display.h` - selects between
-  the two above via `DEMO_LCD_BITBANG`
-- `firmware/camera_ai_demo/board_port/pin_mux.c` - `BOARD_InitFlexioPins()`
-  has the J8 LCD pin muxing (both FlexIO and J8-bit-bang variants);
-  `BOARD_InitArduinoLcdPins()` (current default) is separate
-- `firmware/camera_ai_demo/board_port/cm33_core0/app.h` - LCD pin/geometry/
-  bus-speed macros for both pin sets, selected by `DEMO_LCD_ARDUINO_HEADER`
-- `firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c` - FlexIO
-  clock divider setup (J8 only, harmless no-op when Arduino header is active)
+**Output files saved in-tree** (not just `/tmp`, so a fresh session can
+pick this up without re-running the converter):
+`source/ai/neutron/tflite_learn_1094697_39_npu.tflite` (27KB - smaller
+than the original 53.4KB `.tflite`, since 31 ops collapsed into one
+compact NeutronGraph blob) and
+`source/ai/neutron/tflite_learn_1094697_39_npu.h` (168KB, ready-to-embed
+C header, has the op resolver snippet above at the top).
+
+## Phases 3-6 DONE (2026-08-24): NPU path fully working on real hardware - ~370-390x faster than CPU+CMSIS-NN
+
+**Phase 3** (C header) was already done as a side effect of Phase 2's
+`--dump-header-file-output` - nothing more needed there.
+
+**Phase 4:** `source/ai/model_runner_npu.cpp` (new file) - implements the
+same `model_runner.h` API as `model_runner.cpp`, but talks to TFLite
+Micro directly instead of going through `ei_run_classifier()`:
+- Op resolver exactly as the converter's generated header suggested
+  (`AddSoftmax()` + `AddCustom(NEUTRON_GRAPH)`).
+- Preprocessing: same nearest-neighbor squash resize as
+  `model_runner.cpp`'s `get_signal_data()`, but writes straight into an
+  int8 NHWC tensor instead of EI's packed-float signal format. Turned out
+  trivial once the input tensor's actual quantization was known (via
+  `neutron_converter --dump-after-import console`, see Phase 2 above):
+  scale=0.003922 (~1/255), zero_point=-128, so quantizing an RGB channel
+  value is just `q = channel_value - 128`.
+- Postprocessing: hand-ported from Edge Impulse's own
+  `process_fomo_i8()`/`ei_handle_cube()`/`process_cubes()`
+  (`edge-impulse-sdk/classifier/postprocessing/ei_postprocessing_common.h`)
+  - confirmed via that source and the model dump that the output tensor
+  is `INT8[1,8,8,4]` (8x8 grid, channel 0 = FOMO's implicit "background"
+  class, channels 1-3 map to `categories[0..2]` =
+  closed_eye/open_eye/yawning), with the same adjacent-cell merge-into-box
+  logic EI uses, just with fixed-size arrays instead of `std::vector`
+  (this model's grid is tiny - 64 cells, 3 classes - so no dynamic
+  allocation needed). Detection threshold 0.5, matching
+  `model_variables.h`'s `.threshold`.
+- Same DWT cycle-counter timing print as `model_runner.cpp`, so both
+  paths' "total classifier time" lines are directly comparable.
+
+**Phase 5:** `CMakeLists.txt` - `AI_MODEL_USE_NPU` option (default OFF).
+ON selects `model_runner_npu.cpp` over `model_runner.cpp` and skips the
+whole Edge Impulse SDK glob entirely (the two TFLM snapshots - EI's
+vendored copy vs. NXP's `middleware/eiq/tensorflow-lite` - must not both
+be linked into the same image). NPU branch instead: compiles
+`tensorflow/lite/micro/kernels/neutron/neutron.cpp` +
+`micro_time.cpp` + `debug_log.cpp` from source (none of these three are
+in the precompiled lib - confirmed by first getting `undefined reference
+to DebugLog` and fixing it by adding NXP's own ready-made
+`debug_log.cpp`, which just wraps `PRINTF`/`fsl_debug_console`), links
+the precompiled `lib/cm33/armgcc/libtflm.a` (whole TFLM core +
+CMSIS-NN reference kernels) plus
+`middleware/eiq/neutron/mcxn/libNeutronDriver.a`/`libNeutronFirmware.a`
+directly via `target_link_libraries()` (simpler than fighting
+`mcux_add_library()`'s CORES/TOOLCHAINS condition machinery for a
+project that isn't Kconfig-driven anyway). **Did NOT need to touch
+`main.c` at all** - `ei_sramx_alloc.c`/`ei_debug_porting.c` stay built in
+both configs (harmless dead code in the NPU build, avoids having to
+conditionally guard `main.c`'s `EI_SRAMX_SetOverflowPool()` call), and
+both model runners implement the identical header.
+
+Hit two build issues, both fixed:
+- `mcux_add_include()` without `BASE_PATH` silently prepends
+  `CMAKE_CURRENT_LIST_DIR` onto every entry - mangled the
+  already-absolute `TFLM_ROOT`/`NEUTRON_ROOT` paths into a bogus nested
+  path. Fixed by using `BASE_PATH ${SdkRootDirPath}` with relative
+  `INCLUDES`, same pattern the EI SDK block above already uses.
+- `kTensorArenaSize` first tried at 160KB - `m_data overflowed by 36648
+  bytes` at link time (this project's non-NPU baseline already uses
+  ~186KB of the 312KB `m_data` region for camera/LCD buffers etc., see
+  "Bug #2"/"Bug #3" above - not much room left for a large static
+  arena). Shrunk to 112KB, which fits (96.09% of `m_data` at link time -
+  tight but works) and turned out to be plenty at runtime (see below).
+
+**Phase 6 - built, flashed, measured on real hardware:**
+```
+AI_MODEL_Init: Neutron NPU FOMO ready (64x64 input, 3 classes, arena used 74660/114688 bytes)
+AI_MODEL_RunInference: total classifier time = 3279us (3ms)
+AI result: box[0] label=open_eye x=32 y=32 w=8 h=8 score=74%
+AI_MODEL_RunInference: total classifier time = 3443us (3ms)
+AI_MODEL_RunInference: total classifier time = 3270us (3ms)
+AI result: box[0] label=open_eye x=24 y=24 w=8 h=8 score=52%
+AI result: box[1] label=closed_eye x=40 y=32 w=8 h=8 score=59%
+AI_MODEL_RunInference: total classifier time = 3264us (3ms)
+AI_MODEL_RunInference: total classifier time = 3274us (3ms)
+```
+**~3.3ms per inference, consistently, across many consecutive runs - no
+faults, no stalls.** Compare against the ~1.27s (1,270,000us) CPU+CMSIS-NN
+baseline measured earlier this session: **roughly 370-390x faster**,
+close to (a bit slower than, as expected - this includes the Softmax op
+and framework overhead the converter's own 353,039-cycle/~2.35ms estimate
+didn't count) the theoretical estimate from Phase 2. Arena headroom is
+comfortable too - only 74,660 of the allocated 114,688 bytes actually
+used, real margin above `AllocateTensors()`'s actual needs despite the
+tight `m_data` link-time budget. Detection results vary sensibly
+frame-to-frame (`open_eye`/`closed_eye`, different box positions/sizes/
+scores, multi-cell boxes merging correctly, e.g. `w=8 h=8` single-cell
+vs. a later `w=16 h=16` merged box) - the hand-rolled FOMO postprocessing
+port is producing sane-looking output, not just "not crashing".
+
+**Verified the CPU/non-NPU default path still builds identical to
+before** (`rm -rf build && ./build.sh build` with `AI_MODEL_USE_NPU`
+unset/OFF) - same `m_text`/`m_data`/`m_sramx` numbers as earlier in this
+file, so the CMakeLists.txt changes for the NPU path are additive, not a
+regression on the default build.
+
+### Next steps for a fresh session
+
+The NPU path is now functionally complete and confirmed fast/stable on
+hardware. What's left is refinement, not core functionality:
+
+1. **Detection-quality validation** (same caveat as the CPU path's own
+   "Next steps" above) - varied/plausible results were observed, but
+   accuracy hasn't been cross-checked frame-by-frame against what's
+   actually in front of the camera.
+2. **`kTensorArenaSize` (112KB) has ~40KB of unused headroom** at runtime
+   (74,660 used) despite being link-time-tight against `m_data` (96.09%) -
+   could shrink it back down (e.g. to ~80-88KB) to free up `m_data`
+   margin for other uses, now that the real runtime number is known
+   instead of guessing from the converter's static report.
+3. **LCD status color + inference timing prints already work identically
+   on both paths** (`main.c` didn't need to change) - no further wiring
+   needed there.
+4. **Not yet tried:** disabling `EI_CLASSIFIER_TFLITE_ENABLE_CMSIS_NN` on
+   the CPU path (older "Next steps" note, superseded in priority by the
+   NPU result above - CMSIS-NN vs. reference-kernel CPU speed is much
+   less interesting now that NPU is ~370x faster than CMSIS-NN already).
+
+**Goal:** run a trained Edge Impulse FOMO object-detection model
+("Test_Drowsy_NXP" Studio project, 3 classes: `closed_eye`/`open_eye`/
+`yawning`, 64x64 input, int8 quantized) on-device, fed from the OV7670
+camera, with results shown on the LCD (originally bounding boxes on the
+live image, now just a solid status color - see below for why).
+
+**Current export in tree:** `source/ai/edge_impulse/` = Studio deployment
+v14 (impulse #11), **non-EON** (`EI_CLASSIFIER_COMPILED=0`, plain TFLite
+Micro interpreter, not EON-compiled generated code - see "Bug #2" below
+for why this was switched).
+
+### Firmware architecture added for this (all still in the tree, believed
+### structurally correct - see "Open problem" below for what's still broken)
+
+- `source/ai/edge_impulse/` - the Edge Impulse C++ library export, built
+  via `mcux_add_source()` with a hand-rolled `file(GLOB_RECURSE ...)` in
+  the top-level `CMakeLists.txt` (**not** the export's own
+  `CMakeLists.txt`/`add_subdirectory()` - that hardcodes `if(NOT TARGET
+  app)`, but this SDK's west/non-find_package build mode names its real
+  target `${MCUX_SDK_PROJECT_NAME}`, e.g. `camera_ai_demo_cm33_core0`, not
+  literally `app`).
+- `source/ai/model_runner.cpp` (was `.c` - had to become C++ to call the
+  SDK) - calls `ei_run_classifier()` (the `extern "C"` wrapper in
+  `ei_run_classifier_c.h`, not the templated `run_classifier()` in
+  `ei_run_classifier.h` directly - including that header caused ODR
+  "multiple definition" link errors against
+  `edge-impulse-sdk/classifier/ei_run_classifier_c.cpp`, which already
+  includes it. Only `ei_classifier_types.h` + `dsp/returntypes.h` are
+  included here, plus a hand-written `extern "C"` forward-declaration of
+  `ei_run_classifier()` - see the comment in that file for the exact ODR
+  reasoning if this needs revisiting).
+- `source/ai/ei_sramx_alloc.c/.h` - **custom allocator**, overrides the
+  SDK's weak `ei_malloc`/`ei_calloc`/`ei_free`
+  (`edge-impulse-sdk/porting/clib/ei_classifier_porting.cpp`) to serve
+  memory from `m_sramx` (a 96KB SRAM bank that exists on this chip but
+  isn't used by anything else, declared but never placed into any output
+  section by the SDK's own linker script) instead of the real heap
+  (`m_data`, which is ~99% full from camera+LCD framebuffers + stack -
+  nowhere near enough for a ~93KB tensor arena). Two-tier: primary pool
+  (m_sramx, fixed 96KB) + an optional "overflow" pool lent in via
+  `EI_SRAMX_SetOverflowPool()` (main.c lends it a dedicated
+  `s_aiScratchPool` buffer, repurposed from what used to be the live LCD
+  image framebuffer - see below). Proper LIFO free-record stack (not just
+  a no-op) - the DSP image-resize step allocates/frees a small scratch
+  buffer ~75 times per inference (once per 1024-pixel page), and a naive
+  no-op free() leaked every one of those and exhausted the pool well
+  before the real bug (see "Bug #1" below) was found and fixed.
+- `source/ai/ei_debug_porting.c` - overrides `ei_printf`/`ei_printf_float`
+  (also weak in the SDK's clib porting layer) to go through this
+  project's `fsl_debug_console` `PRINTF()`/`DbgConsole_Vprintf()` instead
+  of plain `vprintf()`/`printf()`, which go nowhere useful under this
+  project's `--specs=nosys.specs` link.
+- `board_port/ei_sramx.ld` - **additive** linker fragment (a *second* `-T`
+  passed via `mcux_add_armgcc_linker_script()` in `CMakeLists.txt`, after
+  the SDK's own board linker script) adding one new output section that
+  places `.ei_sramx`-tagged symbols into the `m_sramx` region. Does NOT
+  use `INSERT AFTER` - tried that first, GNU ld rejected it ("`.bss` not
+  found for insert"); a plain second `SECTIONS {}` block without INSERT
+  just gets concatenated after the base script's sections by default,
+  which is sufficient here (position within `m_sramx` relative to `m_data`
+  sections doesn't matter, they're different physical banks).
+- `CMakeLists.txt` additions: the linker fragment above; the hand-rolled
+  EI source glob; `mcux_add_macro(... -DEI_PORTING_CLIB=1
+  -DEI_C_LINKAGE=1 -DEI_CLASSIFIER_TFLITE_ENABLE_CMSIS_NN=1
+  -DARM_MATH_LOOPUNROLL
+  -DSILENCE_EI_CLASSFIER_OBJECT_DETECTION_COUNT_WARNING=1)` both in `CC`
+  and `CX` categories (`mcux_add_macro()`'s C++ flag category is `CX`, not
+  `CXX` - easy to miss); `-Wno-error` scoped to just the EI source files
+  (the whole project otherwise builds `-Werror`, and EI's vendored
+  TFLite-Micro/CMSIS-NN isn't fully warning-clean under this toolchain);
+  `mcux_add_linker_symbol(SYMBOLS "__stack_size__=0x1000")` (bumped from
+  the SDK default 2KB to 4KB - TFLite Micro's C++ call chain is deep).
+- `source/fault_handler.c` - pre-existing HardFault dump handler, fixed
+  during this work: it used `%08lX` throughout, which
+  `debug_console_lite`'s minimal printf mishandles (prints the literal
+  characters `lX` instead of the value - same class of bug as this
+  project's pre-existing "`%f` not supported" notes elsewhere). Now uses
+  `%08X` with `(unsigned int)` casts (fine, `unsigned long`/`unsigned int`
+  are both 32-bit on this target). **Without this fix the fault dumps are
+  useless** (all register values print as literal `0xlX`) - if a fresh
+  session sees garbled fault dumps again, check this hasn't regressed.
+- `source/display/bbox_overlay.c/.h` - draws bounding-box rectangles into
+  an RGB565 buffer. **Currently unused** - see "Live image display
+  disabled" below. Still compiles (harmless dead code), not deleted.
+- `source/main.c` - runs `AI_MODEL_RunInference()` once per captured
+  camera frame; on success, was drawing bounding boxes on the live camera
+  image and pushing it to the LCD - **this is currently disabled** (see
+  below).
+
+### Live image display disabled (RAM optimization + simplification)
+
+Per explicit direction mid-session: `main.c`'s live-camera-image-on-LCD
+path (`memcpy` into `s_lcdSnapshot` + `DEMO_DrawAiBoxes()` +
+`LCD_DrawImage()`) is commented out (`#if 0`, search
+`DEMO_DrawAiBoxes`/`DEMO_ColorForLabel` in `main.c`), not deleted. The LCD
+now just fills solid with a status color instead
+(`DEMO_ShowStatusColor()`): red = `closed_eye`/`yawning` detected this
+frame, green = `open_eye`, blue = nothing detected. The RAM that used to
+be `s_lcdSnapshot` (a second 150KB framebuffer, needed for tearing-free
+image display) is now `s_aiScratchPool`, permanently dedicated as the AI
+allocator's overflow pool (see `ei_sramx_alloc.c` above) - no more of the
+fragile "don't touch this buffer while inference is running" ordering
+constraint that came with temporarily borrowing the display buffer (an
+earlier, now-abandoned approach).
+
+If image + bounding-box display is revisited, the commented-out code in
+`main.c` is the starting point - but see the RAM budget math in
+README.md/this file first, since re-adding a 150KB display buffer
+directly competes with the AI model's RAM needs again.
+
+### Bug #1 (FOUND AND FIXED): wrong `signal.total_length` - the real
+### cause of the very first HardFault symptom, took most of this session
+### to find
+
+**Symptom:** a precise Bus Fault (`BFSR=0x82`, `PRECISERR`+`BFARVALID`),
+`BFAR`/`MMFAR` = `0x04018000` **exactly** - the first byte past the end of
+`m_sramx` (`0x04000000` + `0x18000` = `0x04018000`) - every single time,
+regardless of how much RAM was given to the allocator (tried: bigger
+primary pool, a 150KB overflow pool = 246KB combined, EON vs.
+non-EON/interpreter model, proper LIFO free instead of a leaking no-op).
+PC always inside `extract_image_features_quantized()`
+(`edge-impulse-sdk/classifier/ei_run_dsp.h`), called via
+`signal->get_data()` → my callback.
+
+**Root cause:** `extract_image_features()`/`_quantized()` do **not
+resize** - they read exactly `signal->total_length` elements via
+`get_data()` and write that many pixels straight into `output_matrix`,
+which the *caller* sizes for `EI_CLASSIFIER_INPUT_WIDTH *
+EI_CLASSIFIER_INPUT_HEIGHT` (64*64 = 4096 pixels for this model).
+`model_runner.cpp` was setting `signal.total_length = camera_width *
+camera_height` (320*240 = 76800 - the **raw camera frame** size, not the
+model's input size) - so the loop wrote ~76800*3 = 230,400 output values
+into a buffer sized for 4096*3 = 12,288. A ~218KB overflow, silently
+marching through `m_sramx` for the entire ~93KB tensor arena's worth of
+memory and beyond, until it finally ran off the end of the whole bank and
+faulted - **not** a capacity problem, which is why every RAM-budget fix
+tried first had zero effect.
+
+**Fix applied** (`source/ai/model_runner.cpp`): `signal.total_length` is
+now `EI_CLASSIFIER_INPUT_WIDTH * EI_CLASSIFIER_INPUT_HEIGHT` (4096), and
+`get_signal_data()` does the resize itself - nearest-neighbor "squash"
+(independent per-axis scaling, matching `EI_CLASSIFIER_RESIZE_MODE`):
+for each requested *target* (64x64) pixel index, maps back to the nearest
+*source* (320x240) camera pixel (`sx = tx * srcWidth / dstWidth`, same for
+y), then converts that source pixel RGB565 → packed `0xRRGGBB` float as
+before.
+
+**Confirmed fixed**: after this change, the crash signature changed
+entirely (see Bug #2) - no more `0x04018000` bus fault, so the DSP
+resize/feature-extraction step now completes successfully. This was the
+right fix.
+
+### Bug #2 (FOUND AND FIXED, but see "Open problem" - crash persists past this): missing 8-byte alignment on the overflow pool
+
+**Symptom (after fixing Bug #1):** a Usage Fault, not a Bus Fault this
+time - `UFSR = 0x10` (bit 4, `UNALIGNED`), `MMFSR`/`BFSR` both 0. `MMFAR`/
+`BFAR` show `0xE000ED34`/`0xE000ED38` (the *addresses of those two
+registers themselves* - not meaningful; MMFAR/BFAR aren't valid/written
+for a pure UsageFault, ignore them for this fault type). PC inside
+`arm_nn_mat_mult_nt_t_s8` (CMSIS-NN), called from
+`arm_convolve_1x1_s8_fast` - i.e. **actual NN convolution now running**,
+real progress past the DSP stage.
+
+**Suspected cause:** `s_aiScratchPool` (`main.c`, the overflow pool lent
+to the AI allocator) was declared as a plain `static uint8_t
+s_aiScratchPool[...]` with no alignment attribute, unlike `s_pool` in
+`ei_sramx_alloc.c` (which has `__attribute__((aligned(8)))`). CMSIS-NN
+kernels use wide/vectorized loads on tensor buffers and require alignment
+- the allocator computes offsets that are 8-aligned *relative to the
+pool's own start*, which only produces real 8-byte-aligned *addresses* if
+the pool's start address is itself 8-aligned.
+
+**Fix applied:** added `__attribute__((aligned(8)))` to
+`s_aiScratchPool`'s declaration in `main.c`.
+
+**Verified via `nm` after rebuilding** - all three pool-related symbols
+land on 8-byte-aligned addresses:
+```
+04000000 b s_pool            (ei_sramx_alloc.c, primary pool)
+04017a00 b s_records          (ei_sramx_alloc.c, LIFO free-record stack)
+200009b8 b s_aiScratchPool.0  (main.c, overflow pool - 0x9b8 = 184 = 23*8)
+```
+
+## Bug #2 was MISDIAGNOSED - real cause was stack overflow (STKOF), not alignment; FOUND AND FIXED (2026-08-24)
+
+**The "UsageFault, UNALIGNED" diagnosis above was wrong.** `CFSR = 0x00100000`
+is bit 20 of CFSR, which is `UFSR` bit 4 - and per this SDK's own
+`core_cm33.h`, **bit 4 of UFSR is `STKOF` (hardware stack-limit check,
+ARMv8-M-only), not `UNALIGNED`** (`UNALIGNED` is UFSR bit 8, i.e. would
+need `CFSR = 0x01000000`, not `0x00100000` - easy to misread without
+checking the actual bit position against `core_cm33.h`). Confirmed by
+disassembly: `arm-none-eabi-objdump
+-d` at the faulting PC (`0x18A44`) shows `subw sp, sp, #2780` - the
+*prologue* of `arm_nn_mat_mult_nt_t_s8`, reserving 2780 bytes of locals for
+its unrolled `q31` accumulators. That's a pure arithmetic instruction, not
+a memory access - it cannot raise `UNALIGNED`. It's exactly the kind of
+instruction that trips a hardware `SP < PSPLIM` check the instant it
+executes, which is what `STKOF` is. The `aligned(8)`/`aligned(16)` changes
+made chasing the wrong diagnosis were harmless (real fixes, just not
+_the_ fix) and have been kept.
+
+**Fix applied:**
+- `CMakeLists.txt`: `__stack_size__` `0x1000` (4KB) -> `0x4000` (16KB).
+- `source/main.c`: `s_aiScratchPool` (the AI allocator's overflow pool)
+  shrunk from `DEMO_BUFFER_WIDTH*DEMO_BUFFER_HEIGHT*sizeof(uint16_t)`
+  (150KB) down to a fixed `16*1024` (16KB) - the tensor arena
+  (`EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE` = 92876 bytes) fits entirely
+  inside the primary 96KB `m_sramx` pool on its own (96KB minus the
+  `ei_sramx_alloc.c` free-record stack leaves ~94KB), so the overflow pool
+  was never doing much beyond covering the DSP resize step's small
+  per-page scratch buffers - 150KB was massive overkill, and was exactly
+  what was starving `m_data` of room to grow the stack (`m_data` was at
+  98.67% before this fix, 59.56% after).
+
+**Confirmed fixed**: flashed and reset - **no HardFault at all**, boot log
+completes and the main loop runs. (See Bug #3 below for what turned up
+next, once inference was actually completing multiple times in a row.)
+
+## Bug #3 (FOUND, NOT YET FIXED): `m_sramx` collides with the SmartDMA camera coprocessor's own firmware RAM - camera capture stalls a few frames after AI starts allocating there
+
+**This is a bigger problem than Bug #2 and needs a real design decision,
+not just a one-line fix - flagging clearly rather than guessing at a fix.**
+
+**Symptom:** after the Bug #2 fix above, inference runs and completes
+without faulting - genuine progress - but `s_frameCount`
+(`camera_capture.c`) freezes after a small number of frames (observed:
+stuck at exactly `3`, for 3+ seconds of continued execution, confirmed via
+`pyocd commander` - halted the core, read `pc`/`lr`/`sp`, saw it sitting in
+`CAMERA_CAPTURE_IsFrameReady()`'s poll loop in `main.c` (not stuck *inside*
+inference, not faulted - just legitimately idle, waiting on a
+`s_frameReady` flag that never gets set again). Confirmed via `read32` on
+`s_frameCount`'s address, taken twice 3 seconds apart while the core was
+resumed and running: identical value both times. Per README.md, the camera
++ SmartDMA path was previously confirmed to run continuously and
+indefinitely on its own (frame #16, #46, ... in old logs) - so freezing
+after 3 frames is new, and only showed up once AI inference started
+actually completing multiple times in a row (every earlier session's
+crash happened on/near the very first inference, before this had a chance
+to surface).
+
+**Root cause:** `SMARTDMA_CAMERA_MEM_ADDR` (defined in the MCUXpresso
+SDK's own `drivers/smartdma/mcxn/fsl_smartdma_fw.h`) is `0x04000000` -
+**the exact same physical address as `m_sramx`**, which is also where
+`ei_sramx_alloc.c`'s `s_pool` (the AI tensor arena's primary pool) is
+placed (confirmed via `nm`: `04000000 b s_pool`). `CAMERA_CAPTURE_InitSmartDma()`
+(`camera_capture.c`) calls `SMARTDMA_InstallFirmware(SMARTDMA_CAMERA_MEM_ADDR,
+...)`, loading the SmartDMA coprocessor's own camera-capture microcode
+into that bank, and the coprocessor keeps using that memory as its
+live working RAM for as long as it's capturing frames. This directly
+contradicts this project's own working assumption (stated earlier in this
+file and in the `ei_sramx_alloc.c` header comment) that `m_sramx` "exists
+on this chip but isn't used by anything else" - **that's wrong**: it's not
+used by anything in the *statically-linked* image (hence "not placed into
+any output section by the SDK's own linker script"), but it *is* actively
+used at runtime by the SmartDMA coprocessor, which explains why nothing in
+the base linker script reserves it (SmartDMA firmware is installed
+programmatically via `SMARTDMA_InstallFirmware()`, not through the linker).
+
+Once the AI classifier starts bump-allocating and writing real data into
+`s_pool` (tensor arena, working buffers, etc.), it's directly overwriting
+the SmartDMA camera coprocessor's own firmware/state in the same physical
+bytes. The coprocessor doesn't share the ARM core's fault mechanism - it
+just silently stops producing frame-complete interrupts once its own
+memory gets corrupted enough, which is consistent with the "frame count
+just stops, no crash" symptom (the first few frames survive because the
+tensor arena bump-allocator hasn't grown far/into the specific bytes
+SmartDMA still needs yet).
+
+### Next steps for a fresh session
+
+This needs an actual architectural decision, not a quick patch - the AI
+tensor arena and live SmartDMA camera capture **cannot coexist in
+`m_sramx`** as currently structured. Options, roughly cheapest to most
+invasive:
+
+1. **Stop SmartDMA before running inference, restart it after**
+   (`CAMERA_CAPTURE_Deinit()` + `CAMERA_CAPTURE_Reinit()`, both already
+   exist in `camera_capture.c` and are already used for the USB-streaming
+   build's time-multiplexing - see the `#else` branch in `main.c`). Turns
+   this into a strictly time-multiplexed pipeline: capture one frame,
+   deinit SmartDMA, run inference (safe to fill `m_sramx` now), reinit
+   SmartDMA, wait for the next frame. Simplest fix, matches a pattern this
+   codebase already has precedent for - but re-check `OV7670_Init()`/SCCB
+   re-negotiation cost each `Reinit()` (may not be as cheap as just
+   toggling an IRQ) and confirm the sensor doesn't need a settle delay
+   after re-enabling before the first frame is trustworthy.
+2. **Move the AI tensor arena somewhere else entirely** (not `m_sramx`) -
+   but `m_data` is the only other RAM candidate and it's already
+   constrained (59.56% used after the Bug #2 fix, but that's *without* a
+   ~93KB arena in it - adding one back there would blow past capacity
+   again, the exact problem `m_sramx` was originally adopted to solve).
+   Not obviously viable unless something else in `m_data` shrinks a lot
+   first.
+3. **Only allocate/write to the parts of `m_sramx` SmartDMA isn't using** -
+   would require knowing the SmartDMA camera firmware's actual size/layout
+   precisely (not just its base address) and carving the AI pool to start
+   after it - fragile (undocumented, could change with SDK updates) and
+   not recommended over option 1.
+
+**Recommended: option 1** - it directly matches this project's own
+time-multiplexed USB-streaming precedent, and per the file-level comment
+in `main.c`, capture and heavy compute already can't overlap on this chip
+for unrelated reasons (SmartDMA + USB HS conflict) - suggesting
+capture/inference mutual exclusion is already an accepted constraint here,
+not a new one.
+
+**FIXED (option 1 implemented, 2026-08-24):** `source/main.c`'s default
+(non-USB) loop now calls `CAMERA_CAPTURE_Deinit()` right before
+`AI_MODEL_RunInference()` and `CAMERA_CAPTURE_Reinit()` right after -
+exactly mirroring the existing `DEMO_CaptureFramesAtMidVoltage()` /
+USB-streaming pattern already in the same file. SmartDMA is fully torn
+down (IRQ disabled, coprocessor deinited) before the AI arena touches
+`m_sramx`, and only reinstalled/re-armed once inference has returned and
+freed it again.
+
+**Confirmed fixed on real hardware** - flashed, reset, monitored ~45s
+continuously:
+```
+AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=61%
+Camera: frame #16 ready, 792 samples, pixel range 0x31A7..0xCE1A, avg=0x9AE2
+AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=53%
+...
+Camera: frame #46 ready, 792 samples, pixel range 0x31C7..0xCF1A, avg=0xA48B
+AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=61%
+AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=72%
+```
+No HardFault, no frame-count stall - `frame #16`/`#46` confirm SmartDMA
+keeps delivering frames indefinitely across many deinit/reinit cycles, and
+`AI result` lines confirm the whole pipeline (capture -> DSP resize ->
+CMSIS-NN convolution -> FOMO postprocessing -> box output) is now running
+end-to-end repeatedly without crashing. **The AI integration goal stated
+at the top of this file is met** - closed_eye is genuinely being detected
+each cycle (consistent with the camera currently pointed at a closed/no
+eye scene during this test - not yet validated against open_eye/yawning
+scenes or bounding-box position/size accuracy, see "Next steps" below).
+
+### Inference timing MEASURED (2026-08-24) - `ei_result.timing` is a dead end on this SDK build, use DWT instead
+
+`ei_result.timing` (the SDK's own timing struct, `ei_impulse_result_t.timing`)
+reads all-zero on this platform - traced to
+`edge-impulse-sdk/porting/clib/ei_classifier_porting.cpp`'s
+`ei_read_timer_us()`, which is hard-coded `return 0;` (and, unlike
+`ei_malloc`/`ei_printf` in the same file, **not** marked `__attribute__((weak))`,
+so it can't be overridden the usual way this project overrides other clib
+porting stubs).
+
+**Fix applied:** `source/ai/model_runner.cpp` now times the whole
+`ei_run_classifier()` call itself using the Cortex-M33's DWT cycle counter
+(`AI_MODEL_InitTiming()`, called once from `AI_MODEL_Init()`, enables
+`DWT->CYCCNT` via `CoreDebug->DEMCR`/`DWT->CTRL`; `AI_MODEL_RunInference()`
+samples `DWT->CYCCNT` before/after and converts to microseconds via
+`SystemCoreClock`). Prints `AI_MODEL_RunInference: total classifier time =
+<N>us (<N>ms)` after every inference.
+
+**Measured on real hardware, 5 consecutive frames:** 1271927us, 1271390us,
+1271188us, 1271286us, 1270365us - **consistently ~1.27 seconds per
+inference**, +/-2ms across samples (i.e. essentially deterministic - makes
+sense for a fixed-size int8 model with no early-exit/data-dependent
+branching). Combined with the `CAMERA_CAPTURE_Deinit()`/`Reinit()`
+round-trip added for Bug #3, full pipeline throughput is well under 1fps
+right now (~0.78 inferences/sec, ignoring the deinit/reinit overhead
+itself, which wasn't separately measured).
+
+This is the non-EON TFLite Micro interpreter (`EI_CLASSIFIER_COMPILED=0`,
+see the file's top for why EON was switched off) with CMSIS-NN
+acceleration on a plain Cortex-M33 core - no surprise it's slow by
+smart-camera standards. Worth revisiting EON and/or the Neutron NPU path
+(see the trimmed "Next steps" list further up this file, item 4 - NPU
+alternative) if sub-second/higher-fps response ever becomes a real
+requirement; out of scope for just getting the pipeline correct, which is
+what this session was about.
+
+### Next steps for a fresh session
+
+1. **Validate detection quality further**: this session's live testing
+   (after the Bug #3 fix) has already shown varied, plausible-looking
+   results across frames - `closed_eye`, `open_eye`, and `yawning` all
+   appeared with different box positions/sizes and confidence scores
+   50-97% as the camera view changed, not just one fixed-looking result
+   like the very first post-fix test suggested. That's a good sign (rules
+   out the "stuck on one static wrong answer" failure mode), but scores
+   and box positions haven't been cross-checked against what's actually in
+   front of the camera frame-by-frame - still worth a proper side-by-side
+   check if detection accuracy matters for real use, not just "does it
+   produce varied output".
+2. ~~Check inference timing~~ - DONE, see above (~1.27s/inference,
+   non-EON+CMSIS-NN on Cortex-M33 core).
+3. **Bounding-box display is still disabled** ("Live image display
+   disabled" section above) - now that inference is actually working
+   end-to-end, revisiting that (if wanted) means re-budgeting RAM again:
+   `m_data` is currently at 59.56% (`build.sh build` output), so there's
+   real headroom now (unlike when that feature was disabled), but a 150KB
+   live-image buffer would eat most of it back up - check current numbers
+   before re-adding. Given ~1.27s/inference, live boxes would also update
+   well under 1fps - may be worth confirming that's an acceptable UX
+   before spending the RAM budget on it.
+
+## Bug #4 (FOUND AND FIXED, 2026-08-24): LCD status-color fill only ever painted the first row - `LCD_PushPixels()` closes CS every call, `DEMO_ShowStatusColor()` called it in a loop
+
+**Symptom (reported by user, on real hardware):** the LCD showed only a
+single vertical stripe of the status color, with the rest of the screen
+alternating black/white horizontal stripes (stale/garbage GRAM content).
+
+**Root cause:** `LCD_SetWindow()` (both `lcd_bitbang.c` and
+`lcd_flexio_mculcd.c`) asserts CS and issues the column/row/memory-write
+(`0x2A`/`0x2B`/`0x2C`) commands, leaving the transfer open - by design,
+so one `LCD_SetWindow()` + one `LCD_PushPixels()` pushes one block of
+pixels and then `LCD_PushPixels()` itself closes CS at the end. But
+`DEMO_ShowStatusColor()` (`main.c`) doesn't have a full 320x240 framebuffer
+to push in one call (that's the whole point of it - filling the screen
+with one small 320-pixel row buffer reused `DEMO_BUFFER_HEIGHT` times to
+avoid a 150KB buffer), so it was calling `LCD_SetWindow()` **once** and
+then `LCD_PushPixels()` **240 times** (once per row) - and every one of
+those calls closes CS at the end. Only the first row's bytes actually
+reach the panel while CS is still asserted; the other 239 calls send
+their WR pulses/data with CS already deasserted, which the panel simply
+ignores (GRAM position doesn't advance, pixel data isn't latched). With
+this panel's MADCTL `MV=1` (row/column exchange, see `LCD_InitPanel()`),
+one "row" of memory-write data physically renders as one vertical stripe,
+matching the reported symptom exactly. The rest of the screen kept
+whatever was already in GRAM from before (explains the black/white
+stripe pattern - leftover panel-internal content, unrelated to anything
+this firmware wrote).
+
+**Fix applied:** added `LCD_PushPixelsOpen()` (same as `LCD_PushPixels()`
+but does NOT close CS) and `LCD_EndWindow()` (closes CS) to both LCD
+backends (`lcd_bitbang.c/.h` and `lcd_flexio_mculcd.c/.h`, same API on
+both per the existing "same public API" convention - `lcd_display.h`
+picks one at compile time). `LCD_PushPixels()` itself is now just
+`LCD_PushPixelsOpen()` + `LCD_EndWindow()`, so existing single-call users
+(`LCD_DrawImage()`) are unaffected. `DEMO_ShowStatusColor()` (`main.c`)
+now calls `LCD_PushPixelsOpen()` in its per-row loop and a single
+`LCD_EndWindow()` after the loop, keeping CS asserted for the whole
+320x240 fill.
+
+**Build/flash verified** (builds clean, flashes, boots without fault) -
+**not yet visually re-confirmed on the physical panel** (no camera
+access from this session to see the screen) - a fresh session or the
+user should visually check the LCD now shows a solid full-screen color
+that changes with the detected state, not just one stripe.
+
+## OPEN PROBLEM (SUPERSEDED - see Bug #2 fix above): identical HardFault persists even after the alignment fix above
+
+Flashed the `aligned(8)` fix and got **the exact same fault** as before it
+- byte-for-byte identical register dump:
+```
+CFSR  = 0x00100000 (MMFSR=0x00 BFSR=0x00 UFSR=0x0010)   -> UsageFault, UNALIGNED
+HFSR  = 0x40000000
+MMFAR = 0xE000ED34  (not meaningful for UsageFault, see above)
+BFAR  = 0xE000ED38  (not meaningful for UsageFault, see above)
+Stacked r0=0x04000020 r1=0x0003A284 r2=0x0003A310 r3=0x0400C020
+Stacked r12=0xFF414651 LR=0x0000E30B PC=0x00018A44 xPSR=0x69100200
+```
+(PC/LR resolve to `arm_nn_mat_mult_nt_t_s8`
+(`edge-impulse-sdk/CMSIS/NN/Source/NNSupportFunctions/arm_nn_mat_mult_nt_t_s8.c:63`)
+called from `arm_convolve_1x1_s8_fast`
+(`.../ConvolutionFunctions/arm_convolve_1x1_s8_fast.c:133`), via
+`arm-none-eabi-addr2line -e build/camera_ai_demo_cm33_core0.elf -f -C -i <addr>`.)
+
+**This means the `aligned(8)` fix on `s_aiScratchPool` either wasn't the
+real cause, or wasn't sufficient** (e.g. CMSIS-NN might need 16-byte
+alignment for this specific fast-path kernel, not just 8 - untested).
+Register values worth noting for whoever picks this up:
+`r0=0x04000020` and `r3=0x0400C020` are both addresses *inside*
+`s_pool`/`m_sramx` (`0x04000000`-`0x04018000` range) - `0x04000020` is
+only 0x20 (32 bytes) past `s_pool`'s start, `0x0400C020` is 0x4000C020 -
+0x04000000 = 0xC020 = 49184 bytes in. Neither is obviously misaligned to
+8 (`0x20 % 8 = 0`, `0xC020 % 8 = 0`) or even 16 (`0x20 % 16 = 0`, but
+`0xC020 % 16 = 0` too) - so if one of these two registers is the actual
+faulting address, plain alignment doesn't explain it at first glance;
+might be worth checking 4-byte vs. wider access width assumptions, or
+whether the *access size* (e.g. a `LDRD`/64-bit load) combined with a
+32-but-not-64-bit-aligned address is the actual trigger (8-aligned isn't
+automatically 8-byte-*access*-safe on all instruction forms - some need
+the access size itself, not just 8, as the alignment requirement, e.g. a
+16-byte NEON-style load needing 16-byte alignment where 8 isn't enough).
+
+### Next steps for a fresh session
+
+1. **Try 16-byte alignment** on `s_aiScratchPool` (and maybe `s_pool` /
+   `s_records` too, for consistency) instead of 8 - cheap to try, CMSIS-NN
+   / TFLite tensor arenas are often documented as wanting 16-byte
+   alignment, not just 8.
+2. **Try disabling CMSIS-NN acceleration**
+   (`EI_CLASSIFIER_TFLITE_ENABLE_CMSIS_NN` - currently forced to `1` in
+   `CMakeLists.txt`) to fall back to TFLite Micro's generic reference
+   kernels instead of the CMSIS-NN fast-path (`arm_convolve_1x1_s8_fast`).
+   Slower inference, but reference kernels are less likely to have strict
+   alignment assumptions - useful to confirm/rule out CMSIS-NN alignment
+   requirements specifically, even if not the final answer (much slower
+   inference isn't great long-term, given `ei_result.timing` wasn't even
+   checked yet this session).
+3. **Check `arm_nn_mat_mult_nt_t_s8.c:63`** and
+   `arm_convolve_1x1_s8_fast.c:133` directly (both under
+   `source/ai/edge_impulse/edge-impulse-sdk/CMSIS/NN/Source/`) to see
+   exactly which pointer is being dereferenced at the fault, and whether
+   it's the tensor arena/activation buffer, a weights pointer (which would
+   point into flash/`.rodata`, `m_text`, not `m_sramx`/`m_data` - a
+   different fix entirely if so, since flash addresses aren't under this
+   project's control the same way), or something else.
+4. **NPU alternative** (raised mid-session, not pursued yet): this exact
+   chip (MCXN947) genuinely has a Neutron NPU -
+   `middleware/eiq/neutron/mcxn/libNeutronDriver.a`/`libNeutronFirmware.a`
+   exist in the SDK, and there are real NXP example projects using it on
+   this exact board (`examples/_boards/frdmmcxn947/eiq_examples/tflm_kws/npu/`,
+   `.../mpp/tests/test_camera_mobilenet_view/`, `test_image_ultraface/`).
+   This is a **substantial rewrite** - bypasses the Edge Impulse SDK's
+   `run_classifier()` entirely, needs the model converted with NXP's own
+   `neutron-converter` toolchain (not Edge Impulse Studio), and a new
+   `model_runner.cpp` written against NXP's own Neutron driver API. Only
+   worth it if the CMSIS-NN alignment issue above turns out to be a deep
+   rabbit hole - try the cheaper alignment/CMSIS-NN-disable steps first.
+5. If none of the above resolves it: the model itself (FOMO, 64x64,
+   alpha 0.35, int8, Studio project "Test_Drowsy_NXP" v14/impulse #11) is
+   otherwise confirmed sound - trained/tested in Studio with reasonable
+   results (F1 ~63%, see prior session's Studio screenshots/history, not
+   repeated here). Re-exporting from Studio isn't likely to help further
+   unless specifically changing something that affects tensor
+   alignment/layout (e.g. a different quantization or backbone) - the
+   remaining issue looks firmware/integration-side, not model-side.

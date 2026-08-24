@@ -235,13 +235,18 @@ void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   /* CS stays asserted - LCD_PushPixels() closes it. */
 }
 
-void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
+void LCD_PushPixelsOpen(const uint16_t *pixels, uint32_t count) {
   for (uint32_t i = 0; i < count; i++) {
     LCD_WriteByte((uint8_t)(pixels[i] >> 8));
     LCD_WriteByte((uint8_t)(pixels[i] & 0xFFU));
   }
+}
 
-  LCD_SetCSPin(true);
+void LCD_EndWindow(void) { LCD_SetCSPin(true); }
+
+void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
+  LCD_PushPixelsOpen(pixels, count);
+  LCD_EndWindow();
 }
 
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height,

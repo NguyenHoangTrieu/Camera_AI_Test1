@@ -1,31 +1,29 @@
 # Camera_AI_Test1
 
-Camera + AI + TFT display project for **FRDM-MCXN947**, built against the local
-`mcuxsdk` checkout (`../mcuxsdk`). Captures frames from an **OV7670** camera via
-SmartDMA, feeds them into a placeholder AI-model hook, and draws them to a TFT
-panel wired to the board's **Arduino header** (GPIO bit-bang 8080 bus) - the
-project's original design, per `requirement.md`.
+Drowsy-driver detection camera on **FRDM-MCXN947**, built against the local
+`mcuxsdk` checkout (`../mcuxsdk`). Captures frames from an **OV7670** camera
+via SmartDMA, runs a trained Edge Impulse FOMO object-detection model
+(`closed_eye` / `open_eye` / `yawning`) on every frame, and shows the result
+on a TFT panel wired to the board's **Arduino header** (GPIO bit-bang 8080
+bus) as a solid full-screen status color:
 
-> **Two other paths were tried and abandoned** (code still in the tree, still
-> builds, just not the default - see [WORKLOG.md](WORKLOG.md) for the full
-> trail of both):
-> - **J8 FlexIO/LCD header** (hardware-accelerated): wiring/panel/init
->   sequence were all confirmed good (a bit-bang diagnostic on the same J8
->   pins displayed a correct image), but the FlexIO hardware-bus path itself
->   never got past "responds to commands but pixel data comes out as
->   black/white noise" - a bus-speed/signal-integrity issue that wasn't fully
->   resolved. Abandoned in favor of reverting to the (already proven-working)
->   Arduino header instead of continuing to chase it.
-> - **USB Video Class (UVC) webcam streaming**: a genuine hardware/board
->   limitation, not fixable in software - SmartDMA camera capture and the USB
->   HS PHY need mutually exclusive DCDC voltage levels on this chip, and this
->   board's one USB connector is hard-wired to the HS controller only (no
->   accessible USB FS alternative). See "USB (UVC webcam, abandoned)" below.
+- 🔴 **red** - `closed_eye` or `yawning` detected (drowsiness alert)
+- 🟢 **green** - `open_eye` detected (awake)
+- 🔵 **blue** - nothing detected this frame
 
-Source of truth: [requirement.md](requirement.md). Camera wiring/pinout is
-confirmed against the mcuxsdk pin tables (not just a photo). LCD wiring/init
-sequence are confirmed against real hardware (see "Building and flashing"
-below for the proof).
+Inference can run on either the chip's **CPU (CMSIS-NN)** or its **Neutron
+NPU**, selected at build time - see "AI model integration" below. On real
+hardware the NPU path runs the same model roughly **370-390x faster** than
+the CPU path (~3.3ms vs. ~1.27s per inference).
+
+Source of truth for the original ask: [requirement.md](requirement.md).
+[WORKLOG.md](WORKLOG.md) has the full messier bring-up history (bugs found,
+dead ends, exact hardware measurements) if you need more detail than this
+file - this README stays at "what does it do and how do I run it".
+[KNOWLEDGE.md](KNOWLEDGE.md) is a concept-level explainer (in Vietnamese) of
+*why* things work the way they do - DVP/SmartDMA camera capture, the FOMO AI
+model, the Neutron NPU, and the USB/DCDC-voltage conflict - useful if you're
+new to any of these and want the background, not just the how-to.
 
 ## Hardware
 
@@ -103,37 +101,99 @@ worked fine without one), it's fine to leave that wire disconnected.
    ST7796-family panels) - if your panel uses something else entirely, this
    may need adjusting.
 5. **Rotated/mirrored image**: the panel is driven in landscape (MADCTL MV
-   bit) to match the camera's 320x240 buffer 1:1, no software rotation. If
-   the image comes out sideways or mirrored, adjust the MADCTL byte in
-   `LCD_InitPanel()` or the camera's mirror/vflip registers
-   (`DEMO_CAMERA_MIRROR`/`DEMO_CAMERA_VFLIP` in `camera_capture.c`).
+   bit) to match the camera's 320x240 buffer 1:1. If the status-color fill
+   comes out sideways, adjust the MADCTL byte in `LCD_InitPanel()`.
 6. Double-check each of the 14 signals against the table above with a
    multimeter (continuity mode, panel unpowered) - easy to swap one with 14
    wires on a breadboard.
 
-## USB (UVC webcam, abandoned)
+## Building and flashing
 
-> **ABANDONED - a genuine hardware/board limitation, not a code bug.**
-> SmartDMA camera capture only runs reliably with the chip's DCDC regulator
-> at Mid voltage (1.0V); the USB HS PHY only locks its PLL at Overdrive
-> (1.2V) - confirmed via multiple independent hardware tests. The chip's
-> separate USB Full-Speed module doesn't need Overdrive, but FRDM-MCXN947's
-> single USB Type-C connector (J11) is hard-wired to the HS controller only
-> (confirmed in NXP's UM12018 board user manual, section 2.3) - no way to
-> reach the FS module without a hardware rework. A software time-multiplex
-> workaround (periodic Mid-voltage recapture / Overdrive-streaming
-> switching) was built and confirmed stable on real hardware - low-frame-rate
-> but genuinely live - see WORKLOG.md "USB streaming pipeline abandoned" for
-> the full trail. Superseded by reverting to the Arduino-header LCD instead.
+**Verified working** on this machine (arm-none-eabi-gcc, west via the venv at
+`../../tools/westenv`, MCU-Link over pyOCD) - builds clean with `-Werror`:
 
-To opt back into this build: `./build.sh rebuild -DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF`.
-The board then enumerates as a standard USB Video Class device - format
-"Uncompressed YUY2", 320x240, 30fps, over USB High-Speed (see
-`source/usb/usb_device_descriptor.c` for the exact descriptor bytes and
-`source/usb/usb_video_camera.c` for the class glue). Note this doesn't drive
-the LCD at all (mutually exclusive with the DCDC level the LCD/camera-preview
-build needs, and not really related anyway) - it's a completely separate
-build mode.
+```
+$ ./firmware/camera_ai_demo/build.sh          # build, then flash
+$ ./firmware/camera_ai_demo/build.sh build    # build only
+$ ./firmware/camera_ai_demo/build.sh flash    # flash the last build
+$ ./firmware/camera_ai_demo/build.sh monitor  # open the serial console (115200-8-N-1)
+```
+
+`build.sh` mirrors `../../touch_rgb/build.sh`: it runs `west build -b frdmmcxn947
+firmware/camera_ai_demo --toolchain armgcc -Dcore_id=cm33_core0` from inside the
+`../mcuxsdk` west workspace, then flashes the resulting `.elf` over the on-board
+MCU-Link (CMSIS-DAP) with pyOCD, auto-selecting the probe by its MCU-LINK unique ID
+so it doesn't prompt if another debug probe is also plugged in. See
+`../../touch_rgb/README.md` for the probe-permissions / udev-rule note if `pyocd`
+needs `sudo` on your setup.
+
+To pick the NPU inference backend instead of the CPU default, pass an extra
+CMake flag (see "AI model integration" below):
+
+```
+$ ./build.sh rebuild -DAI_MODEL_USE_NPU=ON
+```
+
+**Confirmed on real hardware, boots and runs continuously without faults**:
+```
+Camera_AI_Test1 - FRDM-MCXN947
+Camera: OV7670 on J9 SmartDMA/Camera header
+Display: Arduino-header LCD live preview (camera + AI hook)
+
+Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
+AI_MODEL_Init: Edge Impulse FOMO ready (64x64 input, 3 classes)
+LCD: bit-bang GPIO on the Arduino header
+AI_MODEL_RunInference: total classifier time = 1271927us (1271ms)
+AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=61%
+Camera: frame #46 ready, 792 samples, pixel range 0x31C7..0xCF1A, avg=0xA48B
+```
+(that log is the CPU/CMSIS-NN path; the NPU path prints the same lines with
+`total classifier time` around 3ms instead of ~1270ms - see below.)
+
+## AI model integration
+
+Model: Edge Impulse Studio project **"Test_Drowsy_NXP"** (impulse #11, v14) -
+a FOMO (Faster Objects, More Objects) detector, 64x64 int8-quantized input,
+3 classes (`closed_eye`/`open_eye`/`yawning`), trained on this project's own
+drowsiness dataset. `main.c` runs `AI_MODEL_RunInference()` once per captured
+camera frame and drives the LCD status color from the result - see the file
+header comments in `source/main.c` and `source/ai/model_runner.h` for the
+exact API.
+
+Two interchangeable inference backends implement the identical
+`model_runner.h` API, selected at build time:
+
+| | CPU + CMSIS-NN (default) | Neutron NPU |
+|---|---|---|
+| CMake flag | (default) | `-DAI_MODEL_USE_NPU=ON` |
+| Source | `source/ai/model_runner.cpp` | `source/ai/model_runner_npu.cpp` |
+| Engine | Edge Impulse's own `ei_run_classifier()`, non-EON TFLite Micro interpreter | Raw TFLite Micro against NXP's `middleware/eiq/tensorflow-lite`, model's conv/pool ops compiled to run on the Neutron NPU coprocessor |
+| Measured time/inference | ~1.27s | ~3.3ms (**~370-390x faster**) |
+| `.elf` size | ~7.1MB | ~2.2MB |
+
+Both print the same `AI_MODEL_RunInference: total classifier time = ...`
+line (timed via the Cortex-M33's DWT cycle counter - Edge Impulse's own
+`ei_result.timing` reads all-zero on this SDK/porting combination), so
+switching the flag and rebuilding gives a direct apples-to-apples
+comparison on real hardware.
+
+The NPU model (`source/ai/neutron/tflite_learn_1094697_39_npu.tflite`/`.h`)
+was produced by running the same `.tflite` Edge Impulse Studio already
+exports (`source/ai/edge_impulse/tflite-model/tflite_learn_1094697_39.tflite`)
+through NXP's `neutron_converter` CLI tool (`eiq_neutron_sdk` package,
+installed from NXP's own package index, target `mcxn94x`) - 31 of the
+model's 32 operators got folded into a single NPU-accelerated op. See
+[WORKLOG.md](WORKLOG.md) "NPU (Neutron) plan" for the exact commands and the
+full story of getting this working, including the hand-rolled FOMO
+grid-decode postprocessing the NPU path needed (it bypasses Edge Impulse's
+own postprocessing entirely).
+
+To point either backend at a different/retrained model: re-export from Edge
+Impulse Studio (a new "C++ library" for the CPU path, replacing
+`source/ai/edge_impulse/`; a new plain `.tflite` run back through
+`neutron_converter` for the NPU path) and update `model_runner.cpp`/
+`model_runner_npu.cpp` if the input/output tensor shapes or class labels
+changed.
 
 ## Project layout
 
@@ -151,91 +211,24 @@ Camera_AI_Test1/
     CMakeLists.txt, prj.conf, build.sh
     board_port/
       pin_mux.c/h                    <- camera (J9) + LCD (Arduino/J8, both) pin routing
+      ei_sramx.ld                    <- linker fragment placing the CPU-path tensor arena in m_sramx
       cm33_core0/
         app.h                         <- BOARD_InitHardware() proto, shared pin/geometry macros
         hardware_init.c                <- BOARD_InitHardware()
         prj.conf                       <- board-port Kconfig (inputmux, pinmux_project_folder)
     source/
-      main.c                         <- capture -> AI hook -> LCD loop (default); USB path (abandoned) behind USB_STREAM_DIAGNOSTIC_DISABLE=OFF
+      main.c                         <- capture -> AI inference -> LCD status-color loop (default)
+      fault_handler.c                <- HardFault dump handler (register decode over PRINTF)
       camera/camera_capture.c/h      <- OV7670 + SmartDMA (from NXP reference)
-      display/lcd_bitbang.c/h        <- GPIO bit-bang LCD driver (current default - Arduino header or J8, see app.h)
-      display/lcd_flexio_mculcd.c/h  <- FlexIO + ST7796S driver (abandoned J8 path, still builds but unused)
-      usb/usb_video_camera.c/h       <- UVC class glue, RGB565->YUY2 conversion (abandoned, still builds)
-      usb/usb_device_descriptor.c/h  <- UVC descriptors (abandoned, still builds)
-      ai/model_runner.c/h            <- AI integration stub (see below)
-      ai/model_data.h                <- placeholder for an exported model
+      display/lcd_bitbang.c/h        <- GPIO bit-bang LCD driver (current default - Arduino header)
+      ai/model_runner.h              <- shared inference API both backends implement
+      ai/model_runner.cpp            <- CPU + CMSIS-NN backend (default), via Edge Impulse's SDK
+      ai/model_runner_npu.cpp        <- Neutron NPU backend (-DAI_MODEL_USE_NPU=ON), raw TFLite Micro
+      ai/ei_sramx_alloc.c/h          <- custom allocator serving the CPU path's tensor arena from m_sramx
+      ai/ei_debug_porting.c          <- routes Edge Impulse's ei_printf through this project's PRINTF
+      ai/edge_impulse/               <- Edge Impulse "C++ library" export (Test_Drowsy_NXP project)
+      ai/neutron/                    <- NPU-converted model (tflite_learn_..._npu.tflite/.h)
 ```
-
-## Building and flashing
-
-**Verified working** on this machine (arm-none-eabi-gcc, west via the venv at
-`../../tools/westenv`, MCU-Link over pyOCD) - builds clean with `-Werror`:
-
-```
-$ ./firmware/camera_ai_demo/build.sh          # build, then flash
-$ ./firmware/camera_ai_demo/build.sh build    # build only
-$ ./firmware/camera_ai_demo/build.sh flash    # flash the last build
-$ ./firmware/camera_ai_demo/build.sh monitor  # open the serial console (115200-8-N-1)
-```
-
-Other build variants (all still build, kept for reference - see WORKLOG.md):
-
-```
-$ ./build.sh rebuild -DLCD_ARDUINO_HEADER_BITBANG=OFF                        # J8 FlexIO (abandoned)
-$ ./build.sh rebuild -DLCD_ARDUINO_HEADER_BITBANG=OFF -DLCD_BITBANG_DIAGNOSTIC=ON  # J8 bit-bang (abandoned)
-$ ./build.sh rebuild -DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF                     # USB streaming (abandoned)
-```
-
-`build.sh` mirrors `../../touch_rgb/build.sh`: it runs `west build -b frdmmcxn947
-firmware/camera_ai_demo --toolchain armgcc -Dcore_id=cm33_core0` from inside the
-`../mcuxsdk` west workspace, then flashes the resulting `.elf` over the on-board
-MCU-Link (CMSIS-DAP) with pyOCD, auto-selecting the probe by its MCU-LINK unique ID
-so it doesn't prompt if another debug probe is also plugged in. See
-`../../touch_rgb/README.md` for the probe-permissions / udev-rule note if `pyocd`
-needs `sudo` on your setup.
-
-**Camera confirmed working end-to-end**, unchanged through every LCD/USB
-experiment in this project: the OV7670 driver reads back its PID/VER
-registers over J9's SCCB/I2C and matches a genuine OV7670 (`PID=0x76
-VER=0x73`), and SmartDMA frame-ready interrupts fire with a periodic
-diagnostic log (`CAMERA_CAPTURE_LogFrameSignature()` in `main.c`) confirming
-pixel data is non-flat and changing frame to frame:
-```
-Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-Camera: frame #16 ready, 792 samples, pixel range 0xC0C6..0xFBEB, avg=0xE330
-Camera: frame #46 ready, 792 samples, pixel range 0xC0C4..0xFDF1, avg=0xDE26
-```
-
-**LCD (Arduino header, current default)**: builds clean, flashed to real
-hardware, boots to the `LCD: bit-bang GPIO on the Arduino header` log line
-without hanging. The exact same driver/init sequence (targeting J8's pins
-instead) previously displayed a correct camera image during the J8
-bring-up's isolation testing - see WORKLOG.md "LCD history" - but that was on
-J8's wiring specifically; **re-verify the physical picture on your panel
-after wiring the Arduino-header jumpers above**, since the pin mapping is
-different even though the driver code is identical.
-
-**USB streaming, when opted back into, is confirmed working end-to-end on a
-real host** as a periodic-refresh feed (enumeration, UVC format negotiation,
-frame delivery, and multi-cycle stability all verified via `lsusb`, `dmesg`,
-and a continuous `gst-launch-1.0` capture session - see WORKLOG.md) - not
-relevant to the default (Arduino LCD) build, just noted for completeness.
-
-## AI model integration
-
-`source/ai/model_runner.c` is currently a stub: `AI_MODEL_RunInference()` always
-returns `result->valid = false`. It's the extension point requested in
-`requirement.md`. Two ready-made paths, both documented in detail in the comment at
-the top of that file:
-
-- **TensorFlow Lite Micro** - reuse the pattern in this SDK's
-  `examples/eiq_examples/tflm_label_image` (interpreter setup, tensor arena,
-  `Invoke()`).
-- **Edge Impulse** - drop in a "C++ library" export from an Edge Impulse project and
-  call `run_classifier()`.
-
-`main.c` and `model_runner.h`'s C API are written so that plugging in either one
-only touches `model_runner.c`/`.cpp` and `CMakeLists.txt`.
 
 ## Known limitations
 
@@ -244,14 +237,55 @@ only touches `model_runner.c`/`.cpp` and `CMakeLists.txt`.
   best-effort reading, re-derived across several sessions - see "If the
   screen shows nothing/garbled" above if it doesn't match your physical
   shield.
-- Bit-bang GPIO is inherently slow - expect a low frame rate (well under the
-  camera's 30fps capture rate), not smooth video. This is a live low-fps
-  preview, by design (see main.c).
-- **USB streaming and J8/FlexIO LCD are both abandoned** - hardware
-  limitations (USB) or unresolved signal-integrity issues (J8/FlexIO), not
-  actively being developed. See WORKLOG.md for the full history if either is
-  ever revisited.
-- `source/ai/model_runner.c` has no real model wired in yet by design.
+- Bit-bang GPIO is inherently slow for pushing pixels, but that's no longer
+  the frame-rate bottleneck - the LCD only ever draws a solid status-color
+  fill (240x320 pixels, not a live image), and inference time dominates:
+  well under 1fps on the CPU backend (~1.27s/inference), several fps
+  achievable on the NPU backend (~3.3ms/inference, though camera capture is
+  stopped/restarted around each inference call - see WORKLOG.md "Bug #3").
+- Detection results (label/score/box) haven't been rigorously cross-checked
+  frame-by-frame against ground truth - varied, plausible-looking output has
+  been observed on both backends, but this isn't a validated accuracy
+  measurement.
+- **The LCD only shows a solid status color, not the live camera image or
+  bounding boxes** - by design, to save RAM. See "Abandoned/disabled
+  features" below if you want to revisit this.
+
+## Abandoned / disabled features
+
+These are not part of the current default build, kept in the tree (still
+compile, in most cases) for reference. See [WORKLOG.md](WORKLOG.md) for the
+full trail on any of them.
+
+- **Live camera image + bounding-box overlay on the LCD**: the original
+  design drew the live camera frame with colored boxes around detections.
+  Disabled (not deleted - see the `#if 0` block in `main.c` and
+  `source/display/bbox_overlay.c/h`) as a RAM-budget tradeoff: a second
+  150KB frame buffer was needed for tearing-free display, competing
+  directly with the AI model's own RAM needs. Revisit only after
+  re-checking the current RAM budget in WORKLOG.md - a 150KB buffer would
+  eat back most of the headroom freed up during the AI bring-up.
+- **J8 FlexIO/LCD header** (hardware-accelerated LCD bus): wiring/panel/init
+  sequence were all confirmed good (a bit-bang diagnostic on the same J8
+  pins displayed a correct image), but the FlexIO hardware-bus path itself
+  never got past "responds to commands but pixel data comes out as
+  black/white noise" - a bus-speed/signal-integrity issue that wasn't fully
+  resolved. Still builds: `./build.sh rebuild -DLCD_ARDUINO_HEADER_BITBANG=OFF`
+  (or add `-DLCD_BITBANG_DIAGNOSTIC=ON` for the J8 bit-bang diagnostic
+  instead of FlexIO). Source: `source/display/lcd_flexio_mculcd.c/h`.
+- **USB Video Class (UVC) webcam streaming**: a genuine hardware/board
+  limitation, not fixable in software - SmartDMA camera capture only runs
+  reliably with the chip's DCDC regulator at Mid voltage, while the USB HS
+  PHY only locks its PLL at Overdrive voltage, and this board's single USB
+  connector is hard-wired to the HS controller only (no accessible USB FS
+  alternative - confirmed in NXP's UM12018 board user manual, section 2.3).
+  A software time-multiplex workaround (periodic Mid/Overdrive switching)
+  was built and confirmed stable on real hardware, low-frame-rate but
+  genuinely live. Still builds:
+  `./build.sh rebuild -DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF` - enumerates as a
+  standard UVC device, "Uncompressed YUY2", 320x240, 30fps, over USB
+  High-Speed. Doesn't drive the LCD at all (mutually exclusive DCDC level).
+  Source: `source/usb/usb_video_camera.c/h`, `usb_device_descriptor.c/h`.
 
 ## History
 
@@ -261,8 +295,17 @@ the original one, per the literal wording of `requirement.md`. In between, it
 was switched to the **J8 FlexIO** header (NXP's officially-supported,
 hardware-accelerated path) for reliability/speed, and separately explored
 **USB Video Class streaming** as an alternative to a physical display
-entirely. Both detours were abandoned (see the banner at the top of this file
-and WORKLOG.md for the full trails) and the project reverted to its original
-Arduino-header design, now informed by everything learned along the way (the
-generic MIPI-DCS init sequence, the A0/A1-analog-only jumper workaround, the
-backlight-enable-pin lesson from the J8 detour, etc).
+entirely - both abandoned (see above) and the project reverted to its
+original Arduino-header design.
+
+Camera and LCD bring-up were completed first (live image on screen, no AI
+yet). AI integration came next: wiring in the Edge Impulse FOMO model hit a
+HardFault that took most of a session to properly diagnose (turned out to be
+a stack overflow, initially misread as a CMSIS-NN pointer-alignment issue)
+and a second bug where the AI tensor arena's memory bank collided with the
+SmartDMA camera coprocessor's own working RAM. Once both were fixed, the
+full pipeline (capture -> resize -> CPU inference -> LCD status color) was
+confirmed running repeatedly on real hardware without faults. The Neutron
+NPU backend was added after that as a speed upgrade, once the CPU path was
+proven correct - see [WORKLOG.md](WORKLOG.md) for the complete, much more
+detailed trail of everything above.

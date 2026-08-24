@@ -13,17 +13,23 @@
 
 __attribute__((used)) static void FaultHandlerC(uint32_t *stackedRegs)
 {
+    /* debug_console_lite's minimal printf mishandles the 'l' length
+     * modifier (prints the literal characters "lX" instead of the value -
+     * same class of issue as this project's existing "%f not supported"
+     * notes elsewhere). unsigned long and unsigned int are both 32-bit on
+     * this target, so dropping the modifier and using plain %08X is
+     * equivalent, and actually prints correctly. */
     PRINTF("\r\n*** HardFault ***\r\n");
-    PRINTF("CFSR  = 0x%08lX (MMFSR=0x%02lX BFSR=0x%02lX UFSR=0x%04lX)\r\n", (unsigned long)SCB->CFSR,
-           (unsigned long)(SCB->CFSR & 0xFFUL), (unsigned long)((SCB->CFSR >> 8) & 0xFFUL),
-           (unsigned long)((SCB->CFSR >> 16) & 0xFFFFUL));
-    PRINTF("HFSR  = 0x%08lX\r\n", (unsigned long)SCB->HFSR);
-    PRINTF("MMFAR = 0x%08lX\r\n", (unsigned long)SCB->MMFAR);
-    PRINTF("BFAR  = 0x%08lX\r\n", (unsigned long)SCB->BFAR);
-    PRINTF("Stacked r0=0x%08lX r1=0x%08lX r2=0x%08lX r3=0x%08lX\r\n", (unsigned long)stackedRegs[0],
-           (unsigned long)stackedRegs[1], (unsigned long)stackedRegs[2], (unsigned long)stackedRegs[3]);
-    PRINTF("Stacked r12=0x%08lX LR=0x%08lX PC=0x%08lX xPSR=0x%08lX\r\n", (unsigned long)stackedRegs[4],
-           (unsigned long)stackedRegs[5], (unsigned long)stackedRegs[6], (unsigned long)stackedRegs[7]);
+    PRINTF("CFSR  = 0x%08X (MMFSR=0x%02X BFSR=0x%02X UFSR=0x%04X)\r\n", (unsigned int)SCB->CFSR,
+           (unsigned int)(SCB->CFSR & 0xFFUL), (unsigned int)((SCB->CFSR >> 8) & 0xFFUL),
+           (unsigned int)((SCB->CFSR >> 16) & 0xFFFFUL));
+    PRINTF("HFSR  = 0x%08X\r\n", (unsigned int)SCB->HFSR);
+    PRINTF("MMFAR = 0x%08X\r\n", (unsigned int)SCB->MMFAR);
+    PRINTF("BFAR  = 0x%08X\r\n", (unsigned int)SCB->BFAR);
+    PRINTF("Stacked r0=0x%08X r1=0x%08X r2=0x%08X r3=0x%08X\r\n", (unsigned int)stackedRegs[0],
+           (unsigned int)stackedRegs[1], (unsigned int)stackedRegs[2], (unsigned int)stackedRegs[3]);
+    PRINTF("Stacked r12=0x%08X LR=0x%08X PC=0x%08X xPSR=0x%08X\r\n", (unsigned int)stackedRegs[4],
+           (unsigned int)stackedRegs[5], (unsigned int)stackedRegs[6], (unsigned int)stackedRegs[7]);
     while (1)
     {
     }
