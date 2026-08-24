@@ -20,10 +20,12 @@ Source of truth for the original ask: [requirement.md](requirement.md).
 [WORKLOG.md](WORKLOG.md) has the full messier bring-up history (bugs found,
 dead ends, exact hardware measurements) if you need more detail than this
 file - this README stays at "what does it do and how do I run it".
-[KNOWLEDGE.md](KNOWLEDGE.md) is a concept-level explainer (in Vietnamese) of
-*why* things work the way they do - DVP/SmartDMA camera capture, the FOMO AI
-model, the Neutron NPU, and the USB/DCDC-voltage conflict - useful if you're
-new to any of these and want the background, not just the how-to.
+[KNOWLEDGE.md](KNOWLEDGE.md) is a focused background explainer on three
+things this project required learning from scratch: the DVP camera protocol
+vs. the SmartDMA coprocessor, the Neutron NPU (how model conversion and
+init/usage work), and the hardware limitations encountered (the SmartDMA/AI
+RAM collision, the USB/DCDC-voltage conflict) - useful if you're new to any
+of these and want the "why", not just the how-to.
 
 ## Hardware
 
