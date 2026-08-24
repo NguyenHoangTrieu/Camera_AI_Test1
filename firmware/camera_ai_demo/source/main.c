@@ -1,22 +1,20 @@
 /*
  * main.c - Camera_AI_Test1
  *
- * Default build: OV7670 capture (via SmartDMA, J9 header) -> Edge Impulse
- * FOMO inference (source/ai/model_runner.cpp, closed_eye/open_eye/yawning)
- * -> LCD shows a solid status color (see DEMO_ShowStatusColor()), no USB.
- * See WORKLOG.md "LCD history" for why Arduino-header bit-bang (not
- * J8/FlexIO) is the active default.
+ * Default build: OV7670 capture (via SmartDMA, J9 header, 320x240 RGB565
+ * - see app.h/camera_capture.c) -> Edge Impulse FOMO inference
+ * (source/ai/model_runner.cpp, closed_eye/open_eye/yawning) -> LCD shows
+ * 3 fixed text lines ("OPEN EYE"/"YAWNING"/"CLOSED EYE", each with a
+ * trailing 1/0 for "detected this frame or not" - see
+ * DEMO_DrawStatusLine()), no USB. See WORKLOG.md "LCD history" for why
+ * Arduino-header bit-bang (not J8/FlexIO) is the active default.
  *
- * Live camera image display on the LCD is DISABLED (see
- * DEMO_DrawAiBoxes()/bbox_overlay.h below, and the old
- * memcpy()+LCD_DrawImage(camera frame) call, both commented out) - RAM
- * optimization: pushing/drawing on top of a full 320x240 frame needed a
- * second 150KB framebuffer (s_lcdSnapshot) just for tearing-free display.
- * That memory was first repurposed as a 150KB AI overflow pool, but the
- * arena fits in the primary m_sramx pool without it (see s_aiScratchPool
- * below) - most of it now just sits free in m_data, big enough for the
- * larger CPU stack TFLite Micro/CMSIS-NN needs (see __stack_size__ in
- * CMakeLists.txt).
+ * Earlier revisions of this file tried drawing the live camera frame with
+ * bounding boxes on the LCD (source/display/bbox_overlay.c/h) - dropped in
+ * favor of this plain text status readout: much less data to push over
+ * the bit-bang LCD bus per frame, and the 3 lines are what's actually
+ * useful for a drowsiness-alert readout. bbox_overlay.c/h is kept in the
+ * tree (unused, still builds) in case box-on-image display is revisited.
  *
  * USB Video Class (UVC) streaming over USB High-Speed (source/usb/) is
  * ABANDONED - SmartDMA camera capture and the USB HS PHY need mutually
@@ -28,103 +26,78 @@
  * branch below and WORKLOG.md.
  */
 
+#include <stdbool.h>
 #include <string.h>
 #include "app.h"
-/* #include "bbox_overlay.h" - only needed by the disabled image-display
- * path, see DEMO_DrawAiBoxes() below. */
 #include "board.h"
 #include "camera_capture.h"
 #include "ei_sramx_alloc.h"
+#include "font5x7.h"
 #include "fsl_common.h"
 #include "fsl_debug_console.h"
 #include "lcd_display.h"
 #include "model_runner.h"
+#include "text_overlay.h"
 #include "usb_video_camera.h"
 
-/* RGB565. Priority: CLOSED_EYE/YAWNING (red, most safety-critical) >
- * OPEN_EYE (green, normal) > nothing detected this frame (blue, idle). */
-static uint16_t DEMO_StatusColorForResult(const ai_model_result_t *aiResult) {
-  bool sawOpenEye = false;
+#if !DEMO_LCD_CAMERA_PREVIEW
+/* Text status readout - see the file-level comment above. Each line is a
+ * fixed-width label (padded so all 3 line up) + ": " + a '1'/'0' digit,
+ * scale=3 -> 15x21px per glyph, comfortably inside the 320x240 panel.
+ * Unused (and left out of the build) in the raw camera-preview build -
+ * see DEMO_LCD_CAMERA_PREVIEW in main(). */
+#define DEMO_STATUS_TEXT_SCALE 3U
+#define DEMO_STATUS_LINE_X 8U
+#define DEMO_STATUS_LINE_Y0 40U
+#define DEMO_STATUS_LINE_GAP_PX 14U
 
-  for (uint32_t i = 0; i < aiResult->boxCount; i++) {
-    const char *label = aiResult->boxes[i].label;
-    if ((strcmp(label, "closed_eye") == 0) || (strcmp(label, "yawning") == 0)) {
-      return 0xF800U; /* red - drowsiness alert */
-    }
-    if (strcmp(label, "open_eye") == 0) {
-      sawOpenEye = true;
-    }
-  }
-  return sawOpenEye ? 0x07E0U /* green - awake */ : 0x001FU /* blue - no detection this frame */;
+static void DEMO_DrawStatusLine(uint16_t lineIndex, const char *paddedLabel, bool detected) {
+  char text[16];
+  size_t n = strlen(paddedLabel);
+
+  memcpy(text, paddedLabel, n);
+  text[n] = ':';
+  text[n + 1U] = ' ';
+  text[n + 2U] = detected ? '1' : '0';
+  text[n + 3U] = '\0';
+
+  uint16_t lineHeight = (uint16_t)((FONT5X7_HEIGHT * DEMO_STATUS_TEXT_SCALE) + DEMO_STATUS_LINE_GAP_PX);
+  uint16_t y = (uint16_t)(DEMO_STATUS_LINE_Y0 + lineIndex * lineHeight);
+  uint16_t fgColor = detected ? 0x07E0U /* green - detected this frame */ : 0x7BEFU /* mid gray - not detected */;
+
+  TEXT_DrawString(DEMO_STATUS_LINE_X, y, text, fgColor, 0x0000U /* black background */, DEMO_STATUS_TEXT_SCALE);
 }
+#endif /* !DEMO_LCD_CAMERA_PREVIEW */
 
-/* Fills the whole LCD with one solid color - a small (320-pixel, 640B)
- * line buffer pushed DEMO_BUFFER_HEIGHT times, instead of needing a full
- * 320x240 framebuffer like the old live-image path did.
+/* Fills the whole LCD with one solid color - called once at startup so
+ * old/garbage GRAM content doesn't show around the text lines. Not used
+ * per-frame (see DEMO_DrawStatusLine() above, which only repaints its own
+ * small line band each frame).
  *
  * Must use LCD_PushPixelsOpen()/LCD_EndWindow(), NOT LCD_PushPixels() in
  * a loop: LCD_PushPixels() closes the transfer (deasserts CS) every time
  * it's called, so a loop of plain LCD_PushPixels() calls only actually
  * writes the FIRST row to the panel - every later call sends its bytes
- * with CS already closed, so the panel ignores them. Symptom on real
- * hardware: only one line of solid color (looked like a single vertical
- * stripe due to this panel's MADCTL MV=1 row/column swap), the rest of
- * the screen keeps whatever was already in GRAM (stale black/white
- * pattern). */
-static void DEMO_ShowStatusColor(uint16_t color) {
-  static uint16_t s_statusLine[DEMO_BUFFER_WIDTH];
-  for (uint16_t i = 0; i < DEMO_BUFFER_WIDTH; i++) {
-    s_statusLine[i] = color;
+ * with CS already closed, so the panel ignores them. */
+static void DEMO_ClearScreen(uint16_t color) {
+  static uint16_t s_clearLine[DEMO_PANEL_WIDTH];
+  for (uint16_t i = 0U; i < DEMO_PANEL_WIDTH; i++) {
+    s_clearLine[i] = color;
   }
-  LCD_SetWindow(0U, 0U, DEMO_BUFFER_WIDTH - 1U, DEMO_BUFFER_HEIGHT - 1U);
-  for (uint16_t row = 0U; row < DEMO_BUFFER_HEIGHT; row++) {
-    LCD_PushPixelsOpen(s_statusLine, DEMO_BUFFER_WIDTH);
+  LCD_SetWindow(0U, 0U, DEMO_PANEL_WIDTH - 1U, DEMO_PANEL_HEIGHT - 1U);
+  for (uint16_t row = 0U; row < DEMO_PANEL_HEIGHT; row++) {
+    LCD_PushPixelsOpen(s_clearLine, DEMO_PANEL_WIDTH);
   }
   LCD_EndWindow();
 }
 
-#if 0
-/* Disabled - see the file-level comment above. Kept for reference in case
- * live image + bounding-box display is revisited once the AI model's RAM
- * footprint is smaller (e.g. a lower-resolution retrain). Bounding boxes
- * are in the model's own input space (64x64, see
- * AI_MODEL_GetInputWidth/Height) - scale to the camera frame (320x240)
- * before drawing. */
-static uint16_t DEMO_ColorForLabel(const char *label) {
-  if (strcmp(label, "closed_eye") == 0) {
-    return 0xF800U; /* red */
-  } else if (strcmp(label, "open_eye") == 0) {
-    return 0x07E0U; /* green */
-  } else if (strcmp(label, "yawning") == 0) {
-    return 0xFD20U; /* orange */
-  }
-  return 0xFFFFU; /* white */
-}
-
-static void DEMO_DrawAiBoxes(uint16_t *lcdBuffer, uint16_t bufWidth,
-                             uint16_t bufHeight,
-                             const ai_model_result_t *aiResult) {
-  uint16_t modelWidth = AI_MODEL_GetInputWidth();
-  uint16_t modelHeight = AI_MODEL_GetInputHeight();
-
-  for (uint32_t i = 0; i < aiResult->boxCount; i++) {
-    const ai_bbox_t *box = &aiResult->boxes[i];
-    int x = (int)box->x * (int)bufWidth / (int)modelWidth;
-    int y = (int)box->y * (int)bufHeight / (int)modelHeight;
-    int w = (int)box->width * (int)bufWidth / (int)modelWidth;
-    int h = (int)box->height * (int)bufHeight / (int)modelHeight;
-
-    BBOX_DrawRect(lcdBuffer, bufWidth, bufHeight, x, y, w, h,
-                  DEMO_ColorForLabel(box->label));
-  }
-}
-#endif
-
+#if !DEMO_LCD_CAMERA_PREVIEW
 /*
  * Cheap "is the camera actually sending real image data" signature:
  * min/max/average over a strided pixel sample. A dead/disconnected sensor
  * tends to produce a flat buffer (min==max, constant avg); a live one
- * doesn't.
+ * doesn't. Unused in the raw camera-preview build (main() pushes the
+ * frame straight to the LCD there, no need for a numeric signature).
  */
 static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
                                              const uint16_t *frame) {
@@ -153,8 +126,9 @@ static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
          (minPixel == maxPixel) ? " (flat - lens cap on, or no real image data)"
                                 : "");
 }
+#endif /* !DEMO_LCD_CAMERA_PREVIEW */
 
-#if !DEMO_USB_STREAM_DISABLE
+#if !DEMO_USB_STREAM_DISABLE && !DEMO_LCD_CAMERA_PREVIEW
 /* Everything below, down to DEMO_CaptureFramesAtMidVoltage(), only exists
  * for the abandoned USB-streaming path - see the file-level comment above.
  *
@@ -194,18 +168,43 @@ static void DEMO_CaptureFramesAtMidVoltage(void) {
   PRINTF("Camera: capture stopped after frame #%u.\r\n", frameNumber);
   CAMERA_CAPTURE_Deinit();
 }
-#endif /* !DEMO_USB_STREAM_DISABLE */
+#endif /* !DEMO_USB_STREAM_DISABLE && !DEMO_LCD_CAMERA_PREVIEW */
 
 int main(void) {
   BOARD_InitHardware();
 
   PRINTF("\r\nCamera_AI_Test1 - FRDM-MCXN947\r\n");
   PRINTF("Camera: OV7670 on J9 SmartDMA/Camera header\r\n");
+
+#if DEMO_LCD_CAMERA_PREVIEW
+  /* Lens-focus diagnostic build (-DLCD_CAMERA_PREVIEW=ON): no AI, no
+   * status text - just the raw camera feed pushed straight to the LCD as
+   * fast as frames arrive, so the image can be focused by eye. Camera
+   * resolution (app.h) matches the panel 1:1, so no scaling needed.
+   * SmartDMA never has to stop/restart here (no AI tensor arena writes to
+   * conflict with, unlike the normal loop below), so this runs at the
+   * camera's native ~30fps rather than being inference-latency-bound. */
+  PRINTF("Display: raw camera preview on LCD, no AI (LCD_CAMERA_PREVIEW=ON) "
+         "- for focusing the lens\r\n\r\n");
+
+  CAMERA_CAPTURE_Init();
+  LCD_Init();
+  DEMO_ClearScreen(0x0000U);
+
+  while (1) {
+    if (CAMERA_CAPTURE_IsFrameReady()) {
+      CAMERA_CAPTURE_ClearFrameReady();
+      LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
+                    CAMERA_CAPTURE_GetFrameBuffer());
+    }
+  }
+#else
+
 #if DEMO_USB_STREAM_DISABLE
 #if DEMO_LCD_ARDUINO_HEADER
-  PRINTF("Display: Arduino-header LCD live preview (camera + AI hook)\r\n\r\n");
+  PRINTF("Display: Arduino-header LCD status text (camera + AI hook)\r\n\r\n");
 #else
-  PRINTF("Display: J8 LCD live preview (camera + AI hook)\r\n\r\n");
+  PRINTF("Display: J8 LCD status text (camera + AI hook)\r\n\r\n");
 #endif
 #else
   PRINTF("Display: USB Video Class (UVC) webcam over USB High-Speed "
@@ -217,10 +216,10 @@ int main(void) {
 
 #if DEMO_USB_STREAM_DISABLE
   /* Default build: camera + AI loop, continuous, DCDC stays at Mid the
-   * whole time. LCD shows a solid status color (see
-   * DEMO_ShowStatusColor()) instead of the live camera image - see the
-   * file-level comment above for why. */
+   * whole time. LCD shows 3 fixed text status lines - see the file-level
+   * comment above. */
   LCD_Init();
+  DEMO_ClearScreen(0x0000U);
 
   /* Dedicated AI scratch pool - a small overflow area for
    * ei_sramx_alloc.c's allocator, used only if the primary 96KB m_sramx
@@ -228,13 +227,9 @@ int main(void) {
    * is 92876 bytes, comfortably inside the ~94KB primary pool (96KB minus
    * the LIFO free-record stack), so this is just a safety margin for the
    * DSP resize step's small per-page scratch buffers, not the tensor
-   * arena itself.
-   *
-   * Was sized DEMO_BUFFER_WIDTH*DEMO_BUFFER_HEIGHT*sizeof(uint16_t)
-   * (150KB, reusing the old s_lcdSnapshot buffer's space) - that starved
-   * m_data of room to grow the CPU stack (see the STKOF fix below), and
-   * per the arena-size math above was never actually needed at that size.
-   * 16KB is generous headroom over actual DSP scratch usage. */
+   * arena itself. 16KB is generous headroom over actual DSP scratch usage
+   * - unaffected by the camera capture resolution (the resize target is
+   * always the model's 64x64 input, regardless of source frame size). */
   static uint8_t s_aiScratchPool[16U * 1024U] __attribute__((aligned(16)));
   EI_SRAMX_SetOverflowPool(s_aiScratchPool, sizeof(s_aiScratchPool));
 
@@ -268,9 +263,19 @@ int main(void) {
 
       CAMERA_CAPTURE_Reinit();
 
+      bool sawClosedEye = false;
+      bool sawOpenEye = false;
+      bool sawYawning = false;
       if (aiResult.valid) {
         for (uint32_t i = 0; i < aiResult.boxCount; i++) {
           const ai_bbox_t *box = &aiResult.boxes[i];
+          if (strcmp(box->label, "closed_eye") == 0) {
+            sawClosedEye = true;
+          } else if (strcmp(box->label, "open_eye") == 0) {
+            sawOpenEye = true;
+          } else if (strcmp(box->label, "yawning") == 0) {
+            sawYawning = true;
+          }
           /* debug_console_lite may not support %f, so print score as a
            * percentage integer. */
           PRINTF("AI result: box[%u] label=%s x=%u y=%u w=%u h=%u score=%d%%\r\n",
@@ -279,7 +284,12 @@ int main(void) {
         }
       }
 
-      DEMO_ShowStatusColor(DEMO_StatusColorForResult(&aiResult));
+      /* Text draw doesn't touch the camera frame buffer at all, so unlike
+       * the earlier live-image display it has no ordering dependency on
+       * CAMERA_CAPTURE_Deinit()/Reinit() above. */
+      DEMO_DrawStatusLine(0U, "OPEN EYE  ", sawOpenEye);
+      DEMO_DrawStatusLine(1U, "YAWNING   ", sawYawning);
+      DEMO_DrawStatusLine(2U, "CLOSED EYE", sawClosedEye);
     }
   }
 #else
@@ -325,4 +335,5 @@ int main(void) {
     PRINTF("Camera: back to Overdrive, streaming the new frame.\r\n");
   }
 #endif
+#endif /* DEMO_LCD_CAMERA_PREVIEW */
 }

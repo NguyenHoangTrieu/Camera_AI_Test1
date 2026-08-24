@@ -29,6 +29,15 @@
 
 /*******************************************************************************
  * Camera / frame buffer
+ *
+ * A 384x384 grayscale mode (kSMARTDMA_CameraDiv16Frame384_384, ~92% more
+ * pixels for about the same RAM) was tried here and reverted - real
+ * hardware hit a HardFault inside the stripe-reassembly memcpy
+ * (CAMERA_CAPTURE_CompleteCallback(), camera_capture.c), most likely
+ * because that mode's actual per-stripe byte layout isn't 1 byte/pixel as
+ * assumed (no NXP documentation confirmed it) - see WORKLOG.md if
+ * revisiting this. Back to the original, confirmed-working whole-frame
+ * QVGA RGB565 capture below.
  ******************************************************************************/
 #define DEMO_CAMERA_RESOLUTION kVIDEO_ResolutionQVGA /* 320*240 */
 #define DEMO_BUFFER_WIDTH      320U
@@ -38,8 +47,9 @@
 /*******************************************************************************
  * TFT LCD panel geometry. Panel is ILI9341-family, 240x320 native GRAM
  * (portrait), driven here in landscape via MADCTL (MV bit, see
- * lcd_bitbang.c's LCD_InitPanel) so it matches the 320x240 camera buffer
- * exactly - no software rotation.
+ * lcd_bitbang.c's LCD_InitPanel). No longer tied to the camera buffer
+ * size (the LCD only ever shows text status lines now, not the live
+ * camera image - see main.c).
  ******************************************************************************/
 #define DEMO_PANEL_WIDTH  320U
 #define DEMO_PANEL_HEIGHT 240U

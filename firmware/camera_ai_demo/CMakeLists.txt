@@ -122,15 +122,27 @@ else()
     mcux_add_macro(CC "-DDEMO_USB_STREAM_DISABLE=0")
 endif()
 
-# Which AI inference backend to build: CPU+CMSIS-NN via the Edge Impulse
-# SDK (model_runner.cpp, default) or this chip's Neutron NPU
-# (model_runner_npu.cpp) via NXP's own middleware/eiq/tensorflow-lite +
-# middleware/eiq/neutron, bypassing the Edge Impulse SDK entirely - see
+# Diagnostic-only build: skip AI entirely and stream the raw camera feed
+# straight to the LCD, as fast as frames arrive (no ~1.27s/inference
+# stall) - for physically focusing the lens while watching the panel.
+# OFF by default (normal camera+AI+status-text build).
+option(LCD_CAMERA_PREVIEW "Skip AI, stream the raw camera feed straight to the LCD - for focusing the lens" OFF)
+if(LCD_CAMERA_PREVIEW)
+    mcux_add_macro(CC "-DDEMO_LCD_CAMERA_PREVIEW=1")
+else()
+    mcux_add_macro(CC "-DDEMO_LCD_CAMERA_PREVIEW=0")
+endif()
+
+# Which AI inference backend to build: this chip's Neutron NPU
+# (model_runner_npu.cpp, default - ~3.3ms/inference) via NXP's own
+# middleware/eiq/tensorflow-lite + middleware/eiq/neutron, bypassing the
+# Edge Impulse SDK entirely, or CPU+CMSIS-NN via the Edge Impulse SDK
+# (model_runner.cpp, ~1.27s/inference - set OFF to use this instead) - see
 # WORKLOG.md "NPU (Neutron) plan" for the full story (both paths implement
 # the identical model_runner.h API, so main.c doesn't change either way,
 # and both print the same DWT-based "total classifier time" line for a
 # direct on/off comparison).
-option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md" OFF)
+option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md" ON)
 if(AI_MODEL_USE_NPU)
     set(AI_MODEL_RUNNER_SOURCE source/ai/model_runner_npu.cpp)
 else()
@@ -146,6 +158,9 @@ mcux_add_source(
             source/display/lcd_display.h
             source/display/bbox_overlay.c
             source/display/bbox_overlay.h
+            source/display/font5x7.h
+            source/display/text_overlay.c
+            source/display/text_overlay.h
             ${LCD_BACKEND_SOURCE}
             ${AI_MODEL_RUNNER_SOURCE}
             source/ai/model_runner.h

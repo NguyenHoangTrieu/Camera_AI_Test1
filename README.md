@@ -129,28 +129,42 @@ so it doesn't prompt if another debug probe is also plugged in. See
 `../../touch_rgb/README.md` for the probe-permissions / udev-rule note if `pyocd`
 needs `sudo` on your setup.
 
-To pick the NPU inference backend instead of the CPU default, pass an extra
-CMake flag (see "AI model integration" below):
+### Build-time flags
 
-```
-$ ./build.sh rebuild -DAI_MODEL_USE_NPU=ON
-```
+Pass any of these to `build`/`rebuild`/`all` as an extra `-D<FLAG>=ON|OFF`,
+e.g. `./build.sh rebuild -DAI_MODEL_USE_NPU=OFF`:
 
-**Confirmed on real hardware, boots and runs continuously without faults**:
+| Flag | Default | Effect |
+|---|---|---|
+| `AI_MODEL_USE_NPU` | `ON` | Run inference on the Neutron NPU (~3.3ms/inference, the default). Set `OFF` to fall back to CPU+CMSIS-NN via the Edge Impulse SDK instead (~1.27s/inference) - same detection logic either way, just ~370-390x slower. See "AI model integration" below. |
+| `LCD_CAMERA_PREVIEW` | `OFF` | Skip AI entirely and stream the raw camera feed straight to the LCD as fast as frames arrive (no ~1.27s/inference stall in the way) - for physically focusing the lens by eye. Re-flash with this back `OFF` afterwards for actual drowsiness detection. |
+| `LCD_ARDUINO_HEADER_BITBANG` | `ON` | Drive the TFT via GPIO bit-bang on the Arduino header (current default, requirement.md's original design). `OFF` switches to the J8 header instead - abandoned, see "Abandoned/disabled features" below. |
+| `USB_STREAM_DIAGNOSTIC_DISABLE` | `ON` | Skip USB bring-up entirely - camera+AI loop only. `OFF` opts into the abandoned USB Video Class streaming path (see "Abandoned/disabled features"), which doesn't drive the LCD at all. |
+
+`AI_MODEL_USE_NPU` and `LCD_CAMERA_PREVIEW` are independent of each other and
+of the two LCD/USB flags above - any combination builds, though combining
+`LCD_CAMERA_PREVIEW=ON` with `USB_STREAM_DIAGNOSTIC_DISABLE=OFF` isn't a
+meaningful combination (camera preview doesn't touch USB at all).
+
+**Confirmed on real hardware, boots and runs continuously without faults**
+(NPU backend, the default):
 ```
 Camera_AI_Test1 - FRDM-MCXN947
 Camera: OV7670 on J9 SmartDMA/Camera header
-Display: Arduino-header LCD live preview (camera + AI hook)
+Display: Arduino-header LCD status text (camera + AI hook)
 
 Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-AI_MODEL_Init: Edge Impulse FOMO ready (64x64 input, 3 classes)
+AI_MODEL_Init: Neutron NPU FOMO ready (64x64 input, 3 classes, arena used 74660/114688 bytes)
 LCD: bit-bang GPIO on the Arduino header
-AI_MODEL_RunInference: total classifier time = 1271927us (1271ms)
-AI result: box[0] label=closed_eye x=24 y=40 w=8 h=8 score=61%
-Camera: frame #46 ready, 792 samples, pixel range 0x31C7..0xCF1A, avg=0xA48B
+AI_MODEL_RunInference: total classifier time = 3279us (3ms)
+AI result: box[0] label=open_eye x=32 y=32 w=8 h=8 score=74%
 ```
-(that log is the CPU/CMSIS-NN path; the NPU path prints the same lines with
-`total classifier time` around 3ms instead of ~1270ms - see below.)
+(build with `-DAI_MODEL_USE_NPU=OFF` for the CPU/CMSIS-NN path instead -
+same lines, `total classifier time` around 1271000us/~1270ms instead of
+~3ms. LCD shows 3 text lines - `OPEN EYE`/`YAWNING`/`CLOSED EYE`, each with
+a trailing `1`/`0` for whether that label was detected this frame - not a
+live image or a solid status color, see `DEMO_DrawStatusLine()` in
+`source/main.c`.)
 
 ## AI model integration
 
@@ -158,20 +172,20 @@ Model: Edge Impulse Studio project **"Test_Drowsy_NXP"** (impulse #11, v14) -
 a FOMO (Faster Objects, More Objects) detector, 64x64 int8-quantized input,
 3 classes (`closed_eye`/`open_eye`/`yawning`), trained on this project's own
 drowsiness dataset. `main.c` runs `AI_MODEL_RunInference()` once per captured
-camera frame and drives the LCD status color from the result - see the file
-header comments in `source/main.c` and `source/ai/model_runner.h` for the
-exact API.
+camera frame and drives the LCD's 3-line text status readout from the
+result - see the file header comments in `source/main.c` and
+`source/ai/model_runner.h` for the exact API.
 
 Two interchangeable inference backends implement the identical
 `model_runner.h` API, selected at build time:
 
-| | CPU + CMSIS-NN (default) | Neutron NPU |
+| | Neutron NPU (default) | CPU + CMSIS-NN |
 |---|---|---|
-| CMake flag | (default) | `-DAI_MODEL_USE_NPU=ON` |
-| Source | `source/ai/model_runner.cpp` | `source/ai/model_runner_npu.cpp` |
-| Engine | Edge Impulse's own `ei_run_classifier()`, non-EON TFLite Micro interpreter | Raw TFLite Micro against NXP's `middleware/eiq/tensorflow-lite`, model's conv/pool ops compiled to run on the Neutron NPU coprocessor |
-| Measured time/inference | ~1.27s | ~3.3ms (**~370-390x faster**) |
-| `.elf` size | ~7.1MB | ~2.2MB |
+| CMake flag | (default) | `-DAI_MODEL_USE_NPU=OFF` |
+| Source | `source/ai/model_runner_npu.cpp` | `source/ai/model_runner.cpp` |
+| Engine | Raw TFLite Micro against NXP's `middleware/eiq/tensorflow-lite`, model's conv/pool ops compiled to run on the Neutron NPU coprocessor | Edge Impulse's own `ei_run_classifier()`, non-EON TFLite Micro interpreter |
+| Measured time/inference | ~3.3ms (**~370-390x faster**) | ~1.27s |
+| `.elf` size | ~2.2MB | ~7.1MB |
 
 Both print the same `AI_MODEL_RunInference: total classifier time = ...`
 line (timed via the Cortex-M33's DWT cycle counter - Edge Impulse's own
@@ -219,13 +233,14 @@ Camera_AI_Test1/
         hardware_init.c                <- BOARD_InitHardware()
         prj.conf                       <- board-port Kconfig (inputmux, pinmux_project_folder)
     source/
-      main.c                         <- capture -> AI inference -> LCD status-color loop (default)
+      main.c                         <- capture -> AI inference -> LCD status-text loop (default)
       fault_handler.c                <- HardFault dump handler (register decode over PRINTF)
       camera/camera_capture.c/h      <- OV7670 + SmartDMA (from NXP reference)
       display/lcd_bitbang.c/h        <- GPIO bit-bang LCD driver (current default - Arduino header)
+      display/text_overlay.c/h, font5x7.h <- 3-line status text renderer (see main.c)
       ai/model_runner.h              <- shared inference API both backends implement
-      ai/model_runner.cpp            <- CPU + CMSIS-NN backend (default), via Edge Impulse's SDK
-      ai/model_runner_npu.cpp        <- Neutron NPU backend (-DAI_MODEL_USE_NPU=ON), raw TFLite Micro
+      ai/model_runner.cpp            <- CPU + CMSIS-NN backend (-DAI_MODEL_USE_NPU=OFF), via Edge Impulse's SDK
+      ai/model_runner_npu.cpp        <- Neutron NPU backend (default), raw TFLite Micro
       ai/ei_sramx_alloc.c/h          <- custom allocator serving the CPU path's tensor arena from m_sramx
       ai/ei_debug_porting.c          <- routes Edge Impulse's ei_printf through this project's PRINTF
       ai/edge_impulse/               <- Edge Impulse "C++ library" export (Test_Drowsy_NXP project)
@@ -261,12 +276,13 @@ full trail on any of them.
 
 - **Live camera image + bounding-box overlay on the LCD**: the original
   design drew the live camera frame with colored boxes around detections.
-  Disabled (not deleted - see the `#if 0` block in `main.c` and
-  `source/display/bbox_overlay.c/h`) as a RAM-budget tradeoff: a second
-  150KB frame buffer was needed for tearing-free display, competing
-  directly with the AI model's own RAM needs. Revisit only after
-  re-checking the current RAM budget in WORKLOG.md - a 150KB buffer would
-  eat back most of the headroom freed up during the AI bring-up.
+  Tried again later and reverted in favor of the current 3-line text
+  status readout (much less data to push over the bit-bang LCD bus per
+  frame) - `source/display/bbox_overlay.c/h` (box-drawing helper) is still
+  in the tree, unused, in case box-on-image display is revisited. For just
+  seeing the raw camera feed (e.g. to focus the lens), see
+  `LCD_CAMERA_PREVIEW` in "Build-time flags" above instead - no boxes, no
+  AI, just the live image.
 - **J8 FlexIO/LCD header** (hardware-accelerated LCD bus): wiring/panel/init
   sequence were all confirmed good (a bit-bang diagnostic on the same J8
   pins displayed a correct image), but the FlexIO hardware-bus path itself
