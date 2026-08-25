@@ -11,10 +11,16 @@ model per frame, and shows the result as a text status line on a TFT panel.
 Pipeline: `Camera (OV7670/SmartDMA)` → `AI inference (CPU or Neutron NPU)` → `LCD status text`.
 
 Inference runs on either the CPU (CMSIS-NN) or the Neutron NPU (default,
-~4ms/inference on real hardware). See [ARCHITECTURE.md](ARCHITECTURE.md)
-for design decisions, memory-conflict pitfalls, and NPU integration
-details, and [WORKLOG.md](WORKLOG.md) for the full dated bring-up history.
-Original request: [requirement.md](requirement.md).
+~4ms/inference on real hardware).
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) — design decisions, memory-conflict
+  pitfalls, NPU integration details for this specific build.
+- [KNOWLEDGE.md](KNOWLEDGE.md) — plain-language explainer of the underlying
+  concepts (DVP camera protocol, coprocessors, NPU/quantization, embedded
+  RAM/power domains, SWD debug, DCDC voltage conflicts) for anyone new to
+  this domain.
+- [WORKLOG.md](WORKLOG.md) — full dated bring-up history.
+- Original request: [requirement.md](requirement.md).
 
 ## Hardware
 
