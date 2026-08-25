@@ -13,8 +13,17 @@
  * bounding boxes on the LCD (source/display/bbox_overlay.c/h) - dropped in
  * favor of this plain text status readout: much less data to push over
  * the bit-bang LCD bus per frame, and the 3 lines are what's actually
- * useful for a drowsiness-alert readout. bbox_overlay.c/h is kept in the
- * tree (unused, still builds) in case box-on-image display is revisited.
+ * useful for a drowsiness-alert readout. bbox_overlay.c/h is no longer
+ * unused, though - see below.
+ *
+ * SD card snapshot on face detection (source/storage/snapshot.c): when a
+ * face is detected, draws a box (bbox_overlay.c/h, reused from the
+ * abandoned live-image LCD path above - same helper, different
+ * destination) directly into the camera frame buffer and saves it as a
+ * BMP to the TFT shield's onboard microSD slot (Arduino D10..D13,
+ * hardware LPSPI1 - see source/storage/sd_spi_disk.c), rate-limited to at
+ * most 1 capture/sec. Independent of the LCD text status line above -
+ * the LCD never shows the box, only the saved file does.
  *
  * USB Video Class (UVC) streaming over USB High-Speed (source/usb/) is
  * ABANDONED - SmartDMA camera capture and the USB HS PHY need mutually
@@ -37,6 +46,7 @@
 #include "fsl_debug_console.h"
 #include "lcd_display.h"
 #include "model_runner.h"
+#include "snapshot.h"
 #include "text_overlay.h"
 #include "usb_video_camera.h"
 
@@ -223,6 +233,11 @@ int main(void) {
   LCD_Init();
   DEMO_ClearScreen(0x0000U);
 
+  /* SD card snapshot-on-face-detection - see source/storage/snapshot.c.
+   * Safe to call even with no card present (SNAPSHOT_OnFrame() then just
+   * no-ops every frame instead of retrying). */
+  SNAPSHOT_Init();
+
 #if !DEMO_AI_MODEL_USE_NPU
   /* Dedicated AI scratch pool - overflow area for ei_sramx_alloc.c's
    * allocator, used once the primary 96KB m_sramx pool is exhausted.
@@ -309,6 +324,14 @@ int main(void) {
       AI_MODEL_RunInference(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                             &aiResult);
 
+      /* Still before CAMERA_CAPTURE_Reinit(): draws into + reads `frame`
+       * directly (no extra copy, see snapshot.h), so it must run while
+       * SmartDMA is stopped and the buffer is guaranteed stable, same
+       * reasoning as AI_MODEL_RunInference() just above. Internally rate-
+       * limited to at most 1 capture/sec - a no-op most frames. */
+      SNAPSHOT_OnFrame(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
+                       &aiResult, AI_MODEL_GetInputWidth(), AI_MODEL_GetInputHeight());
+
       CAMERA_CAPTURE_Reinit();
       skipNextFrame = true;
 
@@ -331,6 +354,12 @@ int main(void) {
        * the earlier live-image display it has no ordering dependency on
        * CAMERA_CAPTURE_Deinit()/Reinit() above. */
       DEMO_DrawStatusLine(0U, "FACE      ", sawFace);
+
+      /* On-screen "a snapshot was just saved" notice - stays lit for the
+       * same ~1s window SNAPSHOT_OnFrame() enforces between captures (see
+       * snapshot.h), so it clears itself right as a new capture becomes
+       * possible again rather than needing its own timer here. */
+      DEMO_DrawStatusLine(1U, "CAPTURE   ", SNAPSHOT_IsNoticeActive());
     }
   }
 #else

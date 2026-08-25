@@ -1,0 +1,25 @@
+/*
+ * sd_spi_disk.h - SD card over SPI (LPSPI1, Arduino D10..D13 - see
+ * BOARD_InitSdCardPins() in pin_mux.c), wired into FatFs as physical
+ * drive 0 via the standard diskio.h API (disk_initialize/status/read/
+ * write/ioctl, defined in sd_spi_disk.c - called by ff.c, not meant to be
+ * called directly).
+ *
+ * Replaces the SDK's own middleware/fatfs/source/fsl_sdspi_disk/ glue,
+ * which is hardcoded to the DSPI peripheral (Kinetis-family SPI) that
+ * doesn't exist on the MCXN947 (LPSPI-family chip) - see sd_spi_disk.c
+ * for the LPSPI1-based replacement.
+ */
+#ifndef _SD_SPI_DISK_H_
+#define _SD_SPI_DISK_H_
+
+#include <stdbool.h>
+
+/*! @brief True once SDSPI_Init() has completed successfully - snapshot.c
+ *  checks this before attempting f_mount()/f_open() so a missing/dead
+ *  card just skips snapshots instead of stalling the main loop. Becomes
+ *  true lazily, on the first FatFs call that triggers disk_initialize()
+ *  (normally the first f_mount()). */
+bool SDCARD_DISK_IsReady(void);
+
+#endif /* _SD_SPI_DISK_H_ */

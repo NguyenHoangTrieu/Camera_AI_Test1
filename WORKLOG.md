@@ -9,7 +9,370 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
-## CURRENT STATUS: face-only FOMO model (deploy version 2) fully working end-to-end on real hardware, including real (non-flat) camera data - AI_MODEL_USE_NPU ON by default (2026-08-25)
+## SD card writes measured at ~3.3 SECONDS each on real hardware - the card was stuck running at its 400kHz identification speed forever, never switching up to a real operating speed - fixed (2026-08-25)
+
+User reported the pipeline visibly pausing for a long time on every save
+and asked for real timing numbers instead of a guess. Added a DWT-cycle
+timer around the whole file-create-through-`f_close()` span in
+`SNAPSHOT_OnFrame()` (`source/storage/snapshot.c`, same measurement
+technique `AI_MODEL_RunInference()` already uses), rebuilt, reflashed,
+and measured on real hardware:
+```
+Snapshot: saved FACE0030.BMP (write took 3302566us, 3302ms)
+Snapshot: saved FACE0031.BMP (write took 3302722us, 3302ms)
+Snapshot: saved FACE0032.BMP (write took 3302869us, 3302ms)
+```
+**~3.3 seconds, consistently, every single save** - far too slow for a
+~150KB file on any real SD card.
+
+**Root cause** (`source/storage/sd_spi_disk.c`): `s_host.busBaudRate` was
+hardcoded to `400000` (400kHz) - the *card-identification* speed SD-over-
+SPI is required to start at - and never updated afterward. Per SD-over-
+SPI protocol, `middleware/sdmmc/sdspi/fsl_sdspi.c`'s `SDSPI_Init()`
+switches up to a real operating speed right after reading the card's CSD
+register, via `card->host->setFrequency(min(SD_CLOCK_25MHZ,
+card->host->busBaudRate))` - since `busBaudRate` was left at the
+identification-phase value, this speed-up step computed
+`min(25MHz, 400kHz) = 400kHz`, so the card ran at 400kHz forever, for
+every single byte of every read/write, not just the initial handshake.
+At 400kbps, a ~153,666-byte BMP (66-byte header + 320×240×2 pixel bytes)
+takes 153,666 × 8 / 400,000 ≈ **3.07 seconds** just from the bit rate
+alone - matches the measured ~3.3s almost exactly once SD/FAT protocol
+overhead is added on top.
+
+**Fix**: added `SD_SPI_OPERATING_BAUDRATE` (8MHz) and set
+`s_host.busBaudRate` to that instead of the identification-phase
+constant. 8MHz, not the driver's 25MHz ceiling, chosen deliberately
+conservative - this exact card/shield/wiring combination already needed
+an internal pull-up just to communicate at all (see the floating-MISO
+entry below), so signal integrity margin at higher speeds on this
+specific setup isn't confirmed yet. Confirmed compiling clean and the
+board booting/mounting normally after reflashing - **the actual faster
+write time itself still needs a fresh face-triggered capture to
+measure** (no face was in frame during the reflash-and-verify window in
+this session).
+
+### Next steps for a fresh session (this bug specifically)
+
+1. Trigger a capture and check the new `(write took ...)` timing - should
+   be roughly 8000/400 ≈ 20x faster than the 3.3s baseline above, i.e.
+   very roughly ~150-200ms, though real SD/FAT overhead means don't
+   expect it to be exactly linear.
+2. If 8MHz turns out unreliable (write failures, corrupted files) on this
+   specific card/shield, that's a signal-integrity headroom problem, not
+   a logic bug - drop `SD_SPI_OPERATING_BAUDRATE` back down (try 4MHz,
+   then 1MHz) rather than assuming something else broke.
+3. If 8MHz works reliably, it may be safe to try higher (up to the
+   driver's `SD_CLOCK_25MHZ` ceiling) - not attempted in this session,
+   deliberately left as a known follow-up rather than pushed opportunistically.
+
+## Confirmed a real capture end-to-end - first look at a saved snapshot revealed two more real-world usability issues, both fixed (2026-08-25)
+
+With the previous two bugs fixed, the user pointed the camera at a real
+face, got a saved `.BMP`, and looked at the actual result for the first
+time:
+
+1. **The green box only covered a small corner of the face** (e.g. the
+   glasses/nose area, not the whole face). Not a bug - this is inherent
+   to the FOMO model architecture already in use: FOMO detects "which 8x8
+   grid cell (in the 72x72 NPU model's 9x9 grid) most likely contains an
+   object center", it does not regress an actual bounding box size the
+   way YOLO-style detectors do (see `NPU_HandleCube()`/
+   `NPU_CubeCheckOverlap()` in `model_runner_npu.cpp`, ported from Edge
+   Impulse's own `ei_handle_cube()`/`ei_cube_check_overlap()`). A box
+   only grows past one grid cell if multiple *adjacent* cells
+   independently score above the 0.5 confidence threshold for the same
+   class and get merged - with one activated cell, the box is always
+   exactly 8x8px in model-input space, scaled up to a visibly tiny
+   rectangle in the saved 320x240 image, regardless of how big the real
+   face is. This has always been true of every log line in this project
+   showing `w=8 h=8` - just never visually obvious until an actual image
+   was looked at.
+
+   **Fix, tried then reverted** (`source/storage/snapshot.c`): grew the
+   box 2.5x around its own center (`SNAPSHOT_ExpandBox()`,
+   `SNAPSHOT_BBOX_EXPAND_FACTOR`) purely for how it looks in the saved
+   file - never touched the AI model/threshold or the raw coordinates
+   used for `FACE:1/0`/the rate limit. **User asked to revert this and
+   keep the raw box as-is** (2026-08-25, same day) - removed
+   `SNAPSHOT_ExpandBox()` entirely, `BBOX_DrawRect()` is called with the
+   unpadded scaled box again, same as before this entry.
+
+2. **The LCD's `CAPTURE: 1` (green) notice was never actually seen** by
+   the user, even right after a successful save. Not a logic bug either -
+   confirmed by re-reading `SNAPSHOT_OnFrame()`/`SNAPSHOT_IsNoticeActive()`
+   line by line, the state transitions correctly on the very next status-
+   line redraw after a save. The real problem: the notice window was tied
+   to the same 1-second value as the capture rate-limit, and 1 second is
+   not enough time for a person to notice a capture just happened and
+   react (look at/photograph the LCD) before it's already reverted to
+   `CAPTURE: 0` (gray).
+
+   **Fix** (`source/storage/snapshot.c`/`.h`): split into two independent
+   constants - `SNAPSHOT_RATE_LIMIT_MS` (1000, unchanged - still "never
+   twice within 1 second", a hard requirement) and
+   `SNAPSHOT_NOTICE_DURATION_MS` (4000, new) - the LCD notice now stays
+   lit for 4 seconds regardless of when the next capture becomes
+   possible again. `SNAPSHOT_IsNoticeActive()` is a human-facing display
+   flag, not a machine-readable "capture in progress" signal, so
+   decoupling these two windows has no correctness implications.
+
+Both confirmed compiling clean and the board booting normally
+(`Snapshot: SD card ready.`) after reflashing - the actual expanded-box/
+longer-notice behavior itself needs a fresh face-triggered capture to see
+directly (not re-verified in this exact form yet, only the boot path).
+
+## Two more bugs found and FIXED on real hardware, after the mount itself started working: false "SD card init timed out" on every real file write, and 3 missing letters on the LCD's new status line (2026-08-25)
+
+With the mount confirmed working (previous entry below), the user pointed
+the camera at a real face and hit two more bugs immediately:
+
+1. **`Snapshot: SD card init timed out after 2000ms (no valid response) -
+   giving up.` printed on the very first face detection - even though the
+   card had just mounted successfully at boot** (`Snapshot: SD card
+   ready.` had printed moments earlier), followed by `Snapshot: could not
+   create a new file on the SD card.` on every subsequent detection,
+   never recovering.
+
+   **Root cause**: `SDCARD_SPI_Exchange()`'s deadline check (added
+   earlier this session, see the entry below) was unconditional - it
+   compares the current cycle count against a deadline armed once, at
+   boot, inside `SDCARD_SPI_Init()` (called only by `SDSPI_Init()`,
+   called only by `disk_initialize()`, called only once by
+   `SNAPSHOT_Init()`'s `f_mount()`). But `exchange()` itself is called
+   for *every* SPI transaction forever after, including all later
+   `SDSPI_ReadBlocks()`/`SDSPI_WriteBlocks()` calls during real file I/O -
+   which don't go through `SDSPI_Init()` again. By the time the user's
+   face was actually detected (many seconds into runtime), the
+   boot-time 2-second deadline had long since passed, so the very first
+   real read/write after boot failed instantly regardless of whether the
+   card was healthy - and stayed permanently "timed out" from then on,
+   since the failure flag was never reset.
+
+   **Fix** (`source/storage/sd_spi_disk.c`): added an `s_initInProgress`
+   flag, true only for the duration of `disk_initialize()`'s own
+   `SDSPI_Init()` call - the deadline check in `SDCARD_SPI_Exchange()`
+   now only applies while that flag is set, leaving later
+   read/write operations to rely on `fsl_sdspi.c`'s own (now safely
+   bounded, thanks to the `SPI_RETRY_TIMES` fix below) retry logic
+   instead, same as any healthy SD-over-SPI stack.
+
+2. **LCD showed `CAP   E: 0` instead of `CAPTURE: 0`** - missing exactly
+   the T, U, R glyph positions. `source/display/font5x7.h` is a
+   hand-picked minimal font (by design, to save flash - see its own
+   header comment) that only ever covered the letters `"FACE"` needed;
+   adding the `"CAPTURE"` status line earlier this session never checked
+   whether the font actually had glyphs for the *new* letters it needed.
+   Missing glyphs render as a blank glyph-width gap, not an error - easy
+   to miss without actually looking at the screen. **Fixed**: added T, U,
+   R glyphs (standard 5x7 dot-matrix bitmaps, same style as the existing
+   letters).
+
+Both confirmed fixed by rebuilding and reflashing on the same physical
+board this session (though a **real face-triggered save
+`Snapshot: saved FACE0001.BMP`** still wasn't captured in this specific
+session - no face stayed in frame during testing; see "Next steps"
+below).
+
+### Next steps for a fresh session (these bugs specifically)
+
+1. Point the camera at a real face and confirm `Snapshot: saved
+   FACE0001.BMP` (or higher-numbered) appears in the log with no timeout
+   warning beforehand, and that the LCD's `CAPTURE: 1` line lights up
+   (fully readable now, not `CAP   E`) for ~1s after.
+2. Pull the card and check the actual `.BMP` file on a computer - confirm
+   it opens as a valid image with a green box roughly where the face was,
+   not corrupted/truncated.
+
+## Bug found and FIXED (confirmed on real hardware): SD snapshot feature's first boot hung completely - two separate bugs, not the SD wiring - full recovery confirmed by direct SWD register inspection (2026-08-25)
+
+User flashed the SD snapshot feature (see the entry below) for the first
+time on real hardware. Boot log stopped dead after
+`LCD: bit-bang GPIO on the Arduino header` (right after `SNAPSHOT_Init()`
+was reached in `main.c`) - no crash, no fault dump, just silence,
+reproduced identically across multiple resets. User plugged in an SD
+card and reflashed a first fix (below) - **hang persisted, byte-for-byte
+identical symptom**, which is what led to the deeper investigation in
+this entry.
+
+Board was physically attached in this session, which made it possible to
+actually halt the stuck core over SWD and read hardware state directly,
+rather than continuing to guess from source alone - see
+[ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes) for the
+full technical writeup (register addresses, exact values, the retry-math
+explanation). Short version:
+
+- **Bug 1**: `LPSPI_MasterTransferBlocking()` has no timeout at all unless
+  the `SPI_RETRY_TIMES` macro is defined - and the Kconfig option for it
+  only exists under a *different* LPSPI driver component than this board
+  actually uses (`driver.lpspi` vs. the correct `driver.lpflexcomm_lpspi`),
+  so it was silently never defined. **Fixed** by defining
+  `-DSPI_RETRY_TIMES=100000` directly in `CMakeLists.txt`.
+- **Bug 2** (why bug 1's fix alone wasn't enough - this is why the hang
+  looked identical even after reflashing): confirmed via `pyocd commander
+  -c halt -c reg` (PC was moving, not frozen - real work, just an
+  enormous amount of it) and direct LPSPI1 register reads over SWD
+  (`RDR` - the received-byte register - read `0x00` on every single poll,
+  never the `0xFF` SD-over-SPI expects) that `fsl_sdspi.c`'s own
+  20000-iteration retry constant is nested 2-3 levels deep in
+  `SDSPI_Init()`'s call graph, so a *consistently* wrong response
+  multiplies those budgets instead of adding them - minutes to hours
+  worst case, not seconds, even though every individual wait is
+  technically bounded. **Fixed** (`source/storage/sd_spi_disk.c`): the
+  `exchange()` callback now enforces its own 2-second wall-clock deadline
+  (DWT cycle counter) across the *whole* init attempt, and returns
+  failure immediately once it's passed - since `fsl_sdspi.c` bails out of
+  every retry loop the instant `exchange()` itself reports failure, this
+  is what actually bounds total time, regardless of how large
+  `fsl_sdspi.c`'s own internal retry math allows.
+
+**Confirmed fixed on real hardware** (both fixes together, this session):
+```
+Snapshot: initializing SD card (LPSPI1, D10..D13)...
+Snapshot: SD card init timed out after 2000ms (no valid response) - giving up.
+Snapshot: no usable SD card on the shield's slot (D10..D13) - snapshots disabled.
+AI_MODEL_RunInference: total classifier time = 3935us (3ms)
+Camera: frame #31 ready, 792 samples, pixel range 0x2965..0x8C92, avg=0x45C7
+```
+Boot now reaches the camera+AI loop within ~2 seconds regardless of SD
+card state; watched it run continuously through 90+ frames (3 log
+cycles) with real, non-flat pixel data - the rest of the demo is
+unaffected by whatever's still wrong with the SD card.
+
+### Bug 3 (the real, final root cause) - `RDR=0x00` was a floating MISO line, not a short - fixed with one internal pull-up, confirmed on real hardware
+
+After bugs 1+2 above stopped the hang, `RDR` still read a constant `0x00`
+instead of the SD-over-SPI idle-high `0xFF`, meaning the card genuinely
+never communicated (`Snapshot: no usable SD card...` every boot). Ruled
+out first: the SD card itself - user plugged it into this laptop's
+built-in SD reader (`O2Micro OZ711`, `sdhci-pci` driver) and it mounted
+cleanly as `vfat`/FAT32 (`sudo blkid`/`fsck.fat -n` output confirmed this,
+also cleared a stale dirty-bit from a previous non-clean eject) - and
+confirmed both "card is in the shield's slot" and "shield is fully seated
+in the Arduino header" directly with the user before going further.
+
+**Root cause**: the TFT shield's SD slot has no pull-up of its own on the
+DO (MISO) line - common on cheap SD shields, which assume the host MCU
+provides one, same as most Arduino-family boards default to. This
+project's `BOARD_InitSdCardPins()` (`board_port/pin_mux.c`) originally
+muxed all 4 LPSPI1 pins with no pull config at all (matching the SDK's
+own LPSPI1 b2b reference example, which never needed one because it talks
+to another on-board LPSPI instance wired directly, not through a
+connector to a 3rd-party shield) - with nothing anywhere pulling DO high
+when the card isn't actively driving it, the MCU's input floated and
+happened to read a stable `0x00`, indistinguishable code-side from a
+genuine wiring short until proven otherwise.
+
+**Diagnosis approach**: rather than guessing, tested it directly - added
+this chip's own weak internal pull-up (`kPORT_PullUp` in `port_pin_config_t`)
+to just the SDI/DO pin (P0_26) as a live experiment, reasoning: if the
+line is floating, a pull-up should fix the reading; if something is
+actively driving it low (a real short), a weak internal pull can't
+override that and nothing would change. Rebuilt, reflashed, and the very
+next boot printed `Snapshot: SD card ready.` - confirming floating, not
+shorted, on the first try.
+
+**Fix** (`board_port/pin_mux.c`, `BOARD_InitSdCardPins()`): the pull-up
+is now a permanent part of the SDI pin's config, not a diagnostic-only
+change - it's genuinely required for this shield to work on this board.
+
+**Confirmed fixed on real hardware** (2026-08-25, all three fixes
+together):
+```
+Snapshot: initializing SD card (LPSPI1, D10..D13)...
+Snapshot: SD card ready.
+AI_MODEL_RunInference: total classifier time = 3879us (3ms)
+Camera: frame #16 ready, 792 samples, pixel range 0x2965..0xD65B, avg=0x6426
+```
+
+**Takeaway**: "the MCU reads garbage from an SPI slave" has (at least)
+two electrically distinct causes that look identical from software alone
+- a genuine short/wrong-signal, or a legitimately unpowered/undriven line
+with nowhere for logic level to be pulled toward. A weak internal
+pull-up is a cheap, fast, non-destructive way to tell them apart on real
+hardware before reaching for a multimeter.
+
+### Next steps for a fresh session (this bug specifically)
+
+**None outstanding** - SD card snapshot feature is now confirmed working
+end-to-end on real hardware (mount succeeds, no timeout). Remaining
+verification, if picking this up fresh: point the camera at an actual
+face and confirm `Snapshot: saved FACE0001.BMP` appears with the LCD's
+`CAPTURE: 1` line lighting up for ~1s after - this specific board/card/
+shield combination hasn't had a real face-triggered capture confirmed
+yet, only the mount/init step.
+
+## New feature: save a snapshot (boxed) to the TFT shield's microSD card on face detection, rate-limited to 1/sec - compile-verified only, not yet run on real hardware (2026-08-25)
+
+Added `source/storage/sd_spi_disk.c` (LPSPI1-based SD-over-SPI + FatFs
+`diskio.h` glue) and `source/storage/snapshot.c` (rate-limit + box-draw +
+BMP write, wired into `main.c`'s main loop right after
+`AI_MODEL_RunInference()`, before `CAMERA_CAPTURE_Reinit()`). Full design
+rationale in [ARCHITECTURE.md §2](ARCHITECTURE.md#2-components), usage in
+[README.md](README.md#snapshot-on-face-detection).
+
+**Two SDK dead ends hit and worked around, both discovered only by trying
+to build, not by reading docs first:**
+
+1. `middleware/fatfs/source/fsl_sdspi_disk/` (the SDK's only ready-made
+   SD-over-SPI + FatFs glue) is hardcoded to the DSPI peripheral
+   (`fsl_dspi.h`) - Kinetis-family SPI, which doesn't exist on the MCXN947
+   (LPSPI-family). Not a runtime failure, a **build-time** one: the header
+   itself has `#if (BOARD_SDSPI_SPI_BASE == SPI0_BASE) ... #else #error`.
+   Wrote `sd_spi_disk.c` from scratch instead, reimplementing the same 5
+   `diskio.h` functions against `fsl_sdspi.h` (the actual card-protocol
+   layer, which turned out to be chip-agnostic - only the host glue
+   underneath it needed replacing) with an `sdspi_host_t` driving `LPSPI1`.
+2. `CONFIG_MCUX_COMPONENT_middleware.sdmmc.sdspi=y` alone doesn't build
+   either - it auto-selects `middleware.sdmmc.common`
+   (`fsl_sdmmc_common.c`), and that component's own header
+   unconditionally `#include`s `fsl_sdmmc_host.h`, which only exists when
+   a host-controller component (SDHC/USDHC) is also selected. This project
+   has no such controller (talks to the card over LPSPI1 only). Fix:
+   pull just `sdspi/fsl_sdspi.c` + `sdspi/fsl_sdspi.h` +
+   `common/fsl_sdmmc_spec.h` directly in `CMakeLists.txt`, bypassing the
+   Kconfig component - confirmed `fsl_sdspi.c` never actually calls into
+   `fsl_sdmmc_common.c`, so nothing was lost by skipping it.
+
+Also **not `CONFIG_MCUX_COMPONENT_driver.lpspi`** for the SPI peripheral
+itself, even though that's the name used elsewhere in the SDK (and in
+`../../touch_rgb`-style examples on other MCX chips) - on the MCXN947,
+LPSPI lives inside a `LP_FLEXCOMM` interface, so the Kconfig gate is
+`MCUX_HAS_COMPONENT_driver.lpflexcomm_lpspi` /
+`CONFIG_MCUX_COMPONENT_driver.lpflexcomm_lpspi=y` instead (see
+`devices/MCX/MCXN/MCXN947/Kconfig.chip`'s
+`MCUX_HW_IP_DriverType_LPFLEXCOMM_LPSPI`) - same `fsl_lpspi.c`/`.h` API
+either way, confirmed by finding `examples/_boards/frdmmcxn947/driver_examples/lpspi/interrupt_b2b_transfer/master/cm33_core0/app.h` already using `LPSPI1`/`LPSPI_MasterInit()` successfully on this exact board.
+
+**Pin mapping (Arduino D10..D13 → P0_27/P0_24/P0_26/P0_25, LPSPI1 PCS0/SDO/SDI/SCK) came from NXP's UM12018 pin tables** (`pdftotext -layout` over the manual, searching for "D10"/"D11"/"D12"/"D13"), not from a continuity check like the LCD pins - **not physically confirmed**, see README.md's Known Limitations.
+
+Both `-DAI_MODEL_USE_NPU=ON` (default) and `=OFF` build clean with the
+feature added: `m_data` at 94.00%/93.28% respectively (up from
+93.78%/93.05% before this feature - the added static RAM is the `FATFS`
+object, `sdspi_card_t`/`sdspi_host_t`, and snapshot.c's own small statics;
+the BMP write itself needs no extra frame-sized buffer, see
+ARCHITECTURE.md). Still real headroom left (~18-21KB) on both.
+
+### Next steps for a fresh session (this feature specifically)
+
+1. **Run on real hardware** with an actual FAT-formatted microSD card in
+   the shield's slot - nothing above has been powered on yet. Check for
+   `Snapshot: saved FACE0001.BMP` in the serial log on the first detected
+   face, and open the resulting file to confirm it's a valid, correctly-
+   oriented (not upside-down/mirrored) image with a box roughly where the
+   face actually was.
+2. If the box position looks wrong: check the AI-input-space -> camera-
+   frame-space scaling in `SNAPSHOT_OnFrame()` (`source/storage/snapshot.c`)
+   against `AI_MODEL_GetInputWidth/Height()`'s actual values for whichever
+   model is active.
+3. If nothing gets written at all: check for `Snapshot: no usable SD card`
+   at boot first (means `SDSPI_Init()` itself failed - verify wiring
+   against the UM12018-derived pin table above with a multimeter before
+   assuming it's a code bug) vs. no snapshot log at all (means no face was
+   ever detected with `score` above the model's own threshold - not a
+   snapshot-code issue).
+
+## CURRENT STATUS (as of the previous session): face-only FOMO model (deploy version 2) fully working end-to-end on real hardware, including real (non-flat) camera data - AI_MODEL_USE_NPU ON by default (2026-08-25)
 
 **Confirmed on real hardware, real (non-flat) pixel data**:
 ```

@@ -92,6 +92,30 @@ mcux_add_macro(
     CC "-DFLEXIO_MCULCD_DATA_BUS_WIDTH=8"
 )
 
+# CONFIRMED on real hardware (2026-08-25): boot hung completely (no serial
+# output past "LCD: bit-bang GPIO on the Arduino header", survived multiple
+# resets) the first time SNAPSHOT_Init() -> f_mount() -> disk_initialize()
+# (source/storage/sd_spi_disk.c) actually ran on a board without the SD
+# card wired/ready yet. Root cause: drivers/lpflexcomm/lpspi/fsl_lpspi.c's
+# LPSPI_MasterTransferBlocking() polls its TX/RX FIFO flags in a loop
+# that's only bounded if the SPI_RETRY_TIMES macro is defined - see its
+# `#if SPI_RETRY_TIMES ... #else while (...) {} #endif` pattern, repeated
+# ~19 times in that file. SPI_RETRY_TIMES is a Kconfig option, but it only
+# exists under drivers/lpspi/Kconfig's plain "driver.lpspi" component -
+# this board's LPSPI1 is gated by "driver.lpflexcomm_lpspi" instead (see
+# prj.conf), which has no such Kconfig knob at all, so the macro was never
+# defined and every one of those loops compiled to a genuine `while (1) {}`
+# with zero timeout. SNAPSHOT_Init() was designed to fail gracefully (log
+# once, skip snapshots for the rest of the session) when the card isn't
+# ready - that path was unreachable because the SPI transfer underneath it
+# never returned at all. Fixing the retry loops with a real, bounded define
+# turns any SD/wiring problem into the intended graceful failure instead of
+# a hard hang - it does NOT fix whatever the underlying SD wiring/card
+# issue is (see README.md's Known Limitations for that).
+mcux_add_macro(
+    CC "-DSPI_RETRY_TIMES=100000"
+)
+
 # Which LCD connector/transport to build for - see WORKLOG.md "LCD history"
 # for the full story. Default (ON): GPIO bit-bang on the Arduino header,
 # the project's original design (requirement.md) and the one confirmed to
@@ -205,6 +229,55 @@ mcux_add_source(
             source/usb/usb_device_descriptor.h
             source/usb/usb_video_camera.c
             source/usb/usb_video_camera.h
+            source/storage/sd_spi_disk.c
+            source/storage/sd_spi_disk.h
+            source/storage/snapshot.c
+            source/storage/snapshot.h
+            source/storage/ffconf.h
+)
+
+# SD-over-SPI protocol layer (fsl_sdspi.c) pulled directly, NOT via
+# CONFIG_MCUX_COMPONENT_middleware.sdmmc.sdspi - that Kconfig option also
+# auto-selects middleware.sdmmc.common (fsl_sdmmc_common.c), which this
+# project doesn't need (fsl_sdspi.c only includes fsl_sdspi.h +
+# fsl_sdmmc_spec.h, never fsl_sdmmc_common.h) and can't even compile here:
+# fsl_sdmmc_common.h unconditionally #includes fsl_sdmmc_host.h, which only
+# exists when a host-controller component (SDHC/USDHC) is also selected -
+# this project has no such controller, it talks to the card over LPSPI1
+# only. Pulling just the 3 files fsl_sdspi.c actually needs sidesteps that
+# entirely.
+mcux_add_source(
+    BASE_PATH ${SdkRootDirPath}
+    SOURCES middleware/sdmmc/sdspi/fsl_sdspi.c
+            middleware/sdmmc/sdspi/fsl_sdspi.h
+            middleware/sdmmc/common/fsl_sdmmc_spec.h
+)
+mcux_add_include(
+    BASE_PATH ${SdkRootDirPath}
+    INCLUDES middleware/sdmmc/sdspi
+             middleware/sdmmc/common
+)
+
+# FatFs core (ff.c/ff.h) pulled directly, NOT via the SDK's own
+# middleware/fatfs Kconfig component - that component's CMakeLists.txt
+# always bundles middleware/fatfs/source/diskio.c alongside ff.c whenever
+# CONFIG_MCUX_COMPONENT_middleware.fatfs=y, and diskio.c's disk_initialize/
+# status/read/write/ioctl would collide at link time with the ones this
+# project supplies itself in source/storage/sd_spi_disk.c (which talk to
+# LPSPI1 directly - see that file's header comment for why the SDK's own
+# SD-over-SPI diskio glue, fsl_sdspi_disk.c, can't be used as-is: it's
+# hardcoded to the DSPI peripheral, which doesn't exist on this chip).
+# ffsystem.c/ffunicode.c are NOT needed - both are only required for
+# features this project's ffconf.h turns off (LFN, FS_REENTRANT).
+mcux_add_source(
+    BASE_PATH ${SdkRootDirPath}
+    SOURCES middleware/fatfs/source/ff.c
+            middleware/fatfs/source/ff.h
+            middleware/fatfs/source/diskio.h
+)
+mcux_add_include(
+    BASE_PATH ${SdkRootDirPath}
+    INCLUDES middleware/fatfs/source
 )
 
 if(NOT AI_MODEL_USE_NPU)
@@ -398,6 +471,7 @@ mcux_add_include(
              source/display
              source/ai
              source/usb
+             source/storage
 )
 
 # Produce a raw .bin next to the .elf so pyOCD can flash it directly.

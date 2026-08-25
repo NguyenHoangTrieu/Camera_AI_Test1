@@ -172,6 +172,14 @@ void BOARD_InitHardware(void)
     CLOCK_EnableClock(kCLOCK_LPI2c7);
     CLOCK_SetClkDiv(kCLOCK_DivFlexcom7Clk, 1u);
 
+    /* SD card SPI (LPSPI1, Arduino D10..D13 - see BOARD_InitSdCardPins()).
+     * Just attach+divide the source clock here, same as the SDK's own
+     * lpspi/interrupt_b2b_transfer example for this board - LPSPI_MasterInit()
+     * (source/storage/sd_spi_disk.c) gates/ungates and resets the LPSPI1
+     * peripheral itself, no separate CLOCK_EnableClock() needed for it. */
+    CLOCK_AttachClk(kFRO12M_to_FLEXCOMM1);
+    CLOCK_SetClkDiv(kCLOCK_DivFlexcom1Clk, 1u);
+
     /* Route camera VSYNC/HSYNC/PCLK (P0_4/P0_11/P0_5) to the SmartDMA. */
     INPUTMUX_Init(INPUTMUX0);
     INPUTMUX_AttachSignal(INPUTMUX0, 0, kINPUTMUX_GpioPort0Pin4ToSmartDma);
@@ -185,4 +193,5 @@ void BOARD_InitHardware(void)
 #else
     BOARD_InitFlexioPins();
 #endif
+    BOARD_InitSdCardPins();
 }

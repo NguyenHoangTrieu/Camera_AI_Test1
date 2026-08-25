@@ -3,6 +3,8 @@
 Real-time face-detection camera on **FRDM-MCXN947**. Captures frames from an
 OV7670 camera via SmartDMA, runs a single-class ("face") Edge Impulse FOMO
 model per frame, and shows the result as a text status line on a TFT panel.
+On detection, saves a snapshot (with a box drawn around the face) to the
+TFT shield's onboard microSD card, rate-limited to 1 photo/sec.
 
 **Status:** working, confirmed on real hardware — last verified `2026-08-25`
 
@@ -29,6 +31,7 @@ Inference runs on either the CPU (CMSIS-NN) or the Neutron NPU (default,
 | Board | FRDM-MCXN947 | |
 | Camera | OV7670 | → **J9** (SmartDMA/Camera header) |
 | Display | `HSD024131-C1`-class TFT, 240x320, 8-bit parallel (ILI9341-family) | → Arduino header (GPIO bit-bang) |
+| microSD | TFT shield's onboard slot (SPI mode, FAT-formatted card) | → Arduino D10..D13 (hardware LPSPI1) |
 | Debug probe | On-board MCU-Link (CMSIS-DAP) | flashing + serial console |
 
 **Board rework required:** change `SJ16`, `SJ26`, `SJ27` from the right side
@@ -62,8 +65,21 @@ design).
 
 `A0`/`A1` on FRDM-MCXN947 are analog-only (no GPIO), so `LCD_RD`/`LCD_WR`
 need 2 short jumper wires from the shield's A0/A1 pads to board pins D0/D1
-(not D10-D13 — those are the shield's onboard SD-card lines). Every other
-LCD pin plugs in normally, no rework.
+(not D10-D13 — those are the shield's onboard SD-card lines, see below).
+Every other LCD pin plugs in normally, no rework.
+
+### Pinout — microSD (TFT shield's onboard slot, Arduino D10..D13)
+
+| Shield pin | Arduino pin | MCU pin | Function |
+|---|---|---|---|
+| SD_SS | D10 | P0_27 | LPSPI1 PCS0 (chip select) |
+| SD_DI | D11 | P0_24 | LPSPI1 SDO (MCU → card) |
+| SD_DO | D12 | P0_26 | LPSPI1 SDI (card → MCU) |
+| SD_CK | D13 | P0_25 | LPSPI1 SCK |
+
+Real hardware SPI (LPSPI1), not bit-banged — per NXP's UM12018, D10..D13 on
+this board are wired to `LP_FLEXCOMM1` in SPI mode, not plain GPIO. Plugs
+in normally, no rework/jumpers. Card must be pre-formatted FAT16/FAT32.
 
 ## Getting Started
 
@@ -108,7 +124,9 @@ AI_MODEL_RunInference: total classifier time = 3957us (3ms)
 AI result: box[0] label=face x=<N> y=<N> w=<N> h=<N> score=<N>%
 ```
 
-LCD shows one text line — `FACE: 1` or `FACE: 0` — not a live image.
+LCD shows two text lines — `FACE: 1`/`FACE: 0`, and `CAPTURE: 1`/`CAPTURE: 0`
+(lit for 4s right after a snapshot is saved, see "Snapshot on Face
+Detection" below) — not a live image.
 
 ## Configuration
 
@@ -147,6 +165,52 @@ To swap in a different/retrained model: re-export from Edge Impulse Studio
 changed. See [ARCHITECTURE.md §2](ARCHITECTURE.md#2-components) for how
 the NPU conversion and integration actually work.
 
+## Snapshot on Face Detection
+
+When a face is detected, `source/storage/snapshot.c` draws a green box
+around it (reusing `source/display/bbox_overlay.c`, originally built for
+the abandoned live-image LCD path — see "Abandoned Features") directly
+into the camera frame buffer and saves it as an uncompressed 16-bit BMP
+(`FACE0001.BMP`, `FACE0002.BMP`, ...) to the microSD card — **at most 1
+capture/sec** (`SNAPSHOT_RATE_LIMIT_MS`), enforced via the DWT cycle
+counter, never a second capture within the same one-second window.
+Filenames never overwrite a previous session's snapshots (probes for the
+first free name once per boot).
+
+The box drawn in the saved file is the model's raw grid-cell box,
+unscaled/unpadded — small relative to a real face, since FOMO doesn't
+regress an actual bounding box size (see
+[ARCHITECTURE.md §2](ARCHITECTURE.md#2-components)); a 2.5x cosmetic
+expansion was tried and reverted (kept the raw box on purpose).
+
+The LCD gets a second status line, `CAPTURE: 1`/`CAPTURE: 0`, lit for 4s
+after a save (`SNAPSHOT_NOTICE_DURATION_MS`, independent of the 1s rate
+limit — 1s wasn't enough time for a person to notice and react, confirmed
+on real hardware) — the box itself is never drawn on the LCD, only in
+the saved file. No SD card present → logged once at boot, snapshot
+capture silently no-ops every frame after that (rest of the pipeline runs
+normally).
+
+Every save logs how long the actual SD card write took (DWT cycle
+counter, same technique `AI_MODEL_RunInference` uses):
+```
+Snapshot: saved FACE0030.BMP (write took 187342us, 187ms)
+```
+Confirmed on real hardware (2026-08-25) this was originally **~3.3
+seconds/save** — `s_host.busBaudRate` (`source/storage/sd_spi_disk.c`)
+was stuck at the mandatory 400kHz card-identification speed forever,
+never switched up to a real operating speed. Fixed (`SD_SPI_OPERATING_BAUDRATE`,
+now 8MHz) — see [WORKLOG.md](WORKLOG.md) for the full measurement and
+root cause.
+
+Implementation notes: writes the frame buffer to the file directly with a
+single `f_write()` call (top-down BMP row order matches the buffer's own
+layout, RGB565 needs no pixel conversion) — no second full-frame buffer,
+the single biggest lever for keeping this feature's RAM cost low given
+`m_data` is already >90% used (see below). See
+[ARCHITECTURE.md §2](ARCHITECTURE.md#2-components) for the LPSPI1/FatFs
+integration details.
+
 ## Project Structure
 
 ```
@@ -168,12 +232,17 @@ Camera_AI_Test1/
         edge_impulse/          <- Edge Impulse C++ library export
         neutron/                <- NPU-converted model (tflite_learn_..._npu.tflite/.h)
       usb/                    <- abandoned UVC streaming path
+      storage/
+        snapshot.c/h           <- rate-limited box-draw + BMP save on face detection
+        sd_spi_disk.c/h         <- LPSPI1 SD-over-SPI + FatFs diskio glue (see ARCHITECTURE.md §2)
+        ffconf.h                 <- hand-written FatFs config (RAM-minimal: FF_FS_TINY=1, no LFN)
 ```
 
 ## Known Limitations
 
-- LCD shows a one-line text status only, not a live image or bounding
-  boxes (by design, to save RAM — see "Abandoned Features" below).
+- LCD shows text status lines only, not a live image or bounding boxes
+  (by design, to save RAM — see "Abandoned Features" below); the box drawn
+  on face detection only ever exists in the saved BMP file.
 - CPU-path inference timing for the current model hasn't been separately
   measured on hardware yet (NPU path is measured: ~4ms/inference).
 - Not yet validated against a real face specifically — pipeline (capture →
@@ -184,6 +253,21 @@ Camera_AI_Test1/
   best-effort reading — verify against your physical shield if the screen
   is blank/garbled (checklist: power → jumpers → RST → panel controller →
   MADCTL rotation → continuity check with a multimeter).
+- SD card mount/init is **confirmed working on real hardware**
+  (`Snapshot: SD card ready.`) as of 2026-08-25, after fixing 5 separate
+  bugs found via live SWD debugging and real-hardware testing - a boot
+  hang (SDK Kconfig gap + a retry-loop-nesting issue), a floating
+  SD_DO/MISO line that needed this chip's internal pull-up enabled (the
+  shield's own SD slot doesn't provide one), a false "timed out" error on
+  every real file write (a deadline check that was meant for boot-time
+  init only, but ran on every SPI transaction forever after), and 3
+  missing LCD font glyphs (`CAP   E` instead of `CAPTURE`). Full incident
+  writeup: [WORKLOG.md](WORKLOG.md),
+  [ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes). Still
+  not separately confirmed: an actual face-triggered capture
+  (`Snapshot: saved FACE0001.BMP`) succeeding end-to-end - no face
+  stayed in frame during the testing session, only the mount/init step
+  and the fix for the false-timeout bug have been verified so far.
 
 ## Abandoned Features
 
@@ -192,7 +276,7 @@ most cases) for reference. Full trail in [WORKLOG.md](WORKLOG.md).
 
 | Feature | Why abandoned | Still buildable via |
 |---|---|---|
-| Live camera image + bounding-box overlay on LCD | Too much data over the bit-bang bus per frame; reverted to 1-line text status | `source/display/bbox_overlay.c/h` (unused, kept for reference) |
+| Live camera image + bounding-box overlay on LCD | Too much data over the bit-bang bus per frame; reverted to 1-line text status | `source/display/bbox_overlay.c/h` (no longer unused — reused by the SD snapshot feature above, just not drawn to the LCD) |
 | J8 FlexIO LCD header (hardware-accelerated bus) | Wiring/init confirmed good, but pixel data came out as noise — unresolved bus-speed/signal-integrity issue | `-DLCD_ARDUINO_HEADER_BITBANG=OFF` |
 | USB Video Class (UVC) webcam streaming | Genuine hardware conflict, not fixable in software — see [ARCHITECTURE.md §4](ARCHITECTURE.md#4-known-constraints--trade-offs) | `-DUSB_STREAM_DIAGNOSTIC_DISABLE=OFF` (won't drive the LCD) |
 

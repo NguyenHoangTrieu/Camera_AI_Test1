@@ -1,11 +1,13 @@
 /*
  * pin_mux.h - Camera_AI_Test1 (FRDM-MCXN947)
  *
- * Pin routing for: debug UART, OV7670 camera (J9), and the TFT LCD -
- * Arduino header by default (BOARD_InitArduinoLcdPins()), or J8
- * FlexIO/LCD header (BOARD_InitFlexioPins(), abandoned but still
- * selectable via CMakeLists.txt). hardware_init.c calls whichever one
- * DEMO_LCD_ARDUINO_HEADER (app.h) selects.
+ * Pin routing for: debug UART, OV7670 camera (J9), the TFT LCD - Arduino
+ * header by default (BOARD_InitArduinoLcdPins()), or J8 FlexIO/LCD header
+ * (BOARD_InitFlexioPins(), abandoned but still selectable via
+ * CMakeLists.txt) - and the TFT shield's onboard microSD slot (Arduino
+ * D10..D13, hardware LPSPI1 - BOARD_InitSdCardPins()). hardware_init.c
+ * calls whichever LCD one DEMO_LCD_ARDUINO_HEADER (app.h) selects, plus
+ * BOARD_InitSdCardPins() unconditionally.
  *
  * Camera pin setup is copied from NXP's
  * `display_examples/smartdma_camera_flexio_mculcd` example. See
@@ -23,6 +25,7 @@ void BOARD_InitDebugUartPins(void);
 void BOARD_InitCameraPins(void);
 void BOARD_InitFlexioPins(void);
 void BOARD_InitArduinoLcdPins(void);
+void BOARD_InitSdCardPins(void);
 
 #if defined(__cplusplus)
 }

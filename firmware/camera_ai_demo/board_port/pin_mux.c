@@ -1,10 +1,11 @@
 /*
  * pin_mux.c - Camera_AI_Test1 (FRDM-MCXN947)
  *
- * See pin_mux.h and ../../../README.md. Four groups of pins are configured
+ * See pin_mux.h and ../../../README.md. Five groups of pins are configured
  * here: debug UART, OV7670 camera (J9, copied from NXP's
  * smartdma_camera_flexio_mculcd example), J8 FlexIO/LCD header (abandoned,
- * kept for reference), and Arduino header LCD (current default).
+ * kept for reference), Arduino header LCD (current default), and the TFT
+ * shield's onboard microSD slot (Arduino D10..D13, hardware LPSPI1).
  */
 
 #include "fsl_common.h"
@@ -241,4 +242,52 @@ void BOARD_InitArduinoLcdPins(void)
     /* BLK (Arduino A5) - see app.h; safe default even if unconnected. */
     PORT_SetPinMux(PORT0, DEMO_LCD_BLK_PIN, kPORT_MuxAlt0);
     GPIO_PinInit(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, &outputConfig);
+}
+
+/* ---------------------------------------------------------------------- */
+/* 5. TFT shield's onboard microSD slot - Arduino D10..D13, LPSPI1         */
+/* ---------------------------------------------------------------------- */
+
+/*
+ * Per NXP's UM12018 (FRDM-MCXN947 board user manual) Arduino header pin
+ * table, D10..D13 are wired to LP_FLEXCOMM1 configured for SPI (mux Alt2),
+ * not plain GPIO - a real hardware SPI peripheral (LPSPI1), not a
+ * bit-banged bus like the LCD:
+ *   D10 = P0_27 = FC1_P3 = SPI PCS0 (chip select)  -> shield's SD_SS
+ *   D11 = P0_24 = FC1_P0 = SPI SDO (MCU out)        -> shield's SD_DI
+ *   D12 = P0_26 = FC1_P2 = SPI SDI (MCU in)         -> shield's SD_DO
+ *   D13 = P0_25 = FC1_P1 = SPI SCK                  -> shield's SD_CK
+ * All four are muxed as hardware LPSPI1 here (including PCS0/CS) rather
+ * than bit-banged GPIO like the LCD's RS/CS/RST - SDSPI_Init() (see
+ * source/storage/sd_spi_disk.c) needs to flip the PCS active-polarity at
+ * runtime (LPSPI_SetAllPcsPolarity()) to emit the SD card's required
+ * power-up dummy clocks with CS deasserted, which only works cleanly
+ * through the peripheral's own CS logic, not a plain GPIO toggle.
+ */
+void BOARD_InitSdCardPins(void)
+{
+    CLOCK_EnableClock(kCLOCK_Port0);
+
+    PORT_SetPinMux(PORT0, 24U, kPORT_MuxAlt2); /* P0_24 = FC1_P0 = LPSPI1 SDO (D11/SD_DI) */
+    PORT_SetPinMux(PORT0, 25U, kPORT_MuxAlt2); /* P0_25 = FC1_P1 = LPSPI1 SCK (D13/SD_CK) */
+    PORT_SetPinMux(PORT0, 27U, kPORT_MuxAlt2); /* P0_27 = FC1_P3 = LPSPI1 PCS0 (D10/SD_SS) */
+
+    /* P0_26 = FC1_P2 = LPSPI1 SDI (D12/SD_DO) - REQUIRED pull-up, not
+     * optional. CONFIRMED on real hardware (2026-08-25, see WORKLOG.md):
+     * without this, the MCU reads a constant 0x00 on this line regardless
+     * of what's happening on the bus - never the SD-over-SPI idle-high
+     * 0xFF - meaning SDSPI_Init() always times out
+     * (source/storage/sd_spi_disk.c). The TFT shield's SD slot apparently
+     * has no pull-up of its own on DO (common on cheap shields, which
+     * often assume the host MCU provides one) - this chip's own weak
+     * internal pull-up is enough to fix it. Adding this one line made
+     * `Snapshot: SD card ready.` appear on the very next boot, so this
+     * really is the fix, not just a contributing factor. */
+    const port_pin_config_t sdiPullUpConfig = {
+        .pullSelect   = kPORT_PullUp,
+        .mux          = kPORT_MuxAlt2,
+        .inputBuffer  = kPORT_InputBufferEnable,
+        .lockRegister = kPORT_UnlockRegister,
+    };
+    PORT_SetPinConfig(PORT0, 26U, &sdiPullUpConfig);
 }

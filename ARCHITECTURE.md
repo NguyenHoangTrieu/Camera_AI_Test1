@@ -9,6 +9,7 @@ see [WORKLOG.md](WORKLOG.md).
 ```
 [OV7670 camera] --DVP(PCLK/HREF/VSYNC)--> [SmartDMA coprocessor] --frame buffer-->
   --> [AI inference: CPU/CMSIS-NN or Neutron NPU] --> [LCD status text, bit-bang GPIO]
+                                                    \-> [SD snapshot (LPSPI1), only on face detection]
 ```
 
 Camera capture and AI inference run **sequentially, not in parallel** (see
@@ -88,11 +89,54 @@ model's convolution-heavy layers without CPU involvement.
 
 ### Display — `source/display/lcd_bitbang.c` (default) / `lcd_flexio_mculcd.c` (abandoned)
 
-- **Responsibility:** draw a 1-line text status (`FACE: 1`/`FACE: 0`) via
-  GPIO bit-bang 8080 bus on the Arduino header.
+- **Responsibility:** draw fixed text status lines (`FACE: 1`/`0`,
+  `CAPTURE: 1`/`0`) via GPIO bit-bang 8080 bus on the Arduino header.
 - **Key APIs:** `LCD_Init()`, `LCD_InitPanel()` (generic MIPI-DCS init
   sequence, works across ILI9481/ILI9486/HX8357/ST7796-family panels),
   `DEMO_DrawStatusLine()` in `main.c`.
+
+### SD card snapshot — `source/storage/sd_spi_disk.c` + `snapshot.c`
+
+- **Responsibility:** on face detection, draw a box into the camera frame
+  buffer (`bbox_overlay.c`, shared with the abandoned live-image LCD path)
+  and save it as a BMP to the microSD card on the TFT shield (Arduino
+  D10..D13), rate-limited to 1 capture/sec via the DWT cycle counter.
+- **Why hardware LPSPI1, not bit-banged like the LCD:** unlike the LCD's
+  Arduino pins, D10..D13 on this board are wired to `LP_FLEXCOMM1`'s SPI
+  function (mux Alt2), not plain GPIO (NXP UM12018 pin tables) — a real
+  SPI peripheral was available, so there was no reason to bit-bang it.
+- **Why the SDK's own SD-over-SPI FatFs glue isn't used:**
+  `middleware/fatfs/source/fsl_sdspi_disk/` is hardcoded to the DSPI
+  peripheral (`fsl_dspi.h`), which doesn't exist on the MCXN947 (LPSPI-
+  family chip) — `#include`ing it at all triggers a `#error` from inside
+  `fsl_sdspi_disk.h` itself. `sd_spi_disk.c` reimplements the same 5
+  `diskio.h` functions (`disk_initialize/status/read/write/ioctl`) against
+  `fsl_sdspi.h` (the SDK's actual protocol layer, chip-agnostic) with an
+  `sdspi_host_t` driving `LPSPI1` directly instead.
+- **Why FatFs core (`ff.c`) is pulled directly in `CMakeLists.txt`
+  instead of via `CONFIG_MCUX_COMPONENT_middleware.fatfs`:** that Kconfig
+  component always bundles `middleware/fatfs/source/diskio.c` alongside
+  `ff.c`, which would collide at link time with `sd_spi_disk.c`'s own
+  `disk_*` functions. Same reasoning for pulling `fsl_sdspi.c` directly
+  instead of via `CONFIG_MCUX_COMPONENT_middleware.sdmmc.sdspi` - that
+  option also auto-selects `middleware.sdmmc.common`, which doesn't even
+  compile without a host-controller (SDHC/USDHC) component selected
+  (`fsl_sdmmc_common.h` unconditionally `#include`s `fsl_sdmmc_host.h`) -
+  unnecessary anyway, since `fsl_sdspi.c` never calls into
+  `fsl_sdmmc_common.c`.
+- **RAM:** `ffconf.h` is hand-written (not Kconfig-generated) with
+  `FF_FS_TINY=1` (shares one 512B sector buffer instead of giving every
+  open `FIL` its own) and `FF_USE_LFN=0` (fixed 8.3 filenames,
+  `FACEnnnn.BMP`) - `m_data` was already >90% used before this feature
+  (see README.md), so every static byte here was deliberately fought for.
+  The snapshot BMP itself needs **zero** extra frame-sized RAM: it's
+  written straight out of the existing camera frame buffer with one
+  `f_write()` call (top-down BMP row order matches the buffer's own
+  layout; RGB565 needs no pixel-format conversion for a 16bpp BMP).
+- **Confirmed on real hardware** (2026-08-25, after fixing 3 bugs found by
+  live SWD debugging — see §5) — SD card mounts successfully
+  (`Snapshot: SD card ready.`). Not yet separately confirmed: an actual
+  face-triggered capture — see README.md's Known Limitations.
 
 ## 3. Key Design Decisions
 
@@ -100,7 +144,7 @@ model's convolution-heavy layers without CPU involvement.
 |---|---|---|
 | Camera capture and AI inference run sequentially (`CAMERA_CAPTURE_Deinit()` before inference, `_Reinit()` after) | Run in parallel, both using `m_sramx` | Both need the same 96KB `m_sramx` RAM bank at the same time — parallel use silently corrupts SmartDMA's working state (camera stops firing frame-ready interrupts, no error logged). Sequential is slightly slower but inference already dominated total pipeline time, so no real throughput cost. |
 | CPU-path tensor arena split across `m_sramx` (primary) + `m_data` (overflow) | Single pool in `m_data` only | Model doesn't fit in `m_data` alone; `m_sramx` looks unused in the linker map (SmartDMA firmware is loaded into it at runtime via a function call, not the static linker) but is only safe to reuse because capture is fully stopped first — see row above. |
-| LCD shows text status only, not live image + bounding boxes | Live image + box overlay (the original design) | Bit-bang GPIO bus is too slow to push a full frame plus AI overlay per inference cycle at acceptable rate; text status is enough for the drowsiness/face-presence use case. `bbox_overlay.c/h` kept in tree, unused, if revisited. |
+| LCD shows text status only, not live image + bounding boxes | Live image + box overlay (the original design) | Bit-bang GPIO bus is too slow to push a full frame plus AI overlay per inference cycle at acceptable rate; text status is enough for the drowsiness/face-presence use case. `bbox_overlay.c/h` is reused by the SD snapshot feature (see below) - just never drawn to the LCD itself. |
 | TFT driven via Arduino-header bit-bang, not J8 FlexIO | J8 FlexIO (NXP's hardware-accelerated path) | FlexIO wiring/init confirmed correct (a bit-bang diagnostic on the same J8 pins worked), but the FlexIO hardware-bus path itself produced black/white noise pixel data — unresolved bus-speed/signal-integrity issue. Bit-bang is slower but correct. |
 | No USB video streaming | UVC webcam streaming, or a Mid/Overdrive DCDC time-multiplex workaround | Real hardware constraint, not fixable in software — see §4. A working time-multiplex prototype existed but added complexity not justified since the product only needs the LCD status line. |
 | core1 never boots; its reserved RAM region is left untouched | Reuse core1's reserved RAM bank for the tensor arena, same reasoning as the `m_sramx` reuse above | Different failure mode from `m_sramx` — see §4. Tried once, wedged the board (silent hang on the very first `.bss` zero-init access), reverted. |
@@ -207,6 +251,154 @@ model's convolution-heavy layers without CPU involvement.
   parts, if pyOCD's CMSIS-Pack connect flow faults on `WAIT ACK`/`FAULT ACK`
   inside a chip-specific debug sequence (not a plain register read), reach
   for `spsdk`/`nxpdebugmbox` rather than varying pyOCD-level knobs.
+
+### SD card init hung the whole boot, then never worked at all - three separate bugs, all found and fixed by live SWD register inspection on real hardware
+
+**Symptom:** boot hung completely - confirmed on real hardware
+(2026-08-25) - no serial output past `LCD: bit-bang GPIO on the Arduino
+header`, survived repeated resets (deterministic: same code path, same
+result, every time). CONFIRMED FIXED as of this entry - see the end of
+this section for the working log output.
+
+**Bug 1 - `LPSPI_MasterTransferBlocking()` has literally no timeout unless
+`SPI_RETRY_TIMES` is defined:**
+`drivers/lpflexcomm/lpspi/fsl_lpspi.c` polls TX/RX FIFO status flags in
+loops shaped like:
+```c
+#if SPI_RETRY_TIMES
+    waitTimes = SPI_RETRY_TIMES;
+    while ((...) && (--waitTimes != 0U))
+#else
+    while (...)
+#endif
+    { }
+```
+repeated ~19 times through that file. Whether this ever times out depends
+entirely on the `SPI_RETRY_TIMES` **preprocessor macro** being defined
+with a nonzero value by *someone* - it is not a runtime parameter. The
+obvious place to set it, `CONFIG_SPI_RETRY_TIMES`, is a real Kconfig
+option - but it's declared inside `drivers/lpspi/Kconfig`, gated under
+the plain `driver.lpspi` component, which is for MCX chips where LPSPI is
+its own standalone IP block. This chip's LPSPI1 lives inside a
+`LP_FLEXCOMM` interface instead, gated by the separate
+`driver.lpflexcomm_lpspi` component (see §2's SD card snapshot entry for
+why that's the right component here) - and `drivers/lpflexcomm/lpspi/
+Kconfig` has no `SPI_RETRY_TIMES` option at all. With this board's
+*correct* Kconfig component enabled, the macro is simply never defined
+anywhere, `#if SPI_RETRY_TIMES` evaluates false (undefined == 0), and
+every one of those ~19 loops compiled to an unconditional `while (...) {}`
+- a real infinite loop if the condition it's waiting on never becomes
+true. **Fix:** define it directly in `CMakeLists.txt`, bypassing Kconfig
+(same pattern as this project's other Kconfig-gap workarounds):
+```cmake
+mcux_add_macro(CC "-DSPI_RETRY_TIMES=100000")
+```
+
+**Bug 2 - fixing bug 1 alone converted "infinite hang" into "hang so long
+it's indistinguishable from infinite in practice":** after bug 1's fix,
+the board *still* didn't visibly progress past SD init after several
+minutes. Diagnosed by halting the core over SWD mid-hang
+(`pyocd commander -c halt -c reg`) and reading it repeatedly - the PC
+*was* moving (inside `LPSPI_CombineWriteData`/`LPSPI_MasterTransferBlocking`,
+not frozen at one address), meaning the CPU was doing real, bounded work,
+just an enormous amount of it. Reading LPSPI1's own registers directly
+over SWD (`CR`@0x40093010, `SR`@0x40093014, `FSR`@0x4009305C,
+`RDR`@0x40093074 - offsets from `devices/MCX/MCXN/periph/PERI_LPSPI.h`)
+confirmed the peripheral itself was configured and completing real
+transfers correctly (`CR.MEN=1`, transfers finishing, `TCR` frame size
+correct) - **but every response byte read back as `RDR=0x00`, never the
+`0xFF` idle-high value SD-over-SPI expects.** `middleware/sdmmc/sdspi/
+fsl_sdspi.c`'s own retry constant (`SDSPI_TRANSFER_RETRY_TIMES`, hardcoded
+`20000`, not `#ifndef`-guarded so not overridable via `-D`) is nested up
+to 2-3 levels deep in `SDSPI_Init()`'s call graph (e.g.
+`SDSPI_ApplicationSendOperationCondition()`'s outer poll calls
+`SDSPI_SendCommand()` which itself calls `SDSPI_WaitReady()`, each with
+its own 20000-retry budget) - when every single response byte is wrong,
+*every* nested wait maxes out its own budget, multiplying instead of
+adding: 20000 × 20000 in the worst case, at ~20us/byte (SD init's
+mandatory 400kHz clock) - minutes to hours, not the few seconds any of
+the individual bounded loops implies on its own.
+
+**Fix** (`source/storage/sd_spi_disk.c`): rather than trying to patch
+`fsl_sdspi.c`'s own retry constants (hardcoded, and this project avoids
+editing vendored SDK files directly), `SDCARD_SPI_Exchange()` - the
+`sdspi_host_t.exchange` callback, which `fsl_sdspi.c` calls for *every*
+single SPI transaction and immediately propagates a failure from, no
+retry - now tracks its own short (2 second) wall-clock deadline via the
+DWT cycle counter, armed once per `SDSPI_Init()` attempt in
+`SDCARD_SPI_Init()`. Once the deadline passes, every subsequent
+`exchange()` call returns failure immediately without touching hardware,
+which unwinds every one of `fsl_sdspi.c`'s nested retry loops in one shot
+regardless of how large their own internal budgets are. This is what
+actually bounds total `SNAPSHOT_Init()` time to ~2 seconds, not bug 1's
+fix alone.
+
+**After bugs 1+2**, boot no longer hung, but the card still never
+communicated - `RDR` (LPSPI1's received-byte register) read a constant
+`0x00` on every single poll, never the SD-over-SPI idle-high `0xFF`,
+so `SDSPI_Init()` correctly (per the bug 2 fix) failed fast every time:
+```
+Snapshot: initializing SD card (LPSPI1, D10..D13)...
+Snapshot: SD card init timed out after 2000ms (no valid response) - giving up.
+Snapshot: no usable SD card on the shield's slot (D10..D13) - snapshots disabled.
+```
+Ruled out first: the card itself (mounted cleanly as FAT32 in this
+laptop's own SD reader) and basic seating (card confirmed in the
+shield's slot, shield confirmed fully seated in the Arduino header).
+
+**Bug 3 - the TFT shield's SD slot has no pull-up on the DO (MISO) line,
+and `BOARD_InitSdCardPins()` didn't add one either:** cheap SD shields
+commonly omit this, assuming the host board provides it - this project's
+pin setup was copied from the SDK's own LPSPI1 b2b loopback example,
+which never needs one (it talks to another on-chip LPSPI instance wired
+directly on the same board, not through a connector to 3rd-party
+hardware). With nothing pulling DO toward a defined level when the card
+isn't actively driving it, the input floated and happened to settle on a
+stable `0x00` - electrically indistinguishable from a genuine short
+purely from software.
+
+**Diagnosis:** rather than guessing, tested directly - added this chip's
+own weak internal pull-up (`kPORT_PullUp`) to just the SDI/DO pin
+(`board_port/pin_mux.c`) as a live experiment: a floating line should
+read differently once pulled toward a level; a truly shorted/driven-low
+line wouldn't budge, since a weak internal pull can't override an active
+driver. Rebuilt, reflashed - the very next boot:
+```
+Snapshot: initializing SD card (LPSPI1, D10..D13)...
+Snapshot: SD card ready.
+AI_MODEL_RunInference: total classifier time = 3879us (3ms)
+Camera: frame #16 ready, 792 samples, pixel range 0x2965..0xD65B, avg=0x6426
+```
+Confirmed floating on the first try - the pull-up is now a permanent part
+of `BOARD_InitSdCardPins()`, not a diagnostic-only change; it's genuinely
+required for this shield on this board.
+
+**Takeaways:**
+- When adding a new peripheral driver from an NXP example, check whether
+  that example's Kconfig component is the same one your actual chip/board
+  needs - components with near-identical names (`driver.lpspi` vs.
+  `driver.lpflexcomm_lpspi` here) can gate genuinely different Kconfig
+  option sets, and a *silently-undefined* safety macro is a much worse
+  failure mode than a build error would have been.
+- A chain of individually-bounded retry loops is not itself bounded - if
+  loop A (budget *m*) calls loop B (budget *n*) on every one of its own
+  iterations, the real worst case is *m*×*n*, not *m*+*n* or
+  max(*m*,*n*). Don't assume a "shouldn't take long" component's own
+  internal timeout is a usable upper bound for code that calls it in a
+  retry loop of your own.
+- Live SWD register inspection (`pyocd commander -c halt -c reg -c
+  "read32 <addr>" -c go`) settled in minutes what static code reading
+  alone couldn't - "is the PC moving" (real work vs. frozen) and "what's
+  actually in the peripheral's data register" (protocol-level vs.
+  electrical-level problem) are both directly observable without needing
+  the target to cooperate (print, breakpoint, etc), which matters exactly
+  when the target *is* the thing that's stuck.
+- "MCU reads garbage from an SPI slave" has (at least) two electrically
+  distinct causes that look identical in software - a genuine short/wrong
+  signal, or a legitimately floating/undriven line with nowhere for the
+  logic level to be pulled toward. Toggling the MCU's own weak internal
+  pull-up and re-testing is a cheap, fast, non-destructive way to tell
+  them apart on real hardware before reaching for a multimeter.
 
 ## 6. References
 
