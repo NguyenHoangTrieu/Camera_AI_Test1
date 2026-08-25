@@ -1,13 +1,19 @@
 /*
  * model_runner.cpp - Edge Impulse integration.
  *
- * Wraps the exported "Test_Drowsy_NXP" impulse (FOMO, 64x64 input,
- * closed_eye/open_eye/yawning) behind the plain-C API in model_runner.h so
- * main.c doesn't need to touch the Edge Impulse SDK directly.
+ * Wraps the exported "Face_Detection_NXP" impulse (FOMO, 96x96 input,
+ * single class `face`) behind the plain-C API in model_runner.h so
+ * main.c doesn't need to touch the Edge Impulse SDK directly. Every
+ * dimension/label below comes from EI_CLASSIFIER_* macros in
+ * edge_impulse/model-parameters/model_metadata.h, generated from
+ * whichever impulse was last exported into source/ai/edge_impulse/ - this
+ * file itself is model-agnostic and needed no changes when the model
+ * changed (was the 3-class "Test_Drowsy_NXP" FOMO, 64x64 input).
  *
  * signal.total_length MUST be the MODEL's input pixel count
- * (EI_CLASSIFIER_INPUT_WIDTH*HEIGHT, 4096) - NOT the camera's raw frame
- * size (320x240=76800, what an earlier version of this file wrongly used).
+ * (EI_CLASSIFIER_INPUT_WIDTH*HEIGHT, 9216 for this model) - NOT the
+ * camera's raw frame size (320x240=76800, what an earlier version of this
+ * file wrongly used).
  * extract_image_features()/_quantized() (edge-impulse-sdk/classifier/
  * ei_run_dsp.h) do NOT resize - they read exactly signal->total_length
  * elements via get_data() and write that many pixels straight into
@@ -100,7 +106,7 @@ static void AI_MODEL_InitTiming(void)
 extern "C" void AI_MODEL_Init(void)
 {
     AI_MODEL_InitTiming();
-    PRINTF("AI_MODEL_Init: Edge Impulse FOMO ready (%dx%d input, %d classes)\r\n",
+    PRINTF("AI_MODEL_Init: Edge Impulse face-detection FOMO ready (%dx%d input, %d class(es))\r\n",
            EI_CLASSIFIER_INPUT_WIDTH, EI_CLASSIFIER_INPUT_HEIGHT, EI_CLASSIFIER_LABEL_COUNT);
 }
 

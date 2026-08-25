@@ -9,7 +9,309 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
-## CURRENT STATUS: Edge Impulse AI integration WORKING END-TO-END on real hardware (2026-08-24) - both a CPU+CMSIS-NN path (~1.27s/inference) and a Neutron NPU path (~3.3ms/inference, ~370-390x faster, `AI_MODEL_USE_NPU` CMake option) confirmed running repeatedly without faults, both timed via the same DWT cycle-counter print for direct comparison (`ei_result.timing` is a dead stub on this SDK build). LCD status-color display (red/green/blue per detection state) was already wired up and runs every frame; had a real bug (only painted one row - see "Bug #4"), fixed but not yet visually re-confirmed on the physical panel. See "Bug #2"/"Bug #3" below for what was actually wrong with the original HardFault (stack overflow, misdiagnosed as alignment last session; then a `m_sramx`/SmartDMA memory collision), "NPU (Neutron) plan" for the full NPU integration story (Phases 1-6, all done), and "Next steps" sections throughout for what's left (further detection-quality validation on both paths, optional bbox display, minor NPU arena size tuning).
+## CURRENT STATUS: face-only FOMO model wired into firmware and confirmed booting/running stably on real hardware, but inference fails - the model's tensor arena (185KB, one contiguous allocation) does not fit in this chip's available safe RAM. Waiting on a smaller model (alpha=0.1 retrain) from the user (2026-08-25)
+
+**Board is currently flashed with a SAFE, STABLE build** (CPU/CMSIS-NN path, `AI_MODEL_USE_NPU` now defaults OFF - see below for why) - boots cleanly, camera runs continuously (frame count climbing normally), no crashes. **AI inference itself fails every frame** with `EI_SRAMX: alloc of 185053 bytes failed` / `Failed to allocate TFLite arena` - this is expected given the RAM shortfall explained below, not a bug to chase. This is the state to leave the board in / pick this file up from.
+
+### Incident: the `m_data_ext.ld` "reclaim core1's RAM" trick from earlier today was WRONG and briefly made the board undebuggable - REVERTED
+
+Earlier today (see the "Firmware integration" entry immediately below this one for the original context), `board_port/m_data_ext.ld` widened `m_data` by reclaiming the 104KB the SDK's board linker script reserves for this chip's second Cortex-M33 core (core1, never booted in this single-core project) - reasoning: address-contiguous, nothing in this tree disables/powers down SRAM banks, so it looked safe by the same logic that justified reusing `m_sramx` for the AI arena earlier (see "Bug #3" further down). **This reasoning was wrong in practice** - see [KNOWLEDGE.md](KNOWLEDGE.md) section 3 ("Core1's reserved RAM region cannot be reused either") for the full technical explanation (short version: multicore SoCs commonly power-gate SRAM per-core-domain, and a core that's never released from reset can leave its associated RAM bank unpowered - "nothing disables it" proved nothing, since nothing ever *enables* it either; this is a fundamentally different, less recoverable failure mode than the SmartDMA/`m_sramx` case, which was a software-timing problem). The build succeeded and pyOCD reported a normal flash+reset, but the board then:
+
+- Produced **zero UART output** ever again (confirmed by capturing the serial port for 20+ seconds across multiple resets - not even the very first boot-banner `PRINTF`, which happens before camera/AI init) - consistent with a hang during `.bss` zero-initialization the instant startup code touched the "reclaimed" region, before `main()` even starts.
+- Became **undebuggable over SWD** - `pyocd flash`/`reset`/`erase` all failed at the `DebugPortStart` debug sequence with `SWD/JTAG communication failure (WAIT ACK)` or `(FAULT ACK)`, consistently, across power cycles, cable/port swaps, and ISP-mode (SW3+SW1) attempts. `DP IDR` always read fine (physical SWD link was never the problem), but the chip-specific power-up handshake kept failing.
+
+**Recovery procedure that worked** (kept here as the incident record; see [KNOWLEDGE.md](KNOWLEDGE.md) section 4, "Flashing/debugging this board reliably", for the same recipe written up as general reusable how-to, not because `m_data_ext.ld` should ever be re-added):
+1. Installed NXP's official `spsdk` (`pip install spsdk`), which provides `nxpdebugmbox` - a CLI that speaks the MCX/LPC55-family **Debug Mailbox** protocol directly (`-i mcu-link` interface), bypassing pyOCD's generic CMSIS-Pack-based `DebugPortStart` sequence entirely (which has no retry logic for `WAIT ACK`/`FAULT ACK`, unlike spsdk's `debug_probe.py`, which has a built-in "recovery level 1" retry that pyOCD's mcxn947 pack doesn't).
+2. `nxpdebugmbox -i mcu-link cmd -f mcxn947 erase` - **mass-erased the chip via the Debug Mailbox, succeeded on the first try** despite pyOCD being completely unable to connect. This is the key recovery step.
+3. After erase, pyOCD's *generic* `mcxn947` target still couldn't fully connect (`Invalid AP address (#0)` in ISP mode; `ResetCatchClear`/`ResetSystem` debug-sequence `FAULT ACK` on `cm33_core1` in normal boot - **this MCX N94x CMSIS pack's stock debug sequences for core1 don't work with this pyOCD/probe combination at all, unrelated to the m_data incident** - flag this as a standing pyOCD/mcxn947-pack quirk for future flashing, not just erase-recovery). Worked around by:
+   - `nxpdebugmbox -i mcu-link cmd -f mcxn947 start-debug-session` right before each `pyocd flash`/`reset` call (re-unlocks AHB access - doesn't persist across a fresh pyOCD connection, so must be re-run every time).
+   - `pyocd flash -t mcxn947 -O "pack.debug_sequences.disabled_sequences=ResetCatchSet:cm33_core1,ResetCatchClear:cm33_core1,ResetSystem:cm33_core0,ResetSystem:cm33_core1" <elf>` - disables the specific broken debug sequences (pyOCD option `pack.debug_sequences.disabled_sequences`, comma-separated `SequenceName:coreName`). Flash then succeeds normally (`Erased .../ programmed ...` lines appear).
+   - Disabling `ResetSystem` means pyOCD's own post-flash reset doesn't happen - reset the board manually afterward (`nxpdebugmbox -i mcu-link tool reset -f mcxn947 -h` for a hardware reset via the probe, or just press the board's SW1 / power-cycle) to actually boot the newly-flashed image.
+4. Serial output confirmed real once flashed with a build that fits in `m_data` (see below) - this whole recovery chain is verified working, not just theorized.
+
+**Fix applied**: `board_port/m_data_ext.ld` deleted; the `mcux_add_armgcc_linker_script()` call for it removed from `CMakeLists.txt` (left a warning comment there instead - see the file). `AI_MODEL_USE_NPU` CMake option **default changed from ON to OFF** (see "RAM shortfall" below for why NPU doesn't fit either, so ON was no longer a safe default).
+
+### The real, still-unsolved problem: this model's tensor arena doesn't fit in m_data at all, on either backend
+
+Once back on safe ground, the CPU-path build boots and runs but fails every inference:
+```
+EI_SRAMX: alloc of 185053 bytes failed (pool=32/96768, overflow=0/98304)
+Failed to allocate TFLite arena (zu bytes)
+```
+Root cause, worked out precisely from the actual link map + this runtime log: the CPU path's tensor arena is **one single, contiguous `ei_calloc()` call** (185,036 bytes, `EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE` from `model_metadata.h`) - `ei_sramx_alloc.c`'s two-tier allocator (`m_sramx` primary pool, `m_data` overflow pool) can only satisfy a *single* allocation that fits **entirely within one tier**, it cannot span/combine both tiers for one request (they're physically non-contiguous memory banks - `m_sramx` at `0x04000000`, `m_data` at `0x20000000` - a single C pointer can't span them). Neither tier is big enough alone: `m_sramx` primary is a hardware-fixed ~95KB, and `m_data`'s overflow pool - however big it's made - still has to coexist with the 320x240 camera frame buffer (153,600 bytes, always resident) inside the *stock, safe* `m_data` region (312KB total). `185,036 + 153,600 = 338,636` already exceeds `m_data`'s stock 319,488 bytes by ~19KB before counting stack/other small buffers - there is **no tuning of pool sizes that fixes this**, the deficit is structural. The NPU path has the same shape of problem (its own arena needs `neutron_converter`'s reported minimum of 166,464 bytes as one static buffer, and stock `m_data` only has ~141,752 bytes free for it after the frame buffer) - a smaller shortfall (~25-45KB) but the same root cause.
+
+**This is why `AI_MODEL_USE_NPU` now defaults OFF and why CPU-path inference still fails** - both backends are short on contiguous RAM for this specific model's arena size (96x96 input, FOMO MobileNetV2 **alpha=0.35** - "the largest FOMO variant Edge Impulse offers", per this file's own "Face-only detection model" section below).
+
+**Decided with the user (2026-08-25): retrain the model at alpha=0.1** (the smaller FOMO backbone variant, same Studio project 1095726) instead of trying further memory tricks - a real, verified-safe additional RAM region was not found in this session (the one thing tried, reclaiming core1's RAM, is confirmed unsafe - see above), and shrinking the camera capture resolution to free `m_data` was considered but not attempted (bigger, riskier change to `camera_capture.c`/SmartDMA config, deferred in favor of the model-side fix first). User is retraining via the Studio UI directly (Impulse design → Object Detection block → MobileNetV2 0.35 → 0.1 → Generate features → Train), not via API this session.
+
+### Next steps for a fresh session
+
+1. **Once the user has a new alpha=0.1 `.tflite`/C++ library export**: check `EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE` in the new `model-parameters/model_metadata.h` first, before touching firmware - confirm it's actually small enough (`camera frame buffer (153,600) + new arena <= ~295KB` to leave stack/misc headroom, i.e. new arena should be well under ~140KB) before re-integrating, same mistake-avoidance as this entry.
+2. Re-run the same integration steps as the "Firmware integration" entry below (replace `source/ai/edge_impulse/`, reconvert for NPU via `neutron_converter` if pursuing that backend, rebuild both configs) - the swap process itself is proven to work, only the model's size was the problem.
+3. Consider re-enabling `AI_MODEL_USE_NPU` default (currently OFF) once its own arena is confirmed to fit - don't just flip it back without checking the arithmetic above first.
+4. Flashing this board in this environment needs the `nxpdebugmbox start-debug-session` + `pyocd -O pack.debug_sequences.disabled_sequences=...` recovery-mode dance documented above, **every time**, not just for erase-recovery - plain `./build.sh flash` alone consistently fails on this probe/pyOCD/pack combination for this chip (unrelated to the m_data incident, a standing quirk). Worth eventually fixing `build.sh` itself to always use this sequence rather than rediscovering it each session.
+
+## CURRENT STATUS (superseded by the entry above): face-only FOMO model (CPU+NPU) is now wired into firmware, replacing the old 3-class model entirely - build-verified only, NOT YET FLASHED/TESTED on real hardware (2026-08-25)
+
+The single-class **`face`** detector (Edge Impulse Studio project
+`Face_Detection_NXP`, ID 1095726 - see "Face-only detection model" below
+for the dataset/training story) has fully replaced the old 3-class
+(`closed_eye`/`open_eye`/`yawning`, `Test_Drowsy_NXP` project) FOMO model
+in this session:
+
+- **Old model files deleted**: `source/ai/edge_impulse/` (the old Studio
+  C++ library export) and `source/ai/neutron/tflite_learn_1094697_39_npu.*`
+  (the old NPU-converted model) are gone, replaced with the new model's
+  equivalents (`tflite_learn_1095726_3_npu.tflite`/`.h`).
+- **`model_runner.cpp`** (CPU/CMSIS-NN path) needed **no logic changes** -
+  it reads all dimensions/labels from `EI_CLASSIFIER_*` macros in the
+  freshly-exported `model_metadata.h`, so it's model-agnostic by design.
+  Only its comments were updated.
+- **`model_runner_npu.cpp`** (NPU path) was rewritten: input 64x64 ->
+  96x96, grid 8x8 -> 12x12, 3 classes -> 1 (`face`), and the op resolver
+  gained an `AddSlice()` (this model's NPU output comes back with its
+  channel dimension padded to 4 and needs slicing down to the real 2 -
+  background + face - the earlier model's channel count happened not to
+  need this). New NPU model produced via the same `neutron_converter
+  --target mcxn94x` flow as before (see "NPU (Neutron) plan" below for
+  the original walkthrough) - **31 of 33 operators offloaded** this time
+  (one more un-offloaded op than before: `Slice` + `Softmax`, vs. just
+  `Softmax`).
+- **`main.c`**: the 3-line eye-status readout (`OPEN EYE`/`YAWNING`/
+  `CLOSED EYE`) became a single `FACE: 1`/`FACE: 0` line.
+- **New, bigger memory footprint required real linker changes**: this
+  model's 96x96 input is much larger than the old 64x64 one, and its
+  NPU graph needs a much bigger internal scratch buffer
+  (`neutron_converter`'s own report: 166,464 bytes minimum, vs. the old
+  model's ~99.8KB estimate / 74,660 bytes actual usage). Both backends'
+  memory requirements now **overflow the SDK's stock `m_data` region
+  (312KB)** - confirmed by an actual failed build attempt
+  (`region m_data overflowed by 46664 bytes` with a 184KB NPU arena).
+  Fixed by widening `m_data` via a new linker fragment,
+  `board_port/m_data_ext.ld`, which reclaims the 104KB the SDK's board
+  linker script reserves for this chip's second Cortex-M33 core (core1) -
+  never booted in this single-core project, so genuinely idle RAM, same
+  category of fix as the `m_sramx` reuse below (see that file's own
+  header comment for the full reasoning, including why this is expected
+  to be safe: no code anywhere in this tree powers down/disables SRAM
+  banks at boot, and unlike `m_sramx` there's no active coprocessor that
+  could collide with this region). CPU-path's `m_data` overflow pool
+  (`main.c`'s `s_aiScratchPool`) was also bumped 16KB -> 96KB (this
+  model's ~185KB CPU arena needs far more overflow above the 96KB
+  `m_sramx` primary pool than the old model did), and is now only
+  declared for the CPU build (guarded by a new `DEMO_AI_MODEL_USE_NPU`
+  macro) so it doesn't waste `m_data` in the NPU build.
+- **Build-verified**: both `-DAI_MODEL_USE_NPU=ON` (default) and `=OFF`
+  build clean from scratch (`./build.sh rebuild` / `rebuild
+  -DAI_MODEL_USE_NPU=OFF`) - NPU build: `m_data` 85.95% used (366,152 /
+  425,984 bytes); CPU build: `m_data` 64.02% used (272,712 / 425,984
+  bytes). Neither was flashed - **no debug probe was attached in this
+  session**, so none of this has been confirmed on real hardware yet:
+  not `AllocateTensors()` actually succeeding at the NPU arena's chosen
+  size (184KB, above the converter's 166,464-byte minimum but with an
+  unverified safety margin), not the widened `m_data` region actually
+  being accessible/powered at that address, not detection accuracy, not
+  NPU timing (the 3.3ms/~370-390x NPU speedup number throughout this file
+  is from the *old* 3-class model - expected to carry over roughly, since
+  the integration pattern is identical, but not re-measured for this
+  model).
+- Old orphaned artifact also removed per this cleanup: an unused
+  `yolox_nano_custom.onnx` file that had been sitting at the project root,
+  not referenced by any code or doc anywhere in this tree.
+
+### Next steps for a fresh session
+
+1. **Flash and test on real hardware** - this is the main gap. Watch for:
+   `AI_MODEL_Init` printing "AllocateTensors() failed" (bump
+   `kTensorArenaSize` in `model_runner_npu.cpp` past 184KB if so - there's
+   headroom in the widened `m_data`, see the "Used Size" numbers above);
+   any fault/hang touching addresses at or past the old `m_data` boundary
+   (0x2004E000) - would indicate the `m_data_ext.ld` widening assumption
+   was wrong (see that file's comment for what to check first); and
+   whether `FACE: 1`/`FACE: 0` actually tracks a real face in front of the
+   camera.
+2. **Re-measure NPU vs. CPU timing** for this specific model (same DWT
+   "total classifier time" print both paths already have) - don't assume
+   the old model's ~370-390x number carries over exactly.
+3. Everything under "Face-only detection model" below about improving
+   detection quality (low-light performance specifically) still applies -
+   that's about the model/dataset, unaffected by this firmware
+   integration work.
+
+## Face-only detection model (lightweight replacement) - Studio-side DONE, firmware integration DONE (see top of file), not yet flashed (2026-08-25)
+
+**Goal (per user request):** replace the 3-class drowsy-eye FOMO model
+above with a lighter, single-class **face detector** (`face` bounding
+boxes only) - lower compute/RAM than the 3-class model, since it's a
+simpler task (1 class vs 3, coarser grid decision). This section covers the
+Edge Impulse Studio side (dataset + training), done via direct calls to the
+Edge Impulse HTTP API (project API keys the user pasted into chat each
+time, none saved to disk/repo - a fresh session needing further API access
+will need the user to provide a new key) - see the top of this file for the
+firmware integration that followed once the user downloaded this model.
+
+### New project, not reusing the existing one - and why
+
+Initially tried adding `face`-labeled data into the *existing* project
+(`Test_Camera_NXP` / `Test_Drowsy_NXP`, project ID `1094697`, the one used
+by the 3-class model above), since it's already `labelingMethod:
+object_detection`. **This doesn't work**: Edge Impulse has no way to scope
+an Impulse's training data to a label subset within one project - any
+Object Detection impulse trains on *every* bounding box across *all*
+images in the project's training/testing categories, so the new impulse
+kept showing `Classes: 4 (closed_eye, face, open_eye, yawning)` instead of
+just `face`. Disabling the old-label samples would fix this impulse but
+break the ability to retrain the *original* 3-class impulse later (same
+shared data pool) - so a **separate project was created instead**:
+`Face_Detection_NXP`, project ID **1095726**. Confirmed via API
+(`GET /v1/api/projects`) this is a distinct project owned by the same
+account; the two projects/models don't interact.
+
+### Dataset: WIDER FACE + DarkFace, filtered/uploaded via the ingestion API
+
+- **WIDER FACE** (`Bingsu/wider_face_yolo` mirror on Hugging Face, YOLO-format
+  labels, ~3.3GB zip) - filtered to images with 1-8 faces where
+  `min(width_norm, height_norm) >= 0.06` (drops faces too small to matter at
+  96x96 input), randomly sampled **1500 train + 300 valid**->test.
+- **DarkFace** (`hieupth/dark_face_384` on Hugging Face, 384x384 resized,
+  COCO-format labels) - low-light/nighttime faces, for robustness closer to
+  the OV7670's real low-light image quality. Filtered similarly
+  (`min_norm_dim >= 0.045`, <=10 faces/image), sampled **250 train + 50
+  valid**->test.
+- **License note**: both source datasets are CC-BY-NC-ND / research-only -
+  fine for this prototype/research use, **not cleared for a commercial
+  product** without sourcing a differently-licensed or self-collected
+  dataset.
+- Final upload: **1750 training + 350 testing** samples, single label
+  `face`, pixel-space bounding boxes.
+- Local prep scripts (if picking this up again -
+  `/home/nguyenhoangtrieu/dataset_prep/`, outside the repo):
+  `prepare_and_upload.py` (filter + build `manifest/full_manifest.json`,
+  deterministic via `random.seed(42)`) and `upload.py` (ingestion API
+  upload). **Raw dataset files were deleted after upload** to save disk
+  (`wider_face/`, `dark_face/` dirs) - re-running `prepare_and_upload.py`
+  requires re-downloading both datasets first (see script for HF URLs).
+
+### Gotchas hit during upload (useful if scripting the EI API again)
+
+1. **Ingestion API multipart field name must be literally `data` for every
+   part** (both image files and the `bounding_boxes.labels` JSON part) -
+   using the filename as the form field name gives a `500 Unexpected field`
+   error with no other explanation.
+2. **`bounding_boxes.labels` coordinates are in pixels of the actual
+   uploaded image**, not normalized - `{"version":1,"type":"bounding-box-labels","boundingBoxes":{"<filename>":[{"label":"face","x":..,"y":..,"width":..,"height":..}]}}`,
+   matched to images in the *same* multipart request by filename.
+3. **Project `labelingMethod` must be explicitly `object_detection` before
+   uploading**, or bounding boxes are silently dropped (sample gets
+   `label: <filename>`, `boundingBoxes: []` instead) with no error from the
+   API - burned one test upload confirming this. Set via
+   `POST /v1/api/{projectId}` (JSON body) with
+   `{"labelingMethod":"object_detection"}` - a project API key with admin
+   role on that project can call this; the default ingestion-only key
+   returned earlier could not (`insufficient permissions... current role:
+   ingestion_deployment`). New projects created via the Studio UI without
+   picking an "Object Detection" template default to `single_label`.
+4. **Sandbox background-process quirk caused duplicate uploads twice** -
+   backgrounding a Python upload script (via shell `&`, `nohup`, or the
+   coding agent's own `run_in_background`) in this environment sometimes
+   silently kept running *in addition to* a later foreground re-run of the
+   same script, rather than actually being dead (empty log + no `ps` match
+   was misleading - it can still be alive and finish minutes later). This
+   caused **4x duplicate uploads** the first time (1094697, cleaned up by
+   deleting the extra project's worth of test data - see below) and **2x**
+   on testing-category uploads the second time (1095726, cleaned up too).
+   **Lesson: always verify actual `dataSummaryPerCategory` counts via
+   `GET /v1/api/{projectId}` after any backgrounded upload, and dedupe by
+   filename (keep lowest sample `id`) via `DELETE /v1/api/{projectId}/raw-data/{id}`
+   before trusting the numbers.** Also note: `DELETE` requires an admin-role
+   key, not the default ingestion-scoped project key.
+5. Also (unrelated to project 1095726, applies to the *old* project
+   1094697): that project's free-tier compute-time quota is fully used up
+   for the current period (resets ~2026-09-22) - training jobs there will
+   likely fail/queue until reset. `Face_Detection_NXP` (1095726) is a fresh
+   project with its own untouched compute quota.
+
+### Impulse config that's been settled on (project 1095726)
+
+- Image input: **96x96**, resize mode **Squash** (not the default "Fit
+  shortest axis" - that center-crops to square and was silently dropping
+  bounding boxes near the edges of wide WIDER-FACE images, seen as
+  `WARN: failed to process ...: No bounding boxes after resizing` during
+  "Generate features" - switching to Squash eliminated the warnings).
+- DSP block: **Image** (plain, no extra config).
+- Learning block: **Object Detection -> FOMO (Faster Objects, More Objects)
+  MobileNetV2 0.35** - the largest FOMO variant Edge Impulse offers (only
+  0.1 and 0.35 exist; the other listed options, MobileNetV2 SSD FPN-Lite
+  and YOLO-Pro, don't fit here - SSD FPN-Lite is fixed at 320x320 input and
+  explicitly can't be quantized properly, YOLO-Pro looked gated behind a
+  paid tier).
+- **Data augmentation: ON** - measurably helped (see results below).
+- **"Use learned optimizer" (VeLO): tried once, DO NOT USE** - crashed
+  training with `CUDA_ERROR_OUT_OF_MEMORY` on the free-tier Tesla T4 GPU
+  (VeLO needs much more GPU RAM than the default Adam optimizer). Left
+  unchecked in the working config.
+- **Epochs: 60** - the sweet spot found by trial. 100 epochs was tried
+  twice (with and without augmentation) and was *consistently worse* both
+  times (overfitting - training keeps improving past 60 epochs but
+  validation F1 drops), not just noise.
+
+### Training results so far (validation set, quantized int8)
+
+| Config | F1 | Recall (face) | Notes |
+|---|---|---|---|
+| 60 epochs, no augmentation | 71.1% | 73.3% | first working run |
+| 100 epochs, no augmentation | 70.3% | 67.8% | worse - overfit |
+| 60 epochs + augmentation | 72.4% | 76.1% | best so far |
+| 100 epochs + augmentation | 69.4% | 66.6% | still worse - confirms 60 is the sweet spot even with augmentation |
+| 60 epochs + augmentation (rerun) | 71.7% | 78.1% | confirms ~71-72% is a stable result, not a fluke; run-to-run variance of ~1% is expected (random init/augmentation/train-val split) |
+
+On-device performance estimate (EON Compiler, CPU path - **not** the real
+Neutron NPU numbers, see caveat below): ~132.9KB peak RAM, ~81.3KB flash,
+241ms inferencing. Chip has 512KB total SRAM, so plenty of headroom even at
+this CPU-path estimate. **Caveat**: like the 3-class model, the real
+deployment path bypasses Edge Impulse's own runtime and runs the converted
+model via raw TFLite Micro + Neutron NPU (see "NPU (Neutron) plan" below for
+how that was done last time) - actual NPU inference time/RAM will differ
+(almost certainly much faster/comparable-or-smaller RAM, per the 3-class
+model's ~370-390x speedup precedent) once actually converted and measured
+on hardware; the Studio numbers above are an upper-bound CPU estimate only.
+
+**Model testing (350-sample held-out test set, run separately from the
+training/validation split above):** F1 0.69, precision 0.63, recall 0.77 -
+consistent with the validation numbers (no big overfit gap between
+val/test). The Studio "Accuracy" metric on this same page showed a
+misleadingly low **41.71%** - that's whole-image exact-match (every face in
+an image must be detected correctly, or the whole image counts as wrong),
+not a per-object metric, and images average ~1.7 faces each - not a sign of
+a bad model, just a strict/different metric from F1. The Feature Explorer's
+"incorrect" (pink) points cluster noticeably in the same region as the
+DarkFace (low-light) samples identified during "Generate features" -
+**the model is visibly weaker on low-light images specifically** than on
+normally-lit WIDER FACE images - a real area for improvement, not yet
+addressed.
+
+### Next steps for a fresh session
+
+1. **Decide whether ~F1 0.71-0.72 is good enough to ship, or worth
+   improving first.** If improving: the clearest lever identified is
+   low-light performance specifically (DarkFace cluster underperforms) -
+   options include adding more DarkFace/low-light samples, or testing
+   WIDER-FACE-only training to isolate how much the low-light data is
+   actually hurting vs. helping overall F1 (hasn't been tried).
+2. ~~Deployment~~, ~~convert for Neutron NPU~~, ~~firmware integration~~ -
+   **all DONE**, see the top of this file. This model now fully
+   **replaces** the 3-class model (decided with the user: not a coexisting
+   build flag) - `source/ai/edge_impulse/` and
+   `source/ai/neutron/tflite_learn_1095726_3_npu.*` are the new model;
+   the old model's files were deleted.
+3. Once flashed: re-verify camera/LCD/NPU integration doesn't regress
+   anything documented as already-working below (Bug #2/#3/#4 fixes,
+   NPU Phases 1-6) - this is new model weights (bigger input/arena, one
+   extra NPU-resolver op) through an *already-proven* integration path,
+   so regression risk should be low, but **hasn't been confirmed on real
+   hardware yet** - no debug probe was available in the session that did
+   the integration (see the top of this file for exactly what's
+   build-verified vs. not).
 
 ## NPU (Neutron) plan - Phase 1 DONE: raw `.tflite` located, no Studio re-export needed
 

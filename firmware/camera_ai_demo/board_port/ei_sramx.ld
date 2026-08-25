@@ -5,11 +5,14 @@
  * m_sramx (0x04000000, 96KB) is declared in the SDK's own
  * MCXN947_cm33_core0_flash.ld MEMORY block but no SECTIONS entry ever
  * places anything there, so it sits completely unused. m_data (main SRAM)
- * is ~97% full already (camera + LCD framebuffers), leaving only a few KB
- * for the Edge Impulse tensor arena (which needs ~90KB) - so the arena's
- * backing pool is placed here instead, via the .ei_sramx section below
+ * has no room to spare for the Edge Impulse tensor arena's primary pool -
+ * so that pool is placed here instead, via the .ei_sramx section below
  * (see source/ai/ei_sramx_alloc.c for the pool + ei_malloc/ei_calloc/
- * ei_free overrides that back onto it).
+ * ei_free overrides that back onto it). The current model's arena
+ * (~185KB) is bigger than this 96KB bank alone, so the CPU-path build
+ * also needs a large m_data overflow pool on top - see main.c's
+ * s_aiScratchPool and board_port/m_data_ext.ld (which widens m_data to
+ * make room for that overflow pool, on both this and the NPU path).
  *
  * Loaded via a second -T on the link line (mcux_add_armgcc_linker_script()
  * in CMakeLists.txt, called after the SDK's own linker script include) -

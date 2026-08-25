@@ -36,10 +36,12 @@ project(camera_ai_demo LANGUAGES C CXX ASM
 
 include(${SdkRootDirPath}/CMakeLists.txt)
 
-# Edge Impulse tensor arena (~90KB, see source/ai/ei_sramx_alloc.c) doesn't
-# fit in m_data (already ~97% full from camera+LCD framebuffers) - this
-# fragment adds an output section placing it in m_sramx instead (declared
-# but otherwise unused by the SDK's own linker script). Additive only
+# Edge Impulse tensor arena (see source/ai/ei_sramx_alloc.c - primary pool
+# is m_sramx's full 96KB, current model's ~185KB arena needs a large
+# overflow on top, see main.c's s_aiScratchPool) doesn't fit in m_data
+# alongside the camera/LCD framebuffers - this fragment adds an output
+# section placing the primary pool in m_sramx instead (declared but
+# otherwise unused by the SDK's own linker script). Additive only
 # (INSERT AFTER) - does not replace/duplicate the SDK's board linker
 # script, so must come after include(${SdkRootDirPath}/CMakeLists.txt)
 # above, which is what actually selects the base -T script.
@@ -47,6 +49,20 @@ mcux_add_armgcc_linker_script(
     BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
     LINKER board_port/ei_sramx.ld
 )
+
+# board_port/m_data_ext.ld (widening m_data into core1's reserved RAM) was
+# tried here and REVERTED (2026-08-25) - confirmed BAD on real hardware,
+# not just "unconfirmed": flashed fine (pyOCD reported success) but the
+# board then produced zero UART output and became undebuggable (SWD
+# connect failures - DebugPortStart/ResetSystem faults - that needed a
+# full chip mass-erase via NXP's nxpdebugmbox Debug Mailbox tool to
+# recover from), consistent with a hang during .bss zero-init the moment
+# startup code touched that "reclaimed" region - it is NOT safely usable
+# plain SRAM on this silicon, despite looking that way from the linker
+# script/datasheet alone. Do not re-add without a much more solid basis
+# than "the address range looks contiguous and nothing disables it in
+# this SDK's boot code" - that reasoning was wrong once already. See
+# WORKLOG.md's top entry for the full incident.
 
 # Default stack (STACK_SIZE in the SDK's linker script) is only 2KB - fine
 # for plain GPIO/UART firmware, but TFLite Micro/CMSIS-NN's call chain goes
@@ -142,11 +158,30 @@ endif()
 # the identical model_runner.h API, so main.c doesn't change either way,
 # and both print the same DWT-based "total classifier time" line for a
 # direct on/off comparison).
-option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md" ON)
+# Default changed to OFF (2026-08-25): the current face-detection model's
+# NPU tensor arena needs >=166,464 bytes (neutron_converter's own minimum
+# estimate), but this chip's stock m_data only has ~141,752 bytes free for
+# it (camera frame buffer + everything else already accounts for the
+# rest) - it does NOT fit without unsafe tricks (see the now-reverted
+# board_port/m_data_ext.ld attempt above and WORKLOG.md's top entry for
+# what went wrong trying to work around this). CPU path fits comfortably
+# in stock m_data as-is. Re-enable NPU only once a real fix for the
+# arena-size/RAM-budget mismatch exists (e.g. a smaller model config, or
+# a confirmed-safe additional RAM region) - do NOT just flip this back to
+# ON without one.
+option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md. WARNING: does not currently fit in m_data for this model, see comment above" OFF)
 if(AI_MODEL_USE_NPU)
     set(AI_MODEL_RUNNER_SOURCE source/ai/model_runner_npu.cpp)
+    # main.c uses this to skip allocating the CPU-path's m_data overflow
+    # scratch pool (source/ai/ei_sramx_alloc.c is compiled unconditionally
+    # into both builds, but only model_runner.cpp's ei_run_classifier()
+    # call actually uses it) - that pool would otherwise sit there unused,
+    # competing with model_runner_npu.cpp's own (much larger, for this
+    # 96x96 model) static tensor arena for the same m_data budget.
+    mcux_add_macro(CC "-DDEMO_AI_MODEL_USE_NPU=1" CX "-DDEMO_AI_MODEL_USE_NPU=1")
 else()
     set(AI_MODEL_RUNNER_SOURCE source/ai/model_runner.cpp)
+    mcux_add_macro(CC "-DDEMO_AI_MODEL_USE_NPU=0" CX "-DDEMO_AI_MODEL_USE_NPU=0")
 endif()
 
 mcux_add_source(
@@ -174,8 +209,8 @@ mcux_add_source(
 )
 
 if(NOT AI_MODEL_USE_NPU)
-# Edge Impulse "C++ library" export (Test_Drowsy_NXP project, FOMO,
-# closed_eye/open_eye/yawning). NOT using the export's own CMakeLists.txt
+# Edge Impulse "C++ library" export (Face_Detection_NXP project, FOMO,
+# single class `face`). NOT using the export's own CMakeLists.txt
 # (add_subdirectory) - it hardcodes `if(NOT TARGET app) message(FATAL_ERROR
 # ...)`, but this SDK's west (non-find_package) build mode names its real
 # target ${MCUX_SDK_PROJECT_NAME} (e.g. camera_ai_demo_cm33_core0), not

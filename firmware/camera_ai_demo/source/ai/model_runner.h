@@ -3,9 +3,9 @@
  *
  * Small, framework-agnostic C API that main.c calls once per captured
  * frame. Backed by an Edge Impulse FOMO object-detection model
- * (source/ai/edge_impulse/ - "Test_Drowsy_NXP" project, closed_eye/
- * open_eye/yawning) - see model_runner.cpp for the run_classifier()
- * integration.
+ * (source/ai/edge_impulse/ - "Face_Detection_NXP" project, single class
+ * `face`) - see model_runner.cpp for the run_classifier() integration
+ * (or model_runner_npu.cpp for the Neutron NPU backend).
  */
 #ifndef _MODEL_RUNNER_H_
 #define _MODEL_RUNNER_H_
@@ -21,7 +21,7 @@ extern "C" {
 
 typedef struct
 {
-    const char *label; /* one of the model's class labels, e.g. "closed_eye" */
+    const char *label; /* one of the model's class labels, currently just "face" */
     uint16_t x, y;      /* top-left corner, in AI_MODEL_GetInputWidth/Height() space */
     uint16_t width, height;
     float score; /* 0..1 confidence */

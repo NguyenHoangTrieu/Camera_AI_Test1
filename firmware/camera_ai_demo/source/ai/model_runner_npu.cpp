@@ -12,39 +12,42 @@
  * one Edge Impulse vendors under source/ai/edge_impulse/edge-impulse-sdk/
  * - the two must not be mixed in the same translation unit).
  *
- * Model: neutron/tflite_learn_1094697_39_npu.h - the same FOMO model as
- * model_runner.cpp (Test_Drowsy_NXP, project ID 1094697), run through
- * `neutron_converter --target mcxn94x` (see WORKLOG.md "Phase 2"). 31 of
- * the original 32 ops got folded into one NEUTRON_GRAPH custom op; only
- * Softmax stays a regular op - the converter's own generated header
- * comment says exactly this op resolver is needed (AddSoftmax() +
- * AddCustom(NEUTRON_GRAPH)), reproduced below. neutronInit() is called
- * internally by the NEUTRON_GRAPH kernel itself
- * (tensorflow/lite/micro/kernels/neutron/neutron.cpp) on first Prepare()
- * - no manual NPU init needed here.
+ * Model: neutron/tflite_learn_1095726_3_npu.h - a single-class `face`
+ * FOMO detector (Face_Detection_NXP, project ID 1095726, 96x96 input),
+ * run through `neutron_converter --target mcxn94x` (same tool/target as
+ * the earlier 3-class model, see WORKLOG.md "Phase 2"). 31 of 33 ops got
+ * folded into one NEUTRON_GRAPH custom op; the two that stayed regular
+ * TFLM ops are Slice (this model's NPU output channel dim comes back
+ * padded to 4 - [1,12,12,4] - and needs slicing down to the real 2
+ * channels, [1,12,12,2]; the earlier 3-class model's channel count
+ * happened to not need this) and Softmax - confirmed via the converter's
+ * own generated header comment, reproduced below.
  *
  * Preprocessing (resize + quantize) is the same nearest-neighbor "squash"
  * used in model_runner.cpp's get_signal_data(), just writing straight
  * into an int8 NHWC tensor instead of Edge Impulse's packed-float
  * 0xRRGGBB signal format. Input quantization here (scale=0.003922,
- * zero_point=-128, confirmed via `neutron_converter --dump-after-import
- * console`) works out to the trivial `q = channel_value - 128` (scale is
- * ~1/255, so one pixel unit is one quantized unit).
+ * zero_point=-128, confirmed via a Python flatbuffer dump of the
+ * converted model) works out to the trivial `q = channel_value - 128`
+ * (scale is ~1/255, so one pixel unit is one quantized unit) - same as
+ * the earlier model, this is a property of how Edge Impulse quantizes
+ * image inputs in general, not specific to either model.
  *
  * Postprocessing (FOMO grid decode) is hand-rolled, ported from Edge
  * Impulse's own process_fomo_i8()/ei_handle_cube()/process_cubes()
  * (edge-impulse-sdk/classifier/postprocessing/ei_postprocessing_common.h)
  * since this path skips ei_run_classifier() and thus EI's own
- * postprocessing entirely. Output tensor is INT8[1,8,8,4] (confirmed via
- * the same --dump-after-import) - an 8x8 grid, 4 channels per cell:
+ * postprocessing entirely. Output tensor (post-Slice, post-Softmax, so
+ * this is what interpreter->output(0) returns) is INT8[1,12,12,2] - a
+ * 12x12 grid (96x96 input / 8, FOMO's fixed stride for this backbone,
+ * same as the earlier 64x64 model's 8x8 grid), 2 channels per cell:
  * channel 0 is FOMO's implicit "background" class (skipped, matching
- * EI's own `for (ix = 1; ix < label_count+1; ix++)` convention),
- * channels 1..3 map to ei_classifier_inferencing_categories[0..2]
- * ("closed_eye"/"open_eye"/"yawning" - model_variables.h). Adjacent
- * same-class detected cells get merged into one box the same way EI's
- * ei_cube_check_overlap() does, just with fixed-size arrays instead of
- * EI's std::vector (this model's grid is small - 64 cells, 3 classes -
- * so a fixed AI_MODEL_MAX_BOXES-sized array is enough).
+ * EI's own `for (ix = 1; ix < label_count+1; ix++)` convention), channel
+ * 1 is the single `face` class. Adjacent same-class detected cells get
+ * merged into one box the same way EI's ei_cube_check_overlap() does,
+ * just with fixed-size arrays instead of EI's std::vector (this model's
+ * grid is small - 144 cells, 1 class - so a fixed AI_MODEL_MAX_BOXES-
+ * sized array is enough).
  */
 #include "model_runner.h"
 #include "fsl_debug_console.h"
@@ -55,34 +58,36 @@
 #include "tensorflow/lite/micro/kernels/neutron/neutron.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-#include "neutron/tflite_learn_1094697_39_npu.h"
+#include "neutron/tflite_learn_1095726_3_npu.h"
 
 /* Model's own fixed shapes/labels - not read from EI's model_metadata.h
  * on this path (that's EI-SDK specific), hard-coded to match this exact
  * exported model instead. Grid = input / 8 (FOMO's fixed stride for this
- * backbone), confirmed via the tensor dump: INT8[1,64,64,3] in,
- * INT8[1,8,8,4] out. */
-#define NPU_MODEL_INPUT_WIDTH 64U
-#define NPU_MODEL_INPUT_HEIGHT 64U
-#define NPU_MODEL_GRID_WIDTH 8U
-#define NPU_MODEL_GRID_HEIGHT 8U
-#define NPU_MODEL_CLASS_COUNT 3U /* +1 implicit background channel in the raw tensor */
+ * backbone), confirmed via a Python flatbuffer dump: INT8[1,96,96,3] in,
+ * INT8[1,12,12,2] out (post-Slice/Softmax). */
+#define NPU_MODEL_INPUT_WIDTH 96U
+#define NPU_MODEL_INPUT_HEIGHT 96U
+#define NPU_MODEL_GRID_WIDTH 12U
+#define NPU_MODEL_GRID_HEIGHT 12U
+#define NPU_MODEL_CLASS_COUNT 1U /* +1 implicit background channel in the raw tensor */
 #define NPU_MODEL_DETECTION_THRESHOLD 0.5f /* matches model_variables.h's .threshold */
 
-static const char *const s_labels[NPU_MODEL_CLASS_COUNT] = {"closed_eye", "open_eye", "yawning"};
+static const char *const s_labels[NPU_MODEL_CLASS_COUNT] = {"face"};
 
-/* Sized over the converter's own report for this model (~99.8KB for the
- * NeutronGraph's own input+output+scratch+weights) to leave room for
- * TFLM's own bookkeeping + the Softmax op's buffers. Constrained by
- * m_data's free space (this project's non-NPU baseline already uses
- * ~186KB of the 312KB region for camera/LCD buffers etc. - see
- * WORKLOG.md "Bug #2"/"Bug #3" for that budget) - 160KB overflowed
- * m_data by ~36KB on the first attempt; 112KB fits with some margin.
- * If AllocateTensors() fails at runtime (logged clearly below), the
- * arena is too small for real bookkeeping overhead, not the linker
- * budget - shrink something else in m_data first before just bumping
- * this further. */
-constexpr int kTensorArenaSize = 112 * 1024;
+/* Sized over the converter's own report for this model's NeutronGraph
+ * node (inputs 27,648 + NeutronGraph-internal outputs 576 + scratch
+ * 138,240 = 166,464 bytes), plus margin for the Slice/Softmax
+ * intermediate tensors and TFLM's own per-tensor bookkeeping - larger
+ * than the earlier 64x64 3-class model's 112KB, since this model's 96x96
+ * input and its NeutronGraph's internal scratch are both bigger. Not yet
+ * confirmed against a real AllocateTensors() run on hardware (no debug
+ * probe available in the session this was converted in) - if
+ * AllocateTensors() fails at runtime (logged clearly below), bump this
+ * further; m_data had roughly the same headroom this project's earlier
+ * NPU arena sizing used (see WORKLOG.md "Bug #2"/"Bug #3"), but that
+ * headroom hasn't been re-measured against this specific model's needs
+ * yet. */
+constexpr int kTensorArenaSize = 184 * 1024;
 static uint8_t s_tensorArena[kTensorArenaSize] __attribute__((aligned(16)));
 
 static const tflite::Model *s_model = nullptr;
@@ -197,8 +202,11 @@ extern "C" void AI_MODEL_Init(void)
     }
 
     /* Op resolver exactly as suggested in the comment neutron_converter
-     * itself generated at the top of tflite_learn_1094697_39_npu.h. */
-    static tflite::MicroMutableOpResolver<2> s_opResolver;
+     * itself generated at the top of tflite_learn_1095726_3_npu.h - one
+     * more op (Slice) than the earlier 3-class model needed, see the
+     * file-level comment above for why. */
+    static tflite::MicroMutableOpResolver<3> s_opResolver;
+    s_opResolver.AddSlice();
     s_opResolver.AddSoftmax();
     s_opResolver.AddCustom(tflite::GetString_NEUTRON_GRAPH(), tflite::Register_NEUTRON_GRAPH());
 
@@ -214,7 +222,7 @@ extern "C" void AI_MODEL_Init(void)
         return;
     }
 
-    PRINTF("AI_MODEL_Init: Neutron NPU FOMO ready (%dx%d input, %d classes, arena used %u/%u bytes)\r\n",
+    PRINTF("AI_MODEL_Init: Neutron NPU face detector ready (%dx%d input, %d class(es), arena used %u/%u bytes)\r\n",
            NPU_MODEL_INPUT_WIDTH, NPU_MODEL_INPUT_HEIGHT, (int)NPU_MODEL_CLASS_COUNT,
            (unsigned)s_interpreter->arena_used_bytes(), (unsigned)kTensorArenaSize);
 }

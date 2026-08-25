@@ -10,6 +10,7 @@ Contents:
 1. [DVP camera protocol vs. SmartDMA](#1-dvp-camera-protocol-vs-smartdma)
 2. [Neutron NPU: what it is and how it's used](#2-neutron-npu-what-it-is-and-how-its-used)
 3. [Limitations encountered](#3-limitations-encountered)
+4. [Flashing/debugging this board reliably](#4-flashingdebugging-this-board-reliably)
 
 ---
 
@@ -110,11 +111,12 @@ neutron_converter --input model.tflite --target mcxn94x --output model_npu.tflit
 This tool scans the model graph, finds clusters of layers the NPU supports
 (conv/pool/add/etc.), and **collapses them into a single custom op called
 `NEUTRON_GRAPH`** (containing microcode pre-compiled for the Neutron16
-core). Any unsupported layers (rare - in this project's model, just Softmax)
-stay as regular ops running on the CPU as before. For this project's FOMO
-model, **31 of 32 original operators got folded into the NPU op** - a very
-high offload ratio, since almost the entire compute-heavy backbone
-(MobileNetV2) collapsed into one NPU-accelerated block.
+core). Any unsupported layers (rare - in this project's current model,
+`Slice` + `Softmax`) stay as regular ops running on the CPU as before. For
+this project's FOMO model, **31 of 33 original operators got folded into
+the NPU op** - a very high offload ratio, since almost the entire
+compute-heavy backbone (MobileNetV2) collapsed into one NPU-accelerated
+block.
 
 ### Integration: plain TFLite Micro, bypassing the higher-level SDK
 
@@ -126,7 +128,8 @@ internally). So the NPU path is a separate code path
 ```cpp
 // Exactly the op resolver neutron_converter itself suggests, printed as a
 // comment at the top of the header it generates:
-static tflite::MicroMutableOpResolver<2> s_opResolver;
+static tflite::MicroMutableOpResolver<3> s_opResolver;
+s_opResolver.AddSlice();
 s_opResolver.AddSoftmax();
 s_opResolver.AddCustom(tflite::GetString_NEUTRON_GRAPH(), tflite::Register_NEUTRON_GRAPH());
 
@@ -143,9 +146,11 @@ code just uses the standard TFLM API like any other model.
 
 ### Quantization turned out trivially simple for this model
 
-The model's input tensor is `int8[1,64,64,3]`, quantized with
-`scale=0.003922` (≈ 1/255) and `zero_point=-128`. The standard quantization
-formula is:
+The model's input tensor is `int8[1,96,96,3]`, quantized with
+`scale=0.003922` (≈ 1/255) and `zero_point=-128` (same quantization
+scheme the earlier 64x64 3-class model used - a property of how Edge
+Impulse quantizes image inputs in general, not specific to either model).
+The standard quantization formula is:
 
 ```
 quantized_value = round(real_value / scale) + zero_point
@@ -169,10 +174,19 @@ this gives a real, comparable number for both backends.
 
 ### Measured results
 
+Measured on the project's earlier 3-class (`closed_eye`/`open_eye`/
+`yawning`, 64x64 input) model, on real hardware:
+
 | | CPU (CMSIS-NN) | NPU (Neutron) |
 |---|---|---|
 | Time per inference | ~1.27 seconds | ~3.3 milliseconds |
 | Relative speed | 1x | **~370-390x faster** |
+
+The current single-class `face` model (96x96 input) uses the same
+integration path on both backends, so a similarly large NPU speedup is
+expected, but this hasn't been re-measured yet - no debug probe was
+available in the session that converted/wired in this model (see
+WORKLOG.md's top entry).
 
 ---
 
@@ -183,11 +197,11 @@ this gives a real, comparable number for both backends.
 As noted in section 1, `m_sramx` looks unused in the linker map, but it's
 actually the RAM SmartDMA uses to hold its own camera-capture
 firmware/state while running. The AI CPU path (CMSIS-NN) originally reused
-that same bank for its ~93KB tensor arena, on the (wrong) assumption that it
-was genuinely free. The moment inference actually wrote real data into that
-bank, it silently corrupted SmartDMA's own working state - not a crash, just
-the camera going quiet: it stopped firing frame-ready interrupts after a few
-frames, with no error logged anywhere.
+that same bank for its tensor arena's primary pool, on the (wrong)
+assumption that it was genuinely free. The moment inference actually wrote
+real data into that bank, it silently corrupted SmartDMA's own working
+state - not a crash, just the camera going quiet: it stopped firing
+frame-ready interrupts after a few frames, with no error logged anywhere.
 
 **Fix:** the camera is fully stopped (`CAMERA_CAPTURE_Deinit()`) right
 before AI inference runs, and restarted (`CAMERA_CAPTURE_Reinit()`)
@@ -201,6 +215,62 @@ banks (SmartDMA, an NPU, a DSP core...), a bank that looks empty in the
 linker map isn't necessarily free at runtime - check whether any
 coprocessor firmware is loaded into it before reusing that memory for
 something else.
+
+### Core1's reserved RAM region cannot be reused either, even though nothing actively runs there - a different failure mode than the SmartDMA case above
+
+Tried (2026-08-25) and reverted after it wedged the board - see
+[WORKLOG.md](WORKLOG.md)'s top entry for the full incident/recovery. Worth
+its own entry here since the *reasoning* that led to trying it was
+plausible and is exactly the kind of thing a fresh session might try again
+without this context.
+
+**The idea:** the MCXN947 is a **dual-core** chip (two Cortex-M33s), but
+this project only ever builds/boots **core0** (`build.sh` always passes
+`-Dcore_id=cm33_core0`; there is no core1 firmware image anywhere in this
+tree, no RPMSG/multicore code). The SDK's own board linker script
+nonetheless reserves a chunk of RAM (`0x2004E000`..`0x20068000`, 104KB,
+address-contiguous immediately after core0's own `m_data`) for core1's
+exclusive use - visible in `MCXN947_cm33_core1_flash.ld`/`_ram.ld`, which
+both declare their own `m_data` starting at that exact address. Since
+core1 never boots in this project, that 104KB looked exactly like the
+`m_sramx` situation above: reserved by convention/linker-script
+partitioning, not because anything is actively using it.
+
+**Why it's actually different, and unsafe:** `m_sramx`'s occupant
+(SmartDMA's firmware/state) is something *this firmware itself* controls
+the timing of - stop SmartDMA, the bank is genuinely free; that's a
+software/timing problem, solvable in software (see above). Core1's RAM
+bank is different: on MCX-family (and most NXP multicore) parts, SRAM
+instances are commonly partitioned into **separate power domains**, and a
+domain associated with a core that's never released from reset can be
+**left in its default low-power/array-off state at boot** - accessing it
+isn't a data-corruption problem like the SmartDMA case, it's a bus
+access against RAM that was never electrically powered on. Nothing in
+this project's boot code (`hardware_init.c`, `clock_config.c`, or the SDK
+defaults) explicitly powers up or requests that domain, precisely
+*because* nothing here ever needs core1 - there's no "power up core1's
+resources" call to have forgotten, the domain is just never asked for.
+
+**Observed symptom matched this exactly:** the moment startup code's
+`.bss` zero-init loop (part of `Reset_Handler`, before `main()` even
+starts) touched a symbol the linker had placed in that region, the board
+produced literally zero UART output ever again - not even the very first
+boot banner, which prints before any camera/AI/SmartDMA code runs. That's
+consistent with a fault/hang on the very first access to unpowered SRAM,
+not with any of this project's own peripheral/coprocessor logic (which
+all runs much later).
+
+**Takeaway (sharper than the `m_sramx` one above):** "reserved for another
+core, but that core never boots" is a *weaker* safety argument than
+"reserved for a coprocessor whose activity this firmware directly
+controls." Multicore SoCs often gate power per-core/per-domain, including
+domains that look like plain RAM in a linker script - don't reuse a
+region just because the current build never references it; that's
+necessary but not sufficient. Confirming actual electrical/power-domain
+status would need the reference manual's power/clock chapter (SPC/CMC
+register-level detail) or NXP support, not just the linker script and a
+grep for "does this code disable it" - the absence of disable code proved
+nothing here, since the code never *enables* it either.
 
 ### USB video streaming vs. camera capture: a genuine hardware conflict, not a software bug
 
@@ -248,3 +318,100 @@ video rather than smooth live streaming, and added real code complexity
 actual goal (drowsiness detection) doesn't need a USB video feed - the
 on-board LCD status display is sufficient - this path was set aside in
 favor of the simpler LCD-only design.
+
+---
+
+## 4. Flashing/debugging this board reliably
+
+### `pyocd flash`/`reset`/`erase` alone are not reliable on this specific chip/probe/pyOCD-version combination
+
+Discovered 2026-08-25 while recovering from the core1-RAM incident above,
+but **this is a standing quirk unrelated to that incident** - it showed up
+again on a perfectly healthy, freshly-erased chip, so expect to hit it on
+any normal flashing session, not just recovery scenarios.
+
+**Symptom:** plain `pyocd flash -t mcxn947 <elf>` (what `build.sh flash`
+runs) fails with one of several errors depending on chip/session state,
+all at the connection/init stage, never actually reaching the "Erasing/
+Programming" progress bars:
+- `Error while running debug sequence 'DebugPortStart' (core cm33_core0): SWD/JTAG communication failure (WAIT ACK)` or `(FAULT ACK)`
+- `Error while running debug sequence 'ResetCatchClear' (core cm33_core1): ... (FAULT ACK)` (pyOCD's default connect flow touches *both* cores' debug-catch config even though this project only uses core0)
+- `Error while running debug sequence 'ResetSystem' (core cm33_core0): ... (FAULT ACK)`
+
+`DP IDR` (the very first, most basic SWD register read) reads correctly
+every time (`0x6ba02477`) - the physical SWD link itself is fine. The
+failures are all inside this chip's CMSIS-Pack-defined, chip-specific
+debug *sequences* (custom init/reset logic beyond plain ADIv5), which
+apparently need retry logic that plain pyOCD doesn't have for this
+pack/probe pairing.
+
+**What doesn't reliably fix it (tried, inconsistent or no effect):**
+power-cycling the board, lowering the SWD clock (`-f 1000000`), different
+`--connect` modes (`halt`/`attach`/`under-reset`), different USB cable/
+port. These sometimes changed *which* step failed but never reliably got
+all the way through.
+
+**What works, every time - install NXP's own `spsdk` and drive the probe
+through it instead of relying on pyOCD's generic connect flow:**
+
+```bash
+pip install spsdk   # provides the `nxpdebugmbox` CLI
+```
+
+`nxpdebugmbox` talks the MCX/LPC55-family **Debug Mailbox** protocol
+directly over the same MCU-Link probe (`-i mcu-link`), and its own
+`debug_probe.py` has a built-in connection-recovery retry loop that
+pyOCD's mcxn947 CMSIS-Pack sequences don't - it transparently recovers
+from the exact `WAIT ACK`/`FAULT ACK` errors above and proceeds.
+
+Reliable flashing recipe for this board, every time:
+```bash
+# 1. Unlock AHB/core access via the Debug Mailbox - must be the LAST thing
+#    run before pyOCD connects; doesn't persist across a fresh connection,
+#    so re-run this immediately before every pyOCD flash/reset call, not
+#    just once per session.
+nxpdebugmbox -i mcu-link cmd -f mcxn947 start-debug-session
+
+# 2. Flash, with the specific broken debug sequences disabled (comma-
+#    separated SequenceName:coreName) so pyOCD's connect flow skips the
+#    steps that fault on this probe/pack combo instead of trying and
+#    failing:
+pyocd flash -t mcxn947 \
+  -O "pack.debug_sequences.disabled_sequences=ResetCatchSet:cm33_core1,ResetCatchClear:cm33_core1,ResetSystem:cm33_core0,ResetSystem:cm33_core1" \
+  <path-to-elf>
+
+# 3. Disabling ResetSystem means step 2 doesn't reset the board into the
+#    new image afterward - do that separately:
+nxpdebugmbox -i mcu-link tool reset -f mcxn947 -h   # hardware reset via probe
+# ...or just press the board's SW1, or power-cycle.
+```
+
+Mass-erase (chip recovery, e.g. if the board is in the same "undebuggable"
+state the core1-RAM incident caused) works the same way, directly, no
+workaround flags needed - the Debug Mailbox `erase` command isn't subject
+to the CMSIS-Pack debug-sequence problem at all:
+```bash
+nxpdebugmbox -i mcu-link cmd -f mcxn947 erase
+```
+
+**ISP mode (SW3 held + SW1 pressed) is a red herring for this specific
+problem** - it does successfully put the chip in ROM bootloader mode
+(confirmed: the failure signature changes from `WAIT ACK` to
+`Invalid AP address (#0)`, a different, further-along failure), but
+`nxpdebugmbox erase`/`start-debug-session` work fine *without* ISP mode,
+directly on a normally-booted (or hung) chip - no need for the SW2/SW3/SW1
+button dance at all for this board's recovery flow. `write-to-flash` via
+the Debug Mailbox, on the other hand, does NOT work outside of a specific
+device life-cycle state (`Command not recognized... other than is
+supported by device in current life cycle`) - use it for `erase` and
+`start-debug-session` only, then hand off to `pyocd flash` per the recipe
+above for actually programming the image.
+
+**Takeaway:** for MCX-family (and likely other LPC55xx-lineage) NXP
+parts, if pyOCD's generic CMSIS-Pack-based connect keeps faulting on
+`WAIT ACK`/`FAULT ACK` inside a chip-specific debug sequence (not a
+plain register read - those still work), don't keep varying pyOCD-level
+knobs (clock speed, connect mode, cables) - reach for NXP's own `spsdk`/
+`nxpdebugmbox` instead, which implements the same connection-recovery
+logic NXP's own tooling (MCUXpresso, Secure Provisioning) relies on and
+pyOCD's generic target packs generally don't replicate.

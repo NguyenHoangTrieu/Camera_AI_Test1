@@ -2,10 +2,10 @@
  * main.c - Camera_AI_Test1
  *
  * Default build: OV7670 capture (via SmartDMA, J9 header, 320x240 RGB565
- * - see app.h/camera_capture.c) -> Edge Impulse FOMO inference
- * (source/ai/model_runner.cpp, closed_eye/open_eye/yawning) -> LCD shows
- * 3 fixed text lines ("OPEN EYE"/"YAWNING"/"CLOSED EYE", each with a
- * trailing 1/0 for "detected this frame or not" - see
+ * - see app.h/camera_capture.c) -> Edge Impulse FOMO face-detection
+ * inference (source/ai/model_runner.cpp or model_runner_npu.cpp,
+ * single class `face`) -> LCD shows one text status line ("FACE: 1"/
+ * "FACE: 0" for "a face was/wasn't detected this frame" - see
  * DEMO_DrawStatusLine()), no USB. See WORKLOG.md "LCD history" for why
  * Arduino-header bit-bang (not J8/FlexIO) is the active default.
  *
@@ -41,11 +41,13 @@
 #include "usb_video_camera.h"
 
 #if !DEMO_LCD_CAMERA_PREVIEW
-/* Text status readout - see the file-level comment above. Each line is a
- * fixed-width label (padded so all 3 line up) + ": " + a '1'/'0' digit,
- * scale=3 -> 15x21px per glyph, comfortably inside the 320x240 panel.
- * Unused (and left out of the build) in the raw camera-preview build -
- * see DEMO_LCD_CAMERA_PREVIEW in main(). */
+/* Text status readout - see the file-level comment above. A single fixed-
+ * width label + ": " + a '1'/'0' digit for whether a face was detected
+ * this frame, scale=3 -> 15x21px per glyph, comfortably inside the
+ * 320x240 panel. lineIndex is kept as a parameter (not hardcoded to 0)
+ * in case a second status line is ever added back. Unused (and left out
+ * of the build) in the raw camera-preview build - see
+ * DEMO_LCD_CAMERA_PREVIEW in main(). */
 #define DEMO_STATUS_TEXT_SCALE 3U
 #define DEMO_STATUS_LINE_X 8U
 #define DEMO_STATUS_LINE_Y0 40U
@@ -221,17 +223,28 @@ int main(void) {
   LCD_Init();
   DEMO_ClearScreen(0x0000U);
 
-  /* Dedicated AI scratch pool - a small overflow area for
-   * ei_sramx_alloc.c's allocator, used only if the primary 96KB m_sramx
-   * pool isn't enough. It normally is: EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE
-   * is 92876 bytes, comfortably inside the ~94KB primary pool (96KB minus
-   * the LIFO free-record stack), so this is just a safety margin for the
-   * DSP resize step's small per-page scratch buffers, not the tensor
-   * arena itself. 16KB is generous headroom over actual DSP scratch usage
-   * - unaffected by the camera capture resolution (the resize target is
-   * always the model's 64x64 input, regardless of source frame size). */
-  static uint8_t s_aiScratchPool[16U * 1024U] __attribute__((aligned(16)));
+#if !DEMO_AI_MODEL_USE_NPU
+  /* Dedicated AI scratch pool - overflow area for ei_sramx_alloc.c's
+   * allocator, used once the primary 96KB m_sramx pool is exhausted. For
+   * the current face-detection model, EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE
+   * is 185,036 bytes - bigger than the ~94-95KB primary pool (96KB minus
+   * the LIFO free-record stack) on its own (this model's 96x96 input is
+   * much bigger than the earlier 3-class model's 64x64, hence the bigger
+   * arena), so most of the tensor arena now has to live in this overflow
+   * pool. Sized to 96KB - (185,036 - ~95KB primary) leaves only a few KB
+   * of margin over the bare deficit, plus the DSP resize step's small
+   * per-page scratch buffers on top of that - not yet confirmed against a
+   * real allocator high-water-mark on hardware (see
+   * EI_SRAMX_GetHighWaterMark() in model_runner.cpp's error path if this
+   * turns out too tight and inference starts failing at runtime). Only
+   * declared for the CPU/CMSIS-NN build - the NPU build
+   * (model_runner_npu.cpp) never calls into ei_sramx_alloc.c, so this
+   * would just be dead weight competing with that build's own (much
+   * larger, for this model) static tensor arena in the same m_data
+   * budget. */
+  static uint8_t s_aiScratchPool[96U * 1024U] __attribute__((aligned(16)));
   EI_SRAMX_SetOverflowPool(s_aiScratchPool, sizeof(s_aiScratchPool));
+#endif /* !DEMO_AI_MODEL_USE_NPU */
 
   while (1) {
     if (CAMERA_CAPTURE_IsFrameReady()) {
@@ -263,18 +276,12 @@ int main(void) {
 
       CAMERA_CAPTURE_Reinit();
 
-      bool sawClosedEye = false;
-      bool sawOpenEye = false;
-      bool sawYawning = false;
+      bool sawFace = false;
       if (aiResult.valid) {
         for (uint32_t i = 0; i < aiResult.boxCount; i++) {
           const ai_bbox_t *box = &aiResult.boxes[i];
-          if (strcmp(box->label, "closed_eye") == 0) {
-            sawClosedEye = true;
-          } else if (strcmp(box->label, "open_eye") == 0) {
-            sawOpenEye = true;
-          } else if (strcmp(box->label, "yawning") == 0) {
-            sawYawning = true;
+          if (strcmp(box->label, "face") == 0) {
+            sawFace = true;
           }
           /* debug_console_lite may not support %f, so print score as a
            * percentage integer. */
@@ -287,9 +294,7 @@ int main(void) {
       /* Text draw doesn't touch the camera frame buffer at all, so unlike
        * the earlier live-image display it has no ordering dependency on
        * CAMERA_CAPTURE_Deinit()/Reinit() above. */
-      DEMO_DrawStatusLine(0U, "OPEN EYE  ", sawOpenEye);
-      DEMO_DrawStatusLine(1U, "YAWNING   ", sawYawning);
-      DEMO_DrawStatusLine(2U, "CLOSED EYE", sawClosedEye);
+      DEMO_DrawStatusLine(0U, "FACE      ", sawFace);
     }
   }
 #else
