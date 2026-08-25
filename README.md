@@ -11,14 +11,15 @@ status line:
 - `FACE: 0` - no face detected this frame
 
 Inference can run on either the chip's **CPU (CMSIS-NN)** or its **Neutron
-NPU**, selected at build time - see "AI model integration" below. On the
-earlier 3-class drowsiness model this project shipped before (see
-WORKLOG.md), the NPU path measured roughly **370-390x faster** than the CPU
-path on real hardware (~3.3ms vs. ~1.27s per inference) - the current
-face-only model is architecturally the same integration (same two
-interchangeable backends), but hasn't had its own on-hardware NPU timing
-re-measured yet (no debug probe was available in the session that converted
-and wired it in - see WORKLOG.md's top entry for what's confirmed vs. not).
+NPU** (the default), selected at build time - see "AI model integration"
+below. Confirmed running on real hardware (2026-08-25): **~4ms/inference**
+on the NPU path. On the earlier 3-class drowsiness model this project
+shipped before (see WORKLOG.md), the NPU path measured roughly
+**370-390x faster** than the CPU path on real hardware (~3.3ms vs.
+~1.27s per inference) - the current face-only model uses the same
+integration (same two interchangeable backends), but the CPU-path
+timing for this specific model hasn't been separately re-measured yet
+- see WORKLOG.md's top entry for the exact numbers and how they were confirmed).
 
 Source of truth for the original ask: [requirement.md](requirement.md).
 [WORKLOG.md](WORKLOG.md) has the full messier bring-up history (bugs found,
@@ -125,6 +126,14 @@ $ ./firmware/camera_ai_demo/build.sh flash    # flash the last build
 $ ./firmware/camera_ai_demo/build.sh monitor  # open the serial console (115200-8-N-1)
 ```
 
+**If `./build.sh flash` fails with `DebugPortStart`/`ResetCatchClear`/
+`ResetSystem` `WAIT ACK`/`FAULT ACK` errors** - a standing quirk of this
+specific probe/pyOCD/CMSIS-Pack combination, unrelated to firmware
+correctness - see [KNOWLEDGE.md](KNOWLEDGE.md) section 4 for the reliable
+workaround (installing NXP's `spsdk`/`nxpdebugmbox` and using it alongside
+pyOCD with specific debug-sequences disabled). Plain pyOCD alone has
+consistently failed to flash this board as of 2026-08-25.
+
 `build.sh` mirrors `../../touch_rgb/build.sh`: it runs `west build -b frdmmcxn947
 firmware/camera_ai_demo --toolchain armgcc -Dcore_id=cm33_core0` from inside the
 `../mcuxsdk` west workspace, then flashes the resulting `.elf` over the on-board
@@ -140,7 +149,7 @@ e.g. `./build.sh rebuild -DAI_MODEL_USE_NPU=OFF`:
 
 | Flag | Default | Effect |
 |---|---|---|
-| `AI_MODEL_USE_NPU` | `OFF` | Run inference on CPU+CMSIS-NN via the Edge Impulse SDK (the default, as of 2026-08-25 - **neither backend actually fits in RAM for the current alpha=0.35 model**, see WORKLOG.md's top entry; CPU was picked as the default only because it's the smaller shortfall to fix first). Set `ON` for the Neutron NPU instead once its own arena-size issue is resolved. |
+| `AI_MODEL_USE_NPU` | `ON` | Run inference on the Neutron NPU (the default, confirmed ~4ms/inference on real hardware 2026-08-25). Set `OFF` to fall back to CPU+CMSIS-NN via the Edge Impulse SDK instead - same detection logic either way, just slower. |
 | `LCD_CAMERA_PREVIEW` | `OFF` | Skip AI entirely and stream the raw camera feed straight to the LCD as fast as frames arrive (no inference stall in the way) - for physically focusing the lens by eye. Re-flash with this back `OFF` afterwards for actual face detection. |
 | `LCD_ARDUINO_HEADER_BITBANG` | `ON` | Drive the TFT via GPIO bit-bang on the Arduino header (current default, requirement.md's original design). `OFF` switches to the J8 header instead - abandoned, see "Abandoned/disabled features" below. |
 | `USB_STREAM_DIAGNOSTIC_DISABLE` | `ON` | Skip USB bring-up entirely - camera+AI loop only. `OFF` opts into the abandoned USB Video Class streaming path (see "Abandoned/disabled features"), which doesn't drive the LCD at all. |
@@ -150,25 +159,22 @@ of the two LCD/USB flags above - any combination builds, though combining
 `LCD_CAMERA_PREVIEW=ON` with `USB_STREAM_DIAGNOSTIC_DISABLE=OFF` isn't a
 meaningful combination (camera preview doesn't touch USB at all).
 
-**Build-verified only** (both `AI_MODEL_USE_NPU` on and off build clean and
-link - see WORKLOG.md's top entry for the exact `arm-none-eabi-g++`/`ld`
-output). **Not yet confirmed on real hardware** - no debug probe was
-attached in the session that wired this model in, so the example log below
-is what the earlier 3-class model printed, kept only to show the log
-*format* (line names/shape), not real numbers for this model:
+**Confirmed on real hardware** (NPU backend, the default, 2026-08-25) -
+boots and runs continuously without faults:
 ```
 Camera_AI_Test1 - FRDM-MCXN947
 Camera: OV7670 on J9 SmartDMA/Camera header
 Display: Arduino-header LCD status text (camera + AI hook)
 
 Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
-AI_MODEL_Init: Neutron NPU face detector ready (96x96 input, 1 class(es), arena used <N>/188416 bytes)
+AI_MODEL_Init: Neutron NPU face detector ready (72x72 input, 1 class(es), arena used 94388/122880 bytes)
 LCD: bit-bang GPIO on the Arduino header
-AI_MODEL_RunInference: total classifier time = <N>us (<N>ms)
+AI_MODEL_RunInference: total classifier time = 3957us (3ms)
 AI result: box[0] label=face x=<N> y=<N> w=<N> h=<N> score=<N>%
 ```
 (build with `-DAI_MODEL_USE_NPU=OFF` for the CPU/CMSIS-NN path instead -
-same log shape, different `AI_MODEL_Init`/timing lines - see
+same log shape, different `AI_MODEL_Init`/timing lines, not yet
+separately timed on hardware for this model - see
 `source/ai/model_runner.cpp`. LCD shows one text line - `FACE: 1` or
 `FACE: 0` depending on whether a face was detected this frame - not a live
 image, see `DEMO_DrawStatusLine()` in `source/main.c`.)
@@ -176,14 +182,16 @@ image, see `DEMO_DrawStatusLine()` in `source/main.c`.)
 ## AI model integration
 
 Model: Edge Impulse Studio project **"Face_Detection_NXP"** (project ID
-1095726) - a FOMO (Faster Objects, More Objects) detector, 96x96
-int8-quantized input, single class `face`, trained on WIDER FACE + DarkFace
-(see WORKLOG.md for dataset/training details and the license caveat - both
-source datasets are CC-BY-NC-ND/research-only, not cleared for a commercial
-product as-is). `main.c` runs `AI_MODEL_RunInference()` once per captured
-camera frame and drives the LCD's 1-line text status readout from the
-result - see the file header comments in `source/main.c` and
-`source/ai/model_runner.h` for the exact API.
+1095726, deploy version 2 - retrained smaller after deploy version 1's
+96x96/alpha=0.35 config turned out too big to fit this chip's RAM, see
+WORKLOG.md's top entry) - a FOMO (Faster Objects, More Objects) detector,
+72x72 int8-quantized input, single class `face`, trained on WIDER FACE +
+DarkFace (see WORKLOG.md for dataset/training details and the license
+caveat - both source datasets are CC-BY-NC-ND/research-only, not cleared
+for a commercial product as-is). `main.c` runs `AI_MODEL_RunInference()`
+once per captured camera frame and drives the LCD's 1-line text status
+readout from the result - see the file header comments in `source/main.c`
+and `source/ai/model_runner.h` for the exact API.
 
 Two interchangeable inference backends implement the identical
 `model_runner.h` API, selected at build time:
@@ -193,8 +201,9 @@ Two interchangeable inference backends implement the identical
 | CMake flag | (default) | `-DAI_MODEL_USE_NPU=OFF` |
 | Source | `source/ai/model_runner_npu.cpp` | `source/ai/model_runner.cpp` |
 | Engine | Raw TFLite Micro against NXP's `middleware/eiq/tensorflow-lite`, model's conv/pool ops compiled to run on the Neutron NPU coprocessor | Edge Impulse's own `ei_run_classifier()`, non-EON TFLite Micro interpreter |
-| Tensor arena | 184KB static (`m_data`) | ~185KB (96KB `m_sramx` primary pool + 96KB `m_data` overflow, see `source/ai/ei_sramx_alloc.c`) |
-| On-hardware timing | not yet re-measured for this model | not yet re-measured for this model |
+| Tensor arena | 120KB static (`m_data`), 94,388 bytes actually used | 112,460 bytes (single allocation - must fit entirely in either the 96KB `m_sramx` primary pool or the 120KB `m_data` overflow pool, see `source/ai/ei_sramx_alloc.c`; too big for primary alone, so lives in overflow) |
+| On-hardware timing | **~3.96ms/inference (confirmed)** | not yet separately measured for this model |
+| `m_data` usage | 93.78% of 312KB stock region | 93.05% of 312KB stock region |
 
 Both print the same `AI_MODEL_RunInference: total classifier time = ...`
 line (timed via the Cortex-M33's DWT cycle counter - Edge Impulse's own
@@ -203,12 +212,14 @@ switching the flag and rebuilding gives a direct apples-to-apples
 comparison once measured on hardware.
 
 This model's `m_data` footprint (camera frame buffer + NPU arena, or camera
-frame buffer + CPU-path overflow pool) no longer fits inside the SDK's
-stock `m_data` region (312KB) - `board_port/m_data_ext.ld` widens it by
-reclaiming the 104KB the SDK's board linker script reserves for this dual-
-core chip's second Cortex-M33 (core1), which this single-core project never
-boots. See that file's header comment for the full reasoning and the
-"not yet confirmed on real hardware" caveat.
+frame buffer + CPU-path overflow pool) fits comfortably inside the SDK's
+stock `m_data` region (312KB) - no linker tricks needed. An earlier,
+bigger version of this model (deploy version 1, 96x96/alpha=0.35) did
+not fit and briefly led to a bad idea (widening `m_data` into a reserved-
+but-actually-unsafe-to-use region) that wedged the board - see
+WORKLOG.md's top entry and KNOWLEDGE.md section 3 if a future model swap
+runs into the same shortfall; the fix that actually worked was retraining
+a smaller model, not a memory trick.
 
 The NPU model (`source/ai/neutron/tflite_learn_1095726_3_npu.tflite`/`.h`)
 was produced by running the same `.tflite` Edge Impulse Studio already
@@ -247,7 +258,6 @@ Camera_AI_Test1/
     board_port/
       pin_mux.c/h                    <- camera (J9) + LCD (Arduino/J8, both) pin routing
       ei_sramx.ld                    <- linker fragment placing the CPU-path tensor arena's primary pool in m_sramx
-      m_data_ext.ld                  <- linker fragment widening m_data by reclaiming core1's unused RAM
       cm33_core0/
         app.h                         <- BOARD_InitHardware() proto, shared pin/geometry macros
         hardware_init.c                <- BOARD_InitHardware()
@@ -257,7 +267,7 @@ Camera_AI_Test1/
       fault_handler.c                <- HardFault dump handler (register decode over PRINTF)
       camera/camera_capture.c/h      <- OV7670 + SmartDMA (from NXP reference)
       display/lcd_bitbang.c/h        <- GPIO bit-bang LCD driver (current default - Arduino header)
-      display/text_overlay.c/h, font5x7.h <- 3-line status text renderer (see main.c)
+      display/text_overlay.c/h, font5x7.h <- 1-line status text renderer (see main.c) - font5x7.h only has glyphs for the specific letters main.c's status strings use, not full ASCII
       ai/model_runner.h              <- shared inference API both backends implement
       ai/model_runner.cpp            <- CPU + CMSIS-NN backend (-DAI_MODEL_USE_NPU=OFF), via Edge Impulse's SDK
       ai/model_runner_npu.cpp        <- Neutron NPU backend (default), raw TFLite Micro
@@ -278,13 +288,18 @@ Camera_AI_Test1/
   the frame-rate bottleneck - the LCD only ever draws a one-line text status
   readout, not a live image, and inference time dominates (camera capture is
   stopped/restarted around each inference call - see WORKLOG.md "Bug #3").
-  Actual per-inference timing for this face model hasn't been re-measured on
-  hardware yet (see "AI model integration" above).
-- Detection results (label/score/box) haven't been validated on real
-  hardware yet for this model - the face-detection dataset/training results
-  documented in WORKLOG.md are Studio-side (validation/test-set metrics
-  only), and the firmware integration (this session) was build-verified but
-  not flashed/run.
+  NPU-path inference is confirmed at ~4ms/inference on real hardware; the
+  CPU path hasn't been separately re-measured for this model yet.
+- Detection results (label/score/box) confirmed running end-to-end on real
+  hardware with real (non-flat) camera data - capture -> resize -> inference
+  -> allocate/decode all working, no crashes/allocation failures. A bug that
+  made every captured frame read back as flat/all-zero in this AI-integrated
+  build (but not in the plain camera-preview build) was found and fixed
+  2026-08-25 - see WORKLOG.md's top entry ("every frame after
+  `CAMERA_CAPTURE_Reinit()` needs to be discarded, the very next one isn't
+  synced yet"). Not yet validated against a real face specifically (dataset/
+  training F1 numbers in WORKLOG.md are Studio-side validation/test-set
+  metrics, not an on-camera eyeball check).
 - **The LCD only shows a text status line, not the live camera image or
   bounding boxes** - by design, to save RAM. See "Abandoned/disabled
   features" below if you want to revisit this.

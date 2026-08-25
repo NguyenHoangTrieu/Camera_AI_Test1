@@ -51,8 +51,8 @@
 
 #include "edge-impulse-sdk/third_party/incbin/incbin.h"
 
-#define EI_CLASSIFIER_TFLITE_LEARN_1095726_3_ARENA_SIZE     185036
-const size_t tflite_learn_1095726_3_arena_size = 185036;
+#define EI_CLASSIFIER_TFLITE_LEARN_1095726_3_ARENA_SIZE     112460
+const size_t tflite_learn_1095726_3_arena_size = 112460;
 
 INCBIN(incbin_tflite_learn_1095726_3, "tflite-model/tflite_learn_1095726_3.tflite");
 

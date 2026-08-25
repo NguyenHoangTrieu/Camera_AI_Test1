@@ -158,18 +158,17 @@ endif()
 # the identical model_runner.h API, so main.c doesn't change either way,
 # and both print the same DWT-based "total classifier time" line for a
 # direct on/off comparison).
-# Default changed to OFF (2026-08-25): the current face-detection model's
-# NPU tensor arena needs >=166,464 bytes (neutron_converter's own minimum
-# estimate), but this chip's stock m_data only has ~141,752 bytes free for
-# it (camera frame buffer + everything else already accounts for the
-# rest) - it does NOT fit without unsafe tricks (see the now-reverted
-# board_port/m_data_ext.ld attempt above and WORKLOG.md's top entry for
-# what went wrong trying to work around this). CPU path fits comfortably
-# in stock m_data as-is. Re-enable NPU only once a real fix for the
-# arena-size/RAM-budget mismatch exists (e.g. a smaller model config, or
-# a confirmed-safe additional RAM region) - do NOT just flip this back to
-# ON without one.
-option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md. WARNING: does not currently fit in m_data for this model, see comment above" OFF)
+# Was briefly defaulted OFF (2026-08-25) when the deploy-version-1 face
+# model (96x96, alpha=0.35) needed a >=166KB NPU arena that did not fit
+# this chip's m_data at all - see WORKLOG.md's top entry. Back to ON
+# (2026-08-25, same day) now that the model was retrained smaller
+# (deploy version 2, 72x72 input, ~93.6KB NPU arena estimate) - both
+# backends now fit stock m_data comfortably, see the kTensorArenaSize
+# comment in model_runner_npu.cpp and the s_aiScratchPool comment in
+# main.c for the exact budget math. If a future model swap makes this
+# not fit again, don't just leave NPU as the (broken) default - flip
+# this OFF and say so clearly, like this comment does.
+option(AI_MODEL_USE_NPU "Run inference on the Neutron NPU (model_runner_npu.cpp) instead of CPU+CMSIS-NN via the Edge Impulse SDK (model_runner.cpp) - see WORKLOG.md" ON)
 if(AI_MODEL_USE_NPU)
     set(AI_MODEL_RUNNER_SOURCE source/ai/model_runner_npu.cpp)
     # main.c uses this to skip allocating the CPU-path's m_data overflow

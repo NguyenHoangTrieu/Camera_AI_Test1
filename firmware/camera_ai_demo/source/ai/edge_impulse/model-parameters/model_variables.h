@@ -68,7 +68,7 @@ const uint8_t ei_dsp_blocks_1095726_1_size = 1;
 ei_model_dsp_t ei_dsp_blocks_1095726_1[ei_dsp_blocks_1095726_1_size] = {
     { // DSP block 2
         2,
-        27648, // output size
+        15552, // output size
         &extract_image_features, // DSP function pointer
         (void*)&ei_dsp_config_1095726_2, // pointer to config struct
         ei_dsp_config_1095726_2_axes, // array of offsets into the input stream, one for each axis
@@ -114,8 +114,8 @@ const ei_learning_block_t ei_learning_blocks_1095726_1[ei_learning_blocks_109572
 
 ei_fill_result_fomo_i8_config_t ei_fill_result_fomo_i8_config_1095726_3 = {
     .threshold = 0.5,
-    .out_width = 12,
-    .out_height = 12,
+    .out_width = 9,
+    .out_height = 9,
     .object_detection_count = 10,
     .zero_point = -128,
     .scale = 0.00390625
@@ -145,14 +145,14 @@ const ei_impulse_t impulse_1095726_1 = {
     .project_name = "Face_Detection_NXP",
     .impulse_id = 1,
     .impulse_name = "Impulse #1",
-    .deploy_version = 1,
+    .deploy_version = 2,
 
-    .nn_input_frame_size = 27648,
-    .raw_sample_count = 9216,
+    .nn_input_frame_size = 15552,
+    .raw_sample_count = 5184,
     .raw_samples_per_frame = 1,
-    .dsp_input_frame_size = 9216 * 1,
-    .input_width = 96,
-    .input_height = 96,
+    .dsp_input_frame_size = 5184 * 1,
+    .input_width = 72,
+    .input_height = 72,
     .input_frames = 1,
     .interval_ms = 1,
     .frequency = 0,
@@ -172,7 +172,7 @@ const ei_impulse_t impulse_1095726_1 = {
 
     .sensor = EI_CLASSIFIER_SENSOR_CAMERA,
     .fusion_string = "image",
-    .slice_size = (9216/4),
+    .slice_size = (5184/4),
     .slices_per_model_window = 4,
 
     .has_anomaly = EI_ANOMALY_TYPE_UNKNOWN,

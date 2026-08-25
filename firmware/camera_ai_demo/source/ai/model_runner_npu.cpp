@@ -13,15 +13,19 @@
  * - the two must not be mixed in the same translation unit).
  *
  * Model: neutron/tflite_learn_1095726_3_npu.h - a single-class `face`
- * FOMO detector (Face_Detection_NXP, project ID 1095726, 96x96 input),
- * run through `neutron_converter --target mcxn94x` (same tool/target as
- * the earlier 3-class model, see WORKLOG.md "Phase 2"). 31 of 33 ops got
- * folded into one NEUTRON_GRAPH custom op; the two that stayed regular
- * TFLM ops are Slice (this model's NPU output channel dim comes back
- * padded to 4 - [1,12,12,4] - and needs slicing down to the real 2
- * channels, [1,12,12,2]; the earlier 3-class model's channel count
- * happened to not need this) and Softmax - confirmed via the converter's
- * own generated header comment, reproduced below.
+ * FOMO detector (Face_Detection_NXP, project ID 1095726, deploy version 2
+ * - retrained 2026-08-25 with a smaller FOMO backbone, 72x72 input, after
+ * the deploy-version-1 model's 96x96/alpha=0.35 config turned out too big
+ * to fit this chip's available RAM on either backend, see WORKLOG.md's
+ * top entry for the full incident), run through `neutron_converter
+ * --target mcxn94x` (same tool/target as the original 3-class model, see
+ * WORKLOG.md "Phase 2"). 31 of 33 ops got folded into one NEUTRON_GRAPH
+ * custom op; the two that stayed regular TFLM ops are Slice (this
+ * model's NPU output channel dim comes back padded to 4 - [1,9,9,4] -
+ * and needs slicing down to the real 2 channels, [1,9,9,2]; the original
+ * 3-class model's channel count happened to not need this) and Softmax -
+ * confirmed via the converter's own generated header comment, reproduced
+ * below.
  *
  * Preprocessing (resize + quantize) is the same nearest-neighbor "squash"
  * used in model_runner.cpp's get_signal_data(), just writing straight
@@ -38,15 +42,15 @@
  * (edge-impulse-sdk/classifier/postprocessing/ei_postprocessing_common.h)
  * since this path skips ei_run_classifier() and thus EI's own
  * postprocessing entirely. Output tensor (post-Slice, post-Softmax, so
- * this is what interpreter->output(0) returns) is INT8[1,12,12,2] - a
- * 12x12 grid (96x96 input / 8, FOMO's fixed stride for this backbone,
- * same as the earlier 64x64 model's 8x8 grid), 2 channels per cell:
+ * this is what interpreter->output(0) returns) is INT8[1,9,9,2] - a
+ * 9x9 grid (72x72 input / 8, FOMO's fixed stride for this backbone,
+ * same stride the earlier 64x64/96x96 models used), 2 channels per cell:
  * channel 0 is FOMO's implicit "background" class (skipped, matching
  * EI's own `for (ix = 1; ix < label_count+1; ix++)` convention), channel
  * 1 is the single `face` class. Adjacent same-class detected cells get
  * merged into one box the same way EI's ei_cube_check_overlap() does,
  * just with fixed-size arrays instead of EI's std::vector (this model's
- * grid is small - 144 cells, 1 class - so a fixed AI_MODEL_MAX_BOXES-
+ * grid is small - 81 cells, 1 class - so a fixed AI_MODEL_MAX_BOXES-
  * sized array is enough).
  */
 #include "model_runner.h"
@@ -63,31 +67,31 @@
 /* Model's own fixed shapes/labels - not read from EI's model_metadata.h
  * on this path (that's EI-SDK specific), hard-coded to match this exact
  * exported model instead. Grid = input / 8 (FOMO's fixed stride for this
- * backbone), confirmed via a Python flatbuffer dump: INT8[1,96,96,3] in,
- * INT8[1,12,12,2] out (post-Slice/Softmax). */
-#define NPU_MODEL_INPUT_WIDTH 96U
-#define NPU_MODEL_INPUT_HEIGHT 96U
-#define NPU_MODEL_GRID_WIDTH 12U
-#define NPU_MODEL_GRID_HEIGHT 12U
+ * backbone), confirmed via a Python flatbuffer dump: INT8[1,72,72,3] in,
+ * INT8[1,9,9,2] out (post-Slice/Softmax). */
+#define NPU_MODEL_INPUT_WIDTH 72U
+#define NPU_MODEL_INPUT_HEIGHT 72U
+#define NPU_MODEL_GRID_WIDTH 9U
+#define NPU_MODEL_GRID_HEIGHT 9U
 #define NPU_MODEL_CLASS_COUNT 1U /* +1 implicit background channel in the raw tensor */
 #define NPU_MODEL_DETECTION_THRESHOLD 0.5f /* matches model_variables.h's .threshold */
 
 static const char *const s_labels[NPU_MODEL_CLASS_COUNT] = {"face"};
 
 /* Sized over the converter's own report for this model's NeutronGraph
- * node (inputs 27,648 + NeutronGraph-internal outputs 576 + scratch
- * 138,240 = 166,464 bytes), plus margin for the Slice/Softmax
- * intermediate tensors and TFLM's own per-tensor bookkeeping - larger
- * than the earlier 64x64 3-class model's 112KB, since this model's 96x96
- * input and its NeutronGraph's internal scratch are both bigger. Not yet
- * confirmed against a real AllocateTensors() run on hardware (no debug
- * probe available in the session this was converted in) - if
- * AllocateTensors() fails at runtime (logged clearly below), bump this
- * further; m_data had roughly the same headroom this project's earlier
- * NPU arena sizing used (see WORKLOG.md "Bug #2"/"Bug #3"), but that
- * headroom hasn't been re-measured against this specific model's needs
- * yet. */
-constexpr int kTensorArenaSize = 184 * 1024;
+ * node (inputs 15,552 + NeutronGraph-internal outputs 324 + scratch
+ * 77,760 = 93,636 bytes), plus ~28% margin for the Slice/Softmax
+ * intermediate tensors and TFLM's own per-tensor bookkeeping - the same
+ * proportional margin the project's very first (64x64, 3-class) NPU
+ * model used (99.8KB estimate -> 112KB arena). Comfortably fits m_data
+ * alongside the 153,600-byte camera frame buffer (153,600 + 122,880 =
+ * 276,480 of 319,488 bytes stock m_data, ~43KB spare) - unlike the
+ * deploy-version-1 96x96 model, which needed >=166KB here and did not
+ * fit at all (see WORKLOG.md's top entry). Still not confirmed against
+ * a real AllocateTensors() run on hardware as of writing - if it fails
+ * at runtime (logged clearly below), there's plenty of headroom in
+ * m_data to bump this further, unlike the v1 model's situation. */
+constexpr int kTensorArenaSize = 120 * 1024;
 static uint8_t s_tensorArena[kTensorArenaSize] __attribute__((aligned(16)));
 
 static const tflite::Model *s_model = nullptr;

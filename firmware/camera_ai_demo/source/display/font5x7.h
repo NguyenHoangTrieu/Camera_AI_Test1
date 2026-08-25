@@ -2,7 +2,7 @@
  * font5x7.h - hand-designed 5x7 bitmap font.
  *
  * Only covers the characters the status display in main.c actually uses
- * (O P E N Y A W I G C L S D 0 1 : space) - not a full ASCII table.
+ * (F O P E N Y A W I G C L S D 0 1 : space) - not a full ASCII table.
  * Each glyph is 5 columns (left to right); each column byte's bit0..bit6
  * is that column's pixels top to bottom (bit7 unused).
  */
@@ -21,6 +21,7 @@ static const font5x7_glyph_t FONT5X7[] = {
     {'O', {0x3E, 0x41, 0x41, 0x41, 0x3E}}, /* O */
     {'P', {0x7F, 0x09, 0x09, 0x09, 0x06}}, /* P */
     {'E', {0x7F, 0x49, 0x49, 0x49, 0x41}}, /* E */
+    {'F', {0x7F, 0x09, 0x09, 0x09, 0x01}}, /* F - added for "FACE" status label */
     {'N', {0x7F, 0x02, 0x0C, 0x10, 0x7F}}, /* N */
     {'Y', {0x03, 0x04, 0x78, 0x04, 0x03}}, /* Y */
     {'A', {0x7C, 0x12, 0x11, 0x12, 0x7C}}, /* A */

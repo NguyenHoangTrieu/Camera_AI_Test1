@@ -225,30 +225,65 @@ int main(void) {
 
 #if !DEMO_AI_MODEL_USE_NPU
   /* Dedicated AI scratch pool - overflow area for ei_sramx_alloc.c's
-   * allocator, used once the primary 96KB m_sramx pool is exhausted. For
-   * the current face-detection model, EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE
-   * is 185,036 bytes - bigger than the ~94-95KB primary pool (96KB minus
-   * the LIFO free-record stack) on its own (this model's 96x96 input is
-   * much bigger than the earlier 3-class model's 64x64, hence the bigger
-   * arena), so most of the tensor arena now has to live in this overflow
-   * pool. Sized to 96KB - (185,036 - ~95KB primary) leaves only a few KB
-   * of margin over the bare deficit, plus the DSP resize step's small
-   * per-page scratch buffers on top of that - not yet confirmed against a
-   * real allocator high-water-mark on hardware (see
-   * EI_SRAMX_GetHighWaterMark() in model_runner.cpp's error path if this
-   * turns out too tight and inference starts failing at runtime). Only
-   * declared for the CPU/CMSIS-NN build - the NPU build
-   * (model_runner_npu.cpp) never calls into ei_sramx_alloc.c, so this
-   * would just be dead weight competing with that build's own (much
-   * larger, for this model) static tensor arena in the same m_data
-   * budget. */
-  static uint8_t s_aiScratchPool[96U * 1024U] __attribute__((aligned(16)));
+   * allocator, used once the primary 96KB m_sramx pool is exhausted.
+   * IMPORTANT (learned the hard way, see WORKLOG.md's top entry): the
+   * tensor arena is allocated as ONE single ei_calloc() call, and
+   * ei_sramx_alloc.c's two-tier allocator can only satisfy a single
+   * allocation that fits ENTIRELY within one tier - it cannot split one
+   * allocation across primary (m_sramx) + this overflow pool (m_data),
+   * since those are physically non-contiguous memory banks (0x04000000
+   * vs 0x20000000) that a single C pointer can't span. So this pool
+   * alone, not "primary + this combined", must be >= whatever
+   * EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE is (currently 112,460 bytes,
+   * this project's deploy-version-2 face model, 72x72 input - the
+   * deploy-version-1 96x96 model needed 185,036 bytes here, which
+   * didn't fit *at all* no matter how this pool was sized, since
+   * 185,036 + the 153,600-byte camera frame buffer alone exceeds
+   * m_data's entire 312KB stock capacity - that model had to be
+   * retrained smaller, not worked around in firmware). 120KB leaves
+   * ~10KB of margin over the current model's bare 112,460-byte
+   * requirement for the DSP resize step's small per-page scratch
+   * buffers - if AllocateTensors()/ei_calloc() still fails at runtime
+   * (see EI_SRAMX_GetHighWaterMark() in model_runner.cpp's error path),
+   * there's ~43KB of further headroom free in m_data to grow this
+   * (153,600 + 122,880 = 276,480 of 319,488 bytes stock m_data - see the
+   * comment on kTensorArenaSize in model_runner_npu.cpp for the matching
+   * NPU-side budget math). Only declared for the CPU/CMSIS-NN build -
+   * the NPU build (model_runner_npu.cpp) never calls into
+   * ei_sramx_alloc.c, so this would just be dead weight competing with
+   * that build's own static tensor arena in the same m_data budget. */
+  static uint8_t s_aiScratchPool[120U * 1024U] __attribute__((aligned(16)));
   EI_SRAMX_SetOverflowPool(s_aiScratchPool, sizeof(s_aiScratchPool));
 #endif /* !DEMO_AI_MODEL_USE_NPU */
+
+  /* Set right after CAMERA_CAPTURE_Reinit() below, cleared once the
+   * following frame has been consumed. DIAGNOSTIC (2026-08-25): every
+   * frame logged by CAMERA_CAPTURE_LogFrameSignature() in this loop was
+   * observed reading back as completely flat (min==max==avg==0x0000)
+   * on real hardware, every time, even confirmed after a genuine power
+   * cycle (not just a probe-triggered reset) - but the exact same
+   * Deinit()/inference/Reinit() cycle at a similarly fast cadence was
+   * confirmed working (real, varying pixel data) with the project's
+   * earlier 3-class model, and camera_capture.c itself is byte-identical
+   * to that working version. Working theory being tested here: SmartDMA
+   * needs the frame immediately following a fresh CAMERA_CAPTURE_Reinit()
+   * to fully (re-)synchronize with the OV7670's HREF/VSYNC/PCLK timing,
+   * and that very first post-reinit frame isn't trustworthy - discard it
+   * and use the *second* frame after each reinit instead. If this fixes
+   * it, the frame rate this loop can consume is effectively halved (two
+   * real camera frames spent per inference cycle instead of one) - if it
+   * does NOT fix it, this diagnostic comment/flag should be removed and
+   * the investigation continued elsewhere (see WORKLOG.md). */
+  bool skipNextFrame = false;
 
   while (1) {
     if (CAMERA_CAPTURE_IsFrameReady()) {
       CAMERA_CAPTURE_ClearFrameReady();
+
+      if (skipNextFrame) {
+        skipNextFrame = false;
+        continue;
+      }
 
       uint16_t *frame = CAMERA_CAPTURE_GetFrameBuffer();
       uint32_t frameNumber = CAMERA_CAPTURE_GetFrameCount();
@@ -275,6 +310,7 @@ int main(void) {
                             &aiResult);
 
       CAMERA_CAPTURE_Reinit();
+      skipNextFrame = true;
 
       bool sawFace = false;
       if (aiResult.valid) {
