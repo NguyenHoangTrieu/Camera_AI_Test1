@@ -1,0 +1,4 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c:19:10:SCCB_WriteReg	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c:25:10:SCCB_WriteMultiRegs	40	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c:35:10:SCCB_ReadReg	40	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c:41:10:SCCB_ModifyReg	32	static

@@ -1,0 +1,10 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:153:21:USB_DeviceClassAllocateHandle	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:196:21:USB_DeviceClassFreeHandle	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:231:21:USB_DeviceClassGetHandleByControllerId	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:264:21:USB_DeviceClassGetHandleByDeviceHandle	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:295:14:USB_DeviceClassGetDeviceHandle	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:329:14:USB_DeviceClassEvent	40	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:395:14:USB_DeviceClassCallback	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:447:14:USB_DeviceClassInit	40	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:529:14:USB_DeviceClassDeinit	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_class.c:596:14:USB_DeviceClassGetSpeed	24	static

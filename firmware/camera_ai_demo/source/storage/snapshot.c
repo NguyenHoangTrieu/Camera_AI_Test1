@@ -154,6 +154,21 @@ void SNAPSHOT_Init(void)
     else
     {
         PRINTF("Snapshot: SD card ready.\r\n");
+
+        /* Diagnostic (WORKLOG.md, Stage 4 follow-up): a real write failure
+         * ("could not create a new file" / write returning short) has two
+         * live theories - a near-full card (this card already has 30+
+         * full-size 150KB snapshots from earlier sessions) or a residual
+         * concurrency gap. Printing free space directly settles which one
+         * it is instead of guessing from log timing alone. */
+        DWORD freeClusters;
+        FATFS *fs;
+        if (f_getfree("", &freeClusters, &fs) == FR_OK)
+        {
+            uint32_t freeBytes = (uint32_t)freeClusters * fs->csize * 512U;
+            PRINTF("Snapshot: %u bytes free (%u KB) on the SD card.\r\n", (unsigned)freeBytes,
+                   (unsigned)(freeBytes / 1024U));
+        }
     }
 }
 

@@ -1,0 +1,17 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:18:6:VIDEO_IsYUV	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:32:6:VIDEO_DelayMs	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:51:9:VIDEO_GetPixelSizeBits	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:101:10:VIDEO_RINGBUF_Init	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:113:10:VIDEO_RINGBUF_Get	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:142:10:VIDEO_RINGBUF_Put	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:166:10:VIDEO_RINGBUF_GetLength	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:184:6:VIDEO_RINGBUF_IsEmpty	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:200:6:VIDEO_RINGBUF_IsFull	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:222:10:VIDEO_MEMPOOL_Init	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:236:6:VIDEO_MEMPOOL_InitEmpty	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:242:6:VIDEO_MEMPOOL_Put	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:249:7:VIDEO_MEMPOOL_Get	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:262:10:VIDEO_MEMPOOL_GetCount	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:267:10:VIDEO_STACK_Init	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:276:10:VIDEO_STACK_Pop	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c:294:10:VIDEO_STACK_Push	24	static

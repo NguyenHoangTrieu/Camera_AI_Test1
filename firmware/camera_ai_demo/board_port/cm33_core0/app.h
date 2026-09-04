@@ -152,9 +152,33 @@
 #endif /* DEMO_LCD_ARDUINO_HEADER */
 
 /*******************************************************************************
+ * Dual-core RTOS migration (see WORKLOG.md) - only relevant when built with
+ * -DDUALCORE_RTOS=ON. CORE1_BOOT_ADDRESS is where core0 copies core1's
+ * incbin'd image (see source/main_core0.c) before releasing it from reset
+ * via MCMGR_StartCore(); it must match board_port/cm33_core1/
+ * MCXN947_cm33_core1_dualcore.ld's m_interrupts ORIGIN exactly. Pattern
+ * (core1_image_start/end/size symbols from components/misc_utilities/
+ * fsl_incbin.S's `.incbin` embed) copied from NXP's own multicore
+ * hello_world example for this board - see WORKLOG.md for how the whole
+ * two-step build (core1 built first, core0 embeds its raw .bin) works.
+ ******************************************************************************/
+#define CORE1_BOOT_ADDRESS 0x2004E000
+
+#if defined(__GNUC__)
+extern const char core1_image_start[];
+extern const char *core1_image_end;
+extern uint32_t core1_image_size;
+#define CORE1_IMAGE_START ((void *)core1_image_start)
+#endif
+
+/*******************************************************************************
  * Prototypes
  ******************************************************************************/
 void BOARD_InitHardware(void);
+
+#ifdef CORE1_IMAGE_COPY_TO_RAM
+uint32_t get_core1_image_size(void);
+#endif
 
 /* SmartDMA camera capture only works with DCDC at Mid; USB HS PHY needs
  * Overdrive - see hardware_init.c and WORKLOG.md. These just flip the

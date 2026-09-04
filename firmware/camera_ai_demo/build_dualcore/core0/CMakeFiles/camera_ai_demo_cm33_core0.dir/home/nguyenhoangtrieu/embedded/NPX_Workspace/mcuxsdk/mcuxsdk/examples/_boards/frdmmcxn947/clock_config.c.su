@@ -1,0 +1,7 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.h:1496:20:CLOCK_EnableClock	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:54:6:BOARD_InitBootClocks	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:90:6:BOARD_BootClockFRO12M	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:157:6:BOARD_BootClockFROHF48M	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:230:6:BOARD_BootClockFROHF144M	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:308:6:BOARD_BootClockPLL150M	48	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c:400:6:BOARD_BootClockPLL100M	48	static

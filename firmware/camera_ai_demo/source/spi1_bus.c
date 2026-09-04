@@ -36,6 +36,45 @@
 #include "fsl_lpspi_edma.h"
 #include <stdbool.h>
 
+#ifdef DUALCORE_RTOS
+#include "FreeRTOS.h"
+#include "semphr.h"
+
+static SemaphoreHandle_t s_busMutex;
+
+/* Plain mutex, NOT recursive - deliberately reverted (WORKLOG.md, Stage 4
+ * follow-up): switching to xSemaphoreCreateRecursiveMutex() while chasing
+ * a separate write-failure bug caused SD card mount itself to start
+ * failing consistently (SDSPI_Init returning
+ * kStatus_SDSPI_SendOperationConditionFailed - the card's own ACMD41
+ * handshake) - confirmed NOT a stuck-card/needs-power-cycle issue (failed
+ * identically after a real power cycle) and confirmed tied to this
+ * specific change (reverting it alone, with everything else unchanged,
+ * restored mount success). Root cause of exactly why recursive-vs-plain
+ * matters here not fully understood - not worth shipping a change whose
+ * failure mode isn't understood, per this project's own "verify, don't
+ * guess" standard. Structured to not need recursion at all instead: only
+ * ONE call site ever holds this lock across a nested disk_*() call
+ * (StorageTask's SNAPSHOT_OnFrame() wrapper in main_core1.c) - removed
+ * the redundant inner locks in sd_spi_disk.c's disk_read()/disk_write()
+ * (see those functions) rather than reaching for recursion again. */
+void SPI1_BUS_CreateLock(void)
+{
+    s_busMutex = xSemaphoreCreateMutex();
+    configASSERT(s_busMutex != NULL);
+}
+
+void SPI1_BUS_Lock(void)
+{
+    (void)xSemaphoreTake(s_busMutex, portMAX_DELAY);
+}
+
+void SPI1_BUS_Unlock(void)
+{
+    (void)xSemaphoreGive(s_busMutex);
+}
+#endif
+
 #define SPI1_BUS_BASEADDR LPSPI1
 #define SPI1_BUS_CLK_FREQ CLOCK_GetLPFlexCommClkFreq(1u) /* FRO_HF/1 = 48MHz, see hardware_init.c's kFRO_HF_DIV_to_FLEXCOMM1 comment for why (was FRO12M/12MHz until the fps fix in WORKLOG.md's 2026-09-04 entry). */
 

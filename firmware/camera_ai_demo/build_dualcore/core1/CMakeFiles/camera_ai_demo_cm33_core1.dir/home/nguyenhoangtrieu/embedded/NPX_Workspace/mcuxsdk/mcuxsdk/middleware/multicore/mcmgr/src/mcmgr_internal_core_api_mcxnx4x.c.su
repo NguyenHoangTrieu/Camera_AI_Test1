@@ -1,0 +1,8 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:51:16:mcmgr_platform_init_internal	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:70:16:mcmgr_start_core_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:88:16:mcmgr_get_startup_data_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:110:16:mcmgr_stop_core_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:125:16:mcmgr_get_core_property_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:133:14:mcmgr_get_current_core_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:142:16:mcmgr_trigger_event_internal	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c:177:6:MAILBOX_IRQHandler	4	static

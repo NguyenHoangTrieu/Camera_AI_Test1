@@ -106,4 +106,22 @@ status_t SPI1_BUS_PrepareDMA(uint32_t pcs);
  *  path above, unaffected. */
 status_t SPI1_BUS_TransferBytesDMA(const uint8_t *data, uint32_t size);
 
+#ifdef DUALCORE_RTOS
+/*! @brief Dual-core RTOS build only (see WORKLOG.md, Stage 4): the LCD
+ *  (CameraLcdTask) and SD card (StorageTask) now live in two separate,
+ *  preemptible FreeRTOS tasks that both touch this same physical bus -
+ *  something the legacy single-threaded bare-metal build never had to
+ *  worry about. CONFIRMED on real hardware that without this, SD file
+ *  creation fails intermittently ("could not create a new file") because
+ *  a concurrent LCD push can preempt an in-flight SD transaction and
+ *  interleave its own bus traffic mid-command. Call SPI1_BUS_CreateLock()
+ *  once from main(), before starting the scheduler; then wrap every
+ *  COMPLETE logical transaction (not just one low-level call - e.g. all
+ *  of LCD_DrawImage(), or one whole disk_read()/disk_write() call) with
+ *  Lock/Unlock. */
+void SPI1_BUS_CreateLock(void);
+void SPI1_BUS_Lock(void);
+void SPI1_BUS_Unlock(void);
+#endif
+
 #endif /* _SPI1_BUS_H_ */

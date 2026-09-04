@@ -1,0 +1,2 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/shared/freertos_hooks.c:14:6:vApplicationStackOverflowHook	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/shared/freertos_hooks.c:24:6:vApplicationMallocFailedHook	8	static

@@ -182,8 +182,23 @@ DSTATUS disk_initialize(BYTE pdrv)
     s_host.csActivePolarity = SDCARD_SPI_CsActivePolarity;
     s_card.host             = &s_host;
 
+    /* Dual-core RTOS build only - tight lock around just this one call,
+     * NOT the whole SNAPSHOT_Init()/SNAPSHOT_OnFrame() sequence (see
+     * spi1_bus.h's SPI1_BUS_Lock() comment, WORKLOG.md Stage 4 follow-up):
+     * confirmed on real hardware that wrapping a wider scope (either from
+     * the caller, or via a recursive mutex allowing nested locks at both
+     * levels) makes SD card mount fail consistently and reproducibly at
+     * the card's own ACMD41 handshake - survived a real power cycle, so
+     * not a stuck-card issue, but root cause not otherwise pinned down.
+     * This narrow scope is the one confirmed to not break mount. */
     s_initInProgress = true;
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Lock();
+#endif
     s_cardReady      = (SDSPI_Init(&s_card) == kStatus_Success);
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Unlock();
+#endif
     s_initInProgress = false;
     return s_cardReady ? 0U : STA_NOINIT;
 }
@@ -208,8 +223,15 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
      * different rate) the shared bus since the last SD access. Unlike
      * disk_initialize()'s SDSPI_Init(), plain reads/writes never call
      * setFrequency() again on their own - see the file-header comment. */
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Lock(); /* See disk_initialize()'s comment above. */
+#endif
     (void)SPI1_BUS_SetBaudRate(SD_SPI_OPERATING_BAUDRATE);
-    return (SDSPI_ReadBlocks(&s_card, buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
+    DRESULT result = (SDSPI_ReadBlocks(&s_card, buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Unlock();
+#endif
+    return result;
 }
 
 #if FF_FS_READONLY == 0
@@ -219,8 +241,15 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
     {
         return RES_PARERR;
     }
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Lock(); /* See disk_initialize()'s comment above. */
+#endif
     (void)SPI1_BUS_SetBaudRate(SD_SPI_OPERATING_BAUDRATE); /* See disk_read()'s comment above. */
-    return (SDSPI_WriteBlocks(&s_card, (uint8_t *)buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
+    DRESULT result = (SDSPI_WriteBlocks(&s_card, (uint8_t *)buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
+#ifdef DUALCORE_RTOS
+    SPI1_BUS_Unlock();
+#endif
+    return result;
 }
 #endif
 

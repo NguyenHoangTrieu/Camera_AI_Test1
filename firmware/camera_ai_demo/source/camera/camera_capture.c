@@ -48,7 +48,22 @@ static camera_device_handle_t s_cameraHandle = {
 
 static volatile bool s_frameReady = false;
 static volatile uint32_t s_frameCount = 0;
+
+#ifdef DUALCORE_RTOS
+/* Dual-core RTOS build (see WORKLOG.md): a 320x240 RGB565 frame
+ * (153,600 bytes) does not fit inside core1's own ~43KB RAM region at
+ * all - confirmed the hard way, a real link-time overflow, not a margin
+ * concern. Lives in the shared RAM region (source/shared/ipc_layout.h)
+ * instead, which core0's linker script (board_port/cm33_core0/
+ * MCXN947_cm33_core0_dualcore.ld) carves out of its own much larger
+ * m_data specifically for this. core1 (this file) just points at the
+ * fixed address directly - see ipc_layout.h's header comment for why
+ * core1 doesn't need its own linker-level awareness of this region. */
+#include "ipc_layout.h"
+#define s_frameBuffer ((uint16_t *)IPC_FRAME_BUFFER_ADDR)
+#else
 static uint16_t s_frameBuffer[DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT];
+#endif
 
 /* BUG FOUND AND FIXED (2026-09-04, see WORKLOG.md): this was 32 bytes -
  * HALF of what fsl_smartdma_fw.h's own smartdma_camera_param_t comment
@@ -129,7 +144,10 @@ static void CAMERA_CAPTURE_InitDevice(void) {
 static void CAMERA_CAPTURE_InitSmartDma(void) {
   static smartdma_camera_param_t smartdmaParam;
 
-  memset((void *)s_frameBuffer, 0, sizeof(s_frameBuffer));
+  /* sizeof(s_frameBuffer) would be wrong in the DUALCORE_RTOS build - that
+   * name is a pointer-valued macro there (see the declaration above), not
+   * an array, so sizeof() would only cover the pointer itself. */
+  memset((void *)s_frameBuffer, 0, (size_t)DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT * sizeof(uint16_t));
 
   SMARTDMA_InitWithoutFirmware();
   SMARTDMA_InstallFirmware(SMARTDMA_CAMERA_MEM_ADDR, s_smartdmaCameraFirmware,

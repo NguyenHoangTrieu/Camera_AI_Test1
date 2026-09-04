@@ -1,0 +1,28 @@
+# Available runners configured by board.cmake.
+runners:
+- linkserver
+- jlink
+
+# Default flash runner if --runner is not given.
+flash-runner: linkserver
+
+# Default debug runner if --runner is not given.
+debug-runner: linkserver
+
+# Common runner configuration values.
+config:
+  board_dir: /home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947
+  # Build outputs:
+  bin_file: camera_ai_demo_cm33_core1.bin
+  elf_file: camera_ai_demo_cm33_core1.elf
+  hex_file: camera_ai_demo_cm33_core1.hex
+
+# Runner specific arguments
+args:
+  linkserver:
+    - --dt-flash=y
+    - --device=MCXN947:FRDM-MCXN947
+    - --core=cm33_core1
+  jlink:
+    - --dt-flash=y
+    - --device=MCXN947_M33_1

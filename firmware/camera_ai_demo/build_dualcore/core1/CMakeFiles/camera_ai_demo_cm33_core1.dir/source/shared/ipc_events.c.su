@@ -1,0 +1,3 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/shared/ipc_events.c:10:13:IPC_EVENTS_Callback	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/shared/ipc_events.c:20:6:IPC_EVENTS_RegisterHandler	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/shared/ipc_events.c:25:6:IPC_EVENTS_Trigger	0	static

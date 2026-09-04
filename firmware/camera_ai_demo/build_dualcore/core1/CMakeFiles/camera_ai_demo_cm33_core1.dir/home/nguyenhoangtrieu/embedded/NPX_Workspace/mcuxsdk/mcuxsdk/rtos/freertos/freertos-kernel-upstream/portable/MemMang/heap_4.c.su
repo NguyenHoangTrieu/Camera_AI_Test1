@@ -1,0 +1,9 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:173:8:pvPortMalloc	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:354:6:vPortFree	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:413:8:xPortGetFreeHeapSize	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:419:8:xPortGetMinimumEverFreeHeapSize	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:425:6:xPortResetHeapMinimumEverFreeHeapSize	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:431:6:vPortInitialiseBlocks	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:437:8:pvPortCalloc	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:572:6:vPortGetHeapStats	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c:629:6:vPortHeapResetState	0	static

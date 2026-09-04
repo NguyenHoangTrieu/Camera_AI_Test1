@@ -1,0 +1,4 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/snapshot.c:88:13:SNAPSHOT_FormatName	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/snapshot.c:137:6:SNAPSHOT_Init	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/snapshot.c:175:6:SNAPSHOT_OnFrame	200	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/snapshot.c:266:6:SNAPSHOT_IsNoticeActive	0	static

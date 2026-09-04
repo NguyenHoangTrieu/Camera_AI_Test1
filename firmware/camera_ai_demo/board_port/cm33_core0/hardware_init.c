@@ -16,12 +16,19 @@
 #include "fsl_inputmux.h"
 #include "fsl_spc.h"
 
+#ifndef DUALCORE_RTOS
+/* USB Video Class streaming is abandoned and not carried forward into the
+ * dual-core RTOS build - see ARCHITECTURE.md Sec.4/WORKLOG.md. Guarded so
+ * this file can be shared between the legacy single-core build and the
+ * dual-core Stage 1+ bring-up (-DDUALCORE_RTOS=1, see CMakeLists.txt)
+ * without needing source/usb/ on the include path in the latter. */
 #include "usb_device_config.h"
 #include "usb.h"
 #include "usb_device.h"
 #include "usb_device_class.h"
 #include "usb_video_camera.h"
 #include "usb_phy.h"
+#endif /* DUALCORE_RTOS */
 
 /*
  * CONFIRMED (see WORKLOG.md): SmartDMA camera capture only runs reliably
@@ -69,6 +76,7 @@ void BOARD_SetRegulatorsOverdriveVoltage(void)
     }
 }
 
+#ifndef DUALCORE_RTOS
 /*
  * USB High-Speed (EHCI + dedicated HS PHY) bring-up for the UVC camera
  * stream (source/usb/usb_video_camera.c). Copied near-verbatim from the
@@ -79,6 +87,8 @@ void BOARD_SetRegulatorsOverdriveVoltage(void)
  * capture and USB HS can't run at the same time on this chip (see
  * BOARD_SetRegulatorsOverdriveVoltage() above). Unlike the two regulator
  * helpers above, don't call this repeatedly.
+ *
+ * Not carried into the dual-core RTOS build - see the include guard above.
  */
 void USB_DeviceClockInit(void)
 {
@@ -131,6 +141,7 @@ void USB_DeviceIsrEnable(void)
     NVIC_SetPriority((IRQn_Type)irqNumber, USB_DEVICE_INTERRUPT_PRIORITY);
     EnableIRQ((IRQn_Type)irqNumber);
 }
+#endif /* DUALCORE_RTOS */
 
 void BOARD_InitHardware(void)
 {
@@ -258,3 +269,12 @@ void BOARD_InitHardware(void)
 #endif
     BOARD_InitSdCardPins();
 }
+
+#ifdef CORE1_IMAGE_COPY_TO_RAM
+/* core1_image_size (components/misc_utilities/fsl_incbin.S) is the actual
+ * symbol - see app.h's comment for the whole embed mechanism. */
+uint32_t get_core1_image_size(void)
+{
+    return (uint32_t)core1_image_size;
+}
+#endif

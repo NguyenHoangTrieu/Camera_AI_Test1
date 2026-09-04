@@ -34,6 +34,238 @@ file(RELATIVE_PATH BOARD_PORT_REL_PATH
 project(camera_ai_demo LANGUAGES C CXX ASM
         PROJECT_BOARD_PORT_PATH ${BOARD_PORT_REL_PATH})
 
+# Dual-core RTOS migration (see WORKLOG.md/ARCHITECTURE.md): core0 = AI
+# inference only, core1 = camera capture + LCD/SPI display + SD card saving,
+# both running FreeRTOS, MCMGR events for cross-core signaling. OFF by
+# default so the existing, proven single-core bare-metal build (below) stays
+# completely untouched and buildable/flashable as a rollback at every stage
+# of the migration - this option only gates the small, separate bring-up
+# path further down; none of the existing options/sources above are
+# affected by it.
+option(DUALCORE_RTOS "Boot core1 and split camera/LCD/SD (core1) from AI inference (core0) - see WORKLOG.md dual-core migration" OFF)
+
+if(DUALCORE_RTOS)
+    include(${SdkRootDirPath}/CMakeLists.txt)
+
+    # Shared across both cores' branches below - lets board_port/cm33_core0/
+    # hardware_init.c (compiled either way) skip the USB Video Class code
+    # that only exists for the legacy single-core build (USB streaming is
+    # already abandoned per WORKLOG.md/ARCHITECTURE.md Sec.4 - the dual-core
+    # build doesn't carry it forward at all).
+    mcux_add_configuration(
+        CC "-DDUALCORE_RTOS=1"
+    )
+
+    # Stage 2 (WORKLOG.md): FreeRTOS kernel, pulled directly (not via the
+    # CONFIG_MCUX_COMPONENT_middleware.freertos-kernel Kconfig component -
+    # see source/shared/FreeRTOSConfig.h's header comment for why: that
+    # component's Kconfig lives in the same shared prj.conf files the
+    # legacy single-core build also reads, and FreeRTOS's port.c redefines
+    # SVC_Handler/PendSV_Handler/SysTick_Handler - not worth risking on the
+    # working legacy build just to save writing one config header by hand).
+    # Shared between both cores' branches below since both run FreeRTOS.
+    # Only the core kernel modules this project actually uses - no software
+    # timers, event groups, stream buffers or co-routines anywhere in this
+    # codebase (task notifications, used for IPC, don't need any of these -
+    # they're embedded directly in the TCB). Trimmed after a real,
+    # measured core1 m_text overflow (WORKLOG.md, Stage 3) - every one of
+    # these is real code-size budget on core1's tight 60KB region.
+    set(FREERTOS_ROOT ${SdkRootDirPath}/rtos/freertos/freertos-kernel-upstream)
+    mcux_add_source(
+        BASE_PATH ${FREERTOS_ROOT}
+        SOURCES tasks.c
+                list.c
+                queue.c
+                portable/GCC/ARM_CM33_NTZ/non_secure/port.c
+                portable/GCC/ARM_CM33_NTZ/non_secure/portasm.c
+                portable/GCC/ARM_CM33_NTZ/non_secure/mpu_wrappers_v2_asm.c
+                portable/MemMang/heap_4.c
+    )
+    mcux_add_include(
+        BASE_PATH ${FREERTOS_ROOT}
+        INCLUDES include
+                 portable/GCC/ARM_CM33_NTZ/non_secure
+    )
+    # This project's own lightweight MCMGR event wrapper (ISR callback ->
+    # xTaskNotifyFromISR) - shared by both cores' Stage 2+ tasks.
+    mcux_add_source(
+        BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
+        SOURCES source/shared/ipc_events.c source/shared/ipc_events.h
+                source/shared/freertos_hooks.c
+    )
+
+    # Stage 1 (WORKLOG.md): boot-only bring-up - core0 just boots core1 via
+    # MCMGR and both print a UART banner, nothing else yet. Each stage adds
+    # real work (FreeRTOS in Stage 2, camera/LCD/SD on core1 in Stages 3-4,
+    # AI on core0 in Stage 5) on top of this skeleton; this if/else branch
+    # will grow accordingly rather than being rewritten from scratch each
+    # stage.
+    if(${core_id} STREQUAL "cm33_core1")
+        mcux_remove_armgcc_linker_script(
+            LINKER ${SdkRootDirPath}/devices/MCX/MCXN/MCXN947/gcc/MCXN947_cm33_core1_ram.ld
+        )
+        mcux_add_armgcc_linker_script(
+            BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
+            LINKER board_port/cm33_core1/MCXN947_cm33_core1_dualcore.ld
+        )
+        # USB Video Class gets pulled in regardless of prj.conf overrides -
+        # the top-level prj.conf (shared with the legacy single-core build)
+        # sets CONFIG_USB_DEVICE_CONFIG_VIDEO=1, which Kconfig re-derives
+        # `default y if USB_DEVICE_CONFIG_VIDEO > 0` for the video/EHCI/PHY
+        # components on every reconfigure regardless of later per-core
+        # prj.conf overrides (confirmed the hard way - neither disabling
+        # the derived component nor the root trigger in board_port/
+        # cm33_core1/prj.conf stuck). This project never streams over USB
+        # in the dual-core build (already abandoned even in the legacy
+        # build, see ARCHITECTURE.md Sec.4), and it was eating real m_text
+        # budget on core1's tight 60KB region for entirely dead code
+        # (confirmed: nothing in this project's dual-core sources
+        # references any USB API) - removing the compiled sources directly
+        # is the one thing that actually worked.
+        mcux_project_remove_source(
+            BASE_PATH ${SdkRootDirPath}
+            SOURCES middleware/usb/device/usb_device_khci.c
+                    middleware/usb/device/usb_device_ehci.c
+                    middleware/usb/device/usb_device_dci.c
+                    middleware/usb/device/usb_device_ch9.c
+                    middleware/usb/device/class/usb_device_class.c
+                    middleware/usb/device/class/usb_device_video.c
+                    middleware/usb/phy/usb_phy.c
+        )
+        # SPI_RETRY_TIMES - REQUIRED, not optional (see the matching block
+        # further down this file, under the legacy build's own comment for
+        # the full story): without this, fsl_lpspi.c's blocking transfers
+        # compile to an unconditional `while (...) {}` with zero timeout on
+        # this chip's LP_FLEXCOMM-hosted LPSPI, and a missing/dead SD card
+        # hangs boot completely instead of failing gracefully. The
+        # DUALCORE_RTOS branch returns before reaching the legacy copy of
+        # this macro further down, so it needs repeating here.
+        mcux_add_macro(
+            CC "-DSPI_RETRY_TIMES=100000"
+        )
+        # -Os for the whole core1 image (overrides the SDK-wide -O0
+        # default - confirmed appended after it on the compile command
+        # line, so it wins per GCC's "last -O flag wins" rule). Added
+        # after a real, measured overflow (WORKLOG.md, Stage 4): FreeRTOS
+        # + MCMGR + camera/LCD/SPI/SD/FatFs genuinely doesn't fit core1's
+        # fixed 104KB region at -O0, even after trimming FreeRTOS to its
+        # minimum and rebalancing text/data twice already - there was no
+        # rebalancing split left that could fit the total. Safe here
+        # (unlike the legacy build's own -O2-is-wrong lesson for
+        # lcd_bitbang.c, see that comment further down this file): none of
+        # core1's code is timing-sensitive software bit-banging - the
+        # camera and LCD buses are both driven by real hardware (SmartDMA,
+        # LPSPI1's own baud-rate generator), so optimization can only
+        # affect CPU-side speed, never the electrical signal timing.
+        mcux_add_configuration(
+            CC "-Os"
+        )
+        # SD-over-SPI protocol layer + FatFs core, pulled directly - same
+        # reasoning as the legacy build's own copy of these blocks further
+        # down this file (Kconfig's middleware.sdmmc.sdspi/middleware.fatfs
+        # components pull in things that don't compile or collide on this
+        # chip/project - see those comments for the full explanation).
+        mcux_add_source(
+            BASE_PATH ${SdkRootDirPath}
+            SOURCES middleware/sdmmc/sdspi/fsl_sdspi.c
+                    middleware/sdmmc/sdspi/fsl_sdspi.h
+                    middleware/sdmmc/common/fsl_sdmmc_spec.h
+        )
+        mcux_add_include(
+            BASE_PATH ${SdkRootDirPath}
+            INCLUDES middleware/sdmmc/sdspi
+                     middleware/sdmmc/common
+        )
+        mcux_add_source(
+            BASE_PATH ${SdkRootDirPath}
+            SOURCES middleware/fatfs/source/ff.c
+                    middleware/fatfs/source/ff.h
+                    middleware/fatfs/source/diskio.h
+        )
+        mcux_add_include(
+            BASE_PATH ${SdkRootDirPath}
+            INCLUDES middleware/fatfs/source
+        )
+        mcux_add_source(
+            BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
+            SOURCES source/main_core1.c
+                    source/camera/camera_capture.c
+                    source/camera/camera_capture.h
+                    source/display/lcd_display.h
+                    source/display/lcd_spi_hw.c
+                    source/display/lcd_spi_hw.h
+                    source/spi1_bus.c
+                    source/spi1_bus.h
+                    source/storage/sd_spi_disk.c
+                    source/storage/sd_spi_disk.h
+                    source/storage/snapshot.c
+                    source/storage/snapshot.h
+                    source/storage/ffconf.h
+                    source/display/bbox_overlay.c
+                    source/display/bbox_overlay.h
+                    source/ai/model_runner.h
+        )
+        mcux_add_include(
+            INCLUDES source source/shared source/camera source/display source/storage source/ai
+        )
+        # -O2 for the same real-hardware-confirmed reason as the legacy
+        # single-core build (see the matching block further down this
+        # file, under LCD_ARDUINO_HEADER_BITBANG): this driver's bus timing
+        # comes from LPSPI's own hardware baud-rate generator, not software
+        # instruction latency, so -O2 here only speeds up CPU-side work
+        # (LCD_PushPixelsOpen()'s byte-swap loop) - it cannot make the
+        # electrical SPI signal "too fast" the way it would for a bit-bang
+        # driver.
+        set_source_files_properties(
+            ${CMAKE_CURRENT_SOURCE_DIR}/source/display/lcd_spi_hw.c
+            PROPERTIES COMPILE_OPTIONS "-O2"
+        )
+        # Raw core1 image for core0 to .incbin - see board_port/cm33_core0/
+        # app.h's comment for the whole embed mechanism.
+        mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${CONFIG_TOOLCHAIN}/core1_image.bin)
+    else() # cm33_core0
+        mcux_remove_armgcc_linker_script(
+            LINKER ${SdkRootDirPath}/devices/MCX/MCXN/MCXN947/gcc/MCXN947_cm33_core0_flash.ld
+        )
+        mcux_add_armgcc_linker_script(
+            BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
+            LINKER board_port/cm33_core0/MCXN947_cm33_core0_dualcore.ld
+        )
+        mcux_add_configuration(
+            CC "-DCORE1_IMAGE_COPY_TO_RAM"
+        )
+        # fsl_incbin.S pulled directly (not via the CONFIG_MCUX_COMPONENT_
+        # utility.incbin Kconfig component) - same reasoning as this
+        # project's other direct-pull sources (fsl_sdspi.c, ff.c below):
+        # avoids the Kconfig component ever being (accidentally) enabled
+        # for the plain single-core build, which would require a
+        # core1_image.bin to exist that doesn't in that configuration.
+        mcux_add_source(
+            BASE_PATH ${SdkRootDirPath}
+            SOURCES components/misc_utilities/fsl_incbin.S
+        )
+        mcux_add_source(
+            BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
+            SOURCES source/main_core0.c
+        )
+        mcux_add_include(
+            INCLUDES source source/shared
+        )
+        # Assembler include path so fsl_incbin.S's `.incbin "core1_image.bin"`
+        # finds core1's build output - core1 MUST be built first into a
+        # sibling `core1/` directory next to this build's own directory
+        # (build.sh does this - see WORKLOG.md).
+        mcux_add_include(
+            TOOLCHAINS armgcc
+            BASE_PATH ${APPLICATION_BINARY_DIR}
+            INCLUDES ../core1/${CONFIG_TOOLCHAIN}/
+        )
+        mcux_convert_binary(BINARY ${APPLICATION_BINARY_DIR}/${MCUX_SDK_PROJECT_NAME}.bin)
+    endif()
+
+    return()
+endif()
+
 include(${SdkRootDirPath}/CMakeLists.txt)
 
 # Edge Impulse tensor arena (see source/ai/ei_sramx_alloc.c - primary pool

@@ -1,0 +1,9 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:85:13:CAMERA_CAPTURE_CompleteCallback	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:144:13:CAMERA_CAPTURE_InitSmartDma	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:164:6:CAMERA_CAPTURE_Init	64	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:169:6:CAMERA_CAPTURE_Deinit	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:174:6:CAMERA_CAPTURE_Reinit	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:176:6:CAMERA_CAPTURE_IsFrameReady	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:178:6:CAMERA_CAPTURE_ClearFrameReady	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:180:11:CAMERA_CAPTURE_GetFrameBuffer	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/camera/camera_capture.c:182:10:CAMERA_CAPTURE_GetFrameCount	0	static

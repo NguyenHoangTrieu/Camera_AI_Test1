@@ -1,0 +1,3 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/build_dualcore/core0/fsl_os_abstraction_config.h
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/build_dualcore/core0/mcux_config.h
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/build_dualcore/core0/usb_device_config.h

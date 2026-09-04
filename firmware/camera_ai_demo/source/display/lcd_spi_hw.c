@@ -234,7 +234,17 @@ void LCD_Init(void) {
          srcClockHz, LCD_SPI_BAUDRATE_HZ, achievedHz);
 
   LCD_InitGpioPins();
+#ifdef DUALCORE_RTOS
+  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_Lock() comment
+   * (WORKLOG.md, Stage 4): a boot-time race against a concurrent
+   * SNAPSHOT_Init()/disk_initialize() is possible too, just narrower and
+   * one-shot rather than the repeated per-frame race LCD_DrawImage() has. */
+  SPI1_BUS_Lock();
+#endif
   LCD_InitPanel();
+#ifdef DUALCORE_RTOS
+  SPI1_BUS_Unlock();
+#endif
 }
 
 void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
@@ -333,7 +343,17 @@ void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
  * are the diagnostic to trust if this needs re-measuring. */
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height,
                    const uint16_t *pixels) {
+#ifdef DUALCORE_RTOS
+  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_Lock() comment
+   * (WORKLOG.md, Stage 4): this whole SetWindow+Push sequence must be
+   * atomic against StorageTask's concurrent SD transactions on the same
+   * physical bus. */
+  SPI1_BUS_Lock();
+#endif
   LCD_SetWindow(x0, y0, (uint16_t)(x0 + width - 1U),
                 (uint16_t)(y0 + height - 1U));
   LCD_PushPixels(pixels, (uint32_t)width * height);
+#ifdef DUALCORE_RTOS
+  SPI1_BUS_Unlock();
+#endif
 }

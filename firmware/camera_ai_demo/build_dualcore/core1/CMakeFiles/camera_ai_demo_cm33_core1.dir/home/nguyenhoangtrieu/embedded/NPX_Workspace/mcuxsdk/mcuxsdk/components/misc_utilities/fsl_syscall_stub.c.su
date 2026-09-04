@@ -1,0 +1,12 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:44:27:_write	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:51:27:_read	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:59:27:_close	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:66:27:_lseek	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:73:27:_fstat	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:80:27:_getpid	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:87:27:_isatty	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:94:27:_kill	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:101:27:_link	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:108:27:_unlink	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:115:27:_open	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_syscall_stub.c:122:27:_stat	8	static

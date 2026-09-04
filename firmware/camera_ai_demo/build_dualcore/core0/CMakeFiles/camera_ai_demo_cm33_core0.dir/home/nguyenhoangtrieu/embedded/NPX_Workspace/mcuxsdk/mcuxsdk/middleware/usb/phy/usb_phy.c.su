@@ -1,0 +1,5 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/phy/usb_phy.c:14:7:USB_EhciPhyGetBase	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/phy/usb_phy.c:72:10:USB_EhciPhyInit	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/phy/usb_phy.c:137:10:USB_EhciLowPowerPhyInit	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/phy/usb_phy.c:196:6:USB_EhciPhyDeinit	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/phy/usb_phy.c:224:6:USB_EhcihostPhyDisconnectDetectCmd	24	static

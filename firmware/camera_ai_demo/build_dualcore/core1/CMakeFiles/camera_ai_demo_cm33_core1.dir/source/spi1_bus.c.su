@@ -1,0 +1,10 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:107:13:SPI1_BUS_DmaCallback	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:61:6:SPI1_BUS_CreateLock	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:67:6:SPI1_BUS_Lock	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:72:6:SPI1_BUS_Unlock	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:116:6:SPI1_BUS_Init	136	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:148:10:SPI1_BUS_SetBaudRate	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:189:10:SPI1_BUS_GetSourceClockFreq	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:194:10:SPI1_BUS_TransferBlocking	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:214:10:SPI1_BUS_PrepareDMA	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/spi1_bus.c:247:10:SPI1_BUS_TransferBytesDMA	32	static

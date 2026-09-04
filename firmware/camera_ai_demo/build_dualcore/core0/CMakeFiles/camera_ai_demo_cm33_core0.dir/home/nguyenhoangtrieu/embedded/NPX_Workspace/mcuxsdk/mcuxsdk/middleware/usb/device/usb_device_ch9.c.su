@@ -1,0 +1,12 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:119:21:USB_DeviceCh9GetStatus	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:232:21:USB_DeviceCh9SetClearFeature	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:386:21:USB_DeviceCh9SetAddress	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:465:21:USB_DeviceCh9GetDescriptor	48	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:612:21:USB_DeviceCh9GetConfiguration	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:660:21:USB_DeviceCh9SetConfiguration	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:743:21:USB_DeviceCh9GetInterface	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:796:21:USB_DeviceCh9SetInterface	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:860:21:USB_DeviceCh9SynchFrame	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:930:21:USB_DeviceControlCallbackFeedback	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:984:21:USB_DeviceControlCallback	168	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c:1234:14:USB_DeviceControlPipeInit	40	static

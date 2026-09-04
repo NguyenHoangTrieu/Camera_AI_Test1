@@ -9,6 +9,416 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 4 - SD snapshot ported to core1, two real concurrency bugs found and fixed on real hardware (priority-starvation, missing shared-bus mutex); SD mount + file creation now confirmed working under RTOS scheduling, but full end-to-end save is NOT yet confirmed - a write failure and repeated "could not create file" after it are more likely a near-full test card (31+ pre-existing 150KB snapshots) than a new bug, but this is not confirmed either way (2026-09-04)
+
+Follow-up to the Stage 3 entry below (same day). Ported `sd_spi_disk.c`/
+`snapshot.c`/FatFs onto core1 as a `StorageTask`, manually triggered every
+5 seconds with a synthesized "face" box (AI isn't wired up until Stage 5) -
+see the approved plan's Stage 4 description.
+
+**Real bug #1 - priority-based starvation, not a heap/race issue as first
+suspected.** First attempt gave `CameraLcdTask` a higher priority than
+`StorageTask` ("protect the fps-critical loop from unnecessary
+preemption"), reasoning backwards from how FreeRTOS priority actually
+works: `CameraLcdTask`'s loop body is a tight busy-poll with no
+`vTaskDelay`/blocking call in its "no frame yet" branch, so it is *always*
+ready and never voluntarily yields. Under strict priority-based preemptive
+scheduling, a strictly-lower-priority task that the higher one never
+blocks against is starved completely, not just occasionally preempted -
+confirmed on real hardware: `StorageTask` never printed even its
+boot-time `SNAPSHOT_Init()` line in a 16-second capture. Fixed by making
+both tasks equal priority, letting `configUSE_TIME_SLICING`'s round-robin
+give both real CPU time every tick regardless of blocking behavior.
+
+**Real bug #2 - the shared LPSPI1 bus (LCD + SD, see spi1_bus.h) has no
+mutex protecting it against two concurrent FreeRTOS tasks.** The legacy
+single-threaded bare-metal build never needed one (only ever one thread
+of execution touching the bus, strictly sequential) - `spi1_bus.c`'s own
+"every driver reclaims its own baud rate immediately before its own
+transfer" discipline assumed that. With the priority bug fixed,
+`StorageTask` started running for real - and every snapshot attempt then
+failed immediately with "could not create a new file", because
+`CameraLcdTask`'s LCD push (every ~91ms at 11fps) could now genuinely
+preempt an in-flight SD transaction and interleave its own bus traffic
+mid-command. Added a real FreeRTOS mutex (`SPI1_BUS_CreateLock/Lock/
+Unlock()`, `source/spi1_bus.c`, guarded `#ifdef DUALCORE_RTOS` - zero
+effect on the legacy build), wrapped around every COMPLETE logical
+transaction on both sides: `LCD_Init()`/`LCD_DrawImage()` on the display
+side, `disk_initialize()`/`disk_read()`/`disk_write()` on the SD side
+(`disk_ioctl()` doesn't touch the bus at all - checked, no lock needed
+there), plus `main_core1.c`'s own `DEMO_ClearScreen()` multi-call
+sequence. Confirmed a real, measurable improvement: file creation now
+succeeds (found and opened `FACE0032.BMP` - correctly continuing the
+numbering from 31 pre-existing snapshots on this card, proving the
+"probe for the first free name" logic and the concurrency fix both work),
+whereas every single attempt failed at the open step before this fix.
+
+**Not yet confirmed - a full save.** After successfully opening
+`FACE0032.BMP`, the actual `f_write()` of the 153,600-byte pixel payload
+failed ("Snapshot: write failed (FACE0032.BMP) after 160880us (160ms)" -
+the timing itself is normal, matches this project's own previously-
+measured SD write speed), and every attempt after that failed back at
+"could not create a new file" again. Two honest, NOT mutually exclusive
+possibilities, deliberately not overclaiming either:
+1. This specific SD card already has 31+ full-size (153,600-byte pixel
+   payload each) snapshots on it from earlier single-core testing
+   sessions (WORKLOG.md's 2026-08-25 entries) - that's 4.6MB+ already
+   used, and this could plausibly be a genuinely small/near-full test
+   card running out of free clusters, which would explain a write failure
+   on a large payload specifically (not the small 66-byte header) and a
+   corrupted/incomplete file afterward interfering with subsequent
+   creates.
+2. A residual concurrency gap not yet found - e.g. `SNAPSHOT_OnFrame()`
+   itself calls multiple separate FatFs operations (`f_open`, two
+   `f_write()` calls, `f_close()`) with the bus mutex released BETWEEN
+   each individual `disk_*()` call, not held across the whole snapshot
+   sequence - if that turns out to matter (not yet proven either way),
+   the fix would be locking around all of `SNAPSHOT_OnFrame()`, not just
+   each individual diskio call.
+Per this project's own "confirm on real hardware, don't guess" standard -
+this needs a fresh/reformatted card to actually distinguish the two
+theories, not more reasoning from this session's log output alone.
+
+**fps held at 11 throughout** (briefly dipped to 10 during one write
+attempt) - the equal-priority scheduling change didn't meaningfully cost
+the camera/LCD path anything. Legacy single-core build re-confirmed
+unaffected throughout (same regression-check pattern as every prior stage).
+
+### Next steps for a fresh session
+
+1. Retest Stage 4 with a freshly-formatted (or otherwise confirmed-to-have-
+   free-space) SD card to determine whether the write failure was card
+   capacity or a residual concurrency gap - see the two theories above.
+2. If it turns out to be concurrency: move the `SPI1_BUS_Lock()`/`Unlock()`
+   pair to wrap the whole `SNAPSHOT_OnFrame()` call (in `StorageTask`,
+   `main_core1.c`) instead of/in addition to the per-diskio-call locks
+   already in `sd_spi_disk.c`.
+3. Stage 5 unchanged from the approved plan - see
+   `~/.claude/plans/stateful-churning-flurry.md`. Note core1's RAM is now
+   genuinely tight (`m_data` at ~99% before the `-Os` fix, comfortable
+   margin after) - the frame buffer/crop buffer/result struct Stage 5 adds
+   all live in the shared region (not core1's own budget), so this should
+   be fine, but worth a real build check early again rather than assuming.
+
+## Dual-core RTOS migration Stage 3 CONFIRMED ON REAL HARDWARE - camera capture + LCD preview ported to core1, exactly matches the documented single-core tear-free baseline (11fps); a second real core1 RAM-budget overflow found and fixed by rebalancing text/data again after a real measurement, not by guessing bigger (2026-09-04)
+
+Follow-up to the Stage 2 entry below (same day). Ported the legacy
+`main.c`'s `DEMO_LCD_CAMERA_PREVIEW` loop (camera capture -> LCD push,
+Deinit/Reinit tearing fix + `skipNextFrame`) onto core1 as a single
+FreeRTOS task - `source/main_core1.c`'s `CameraLcdTask`. Core0 for this
+stage still just boots core1 and idles (no AI yet, that's Stage 5).
+
+**The 320x240 RGB565 frame buffer (153,600 bytes) does not fit in core1's
+own RAM at all** - confirmed by a real link failure, not just the earlier
+paper analysis. Moved `camera_capture.c`'s `s_frameBuffer` into the shared
+region (`source/shared/ipc_layout.h`'s `IPC_FRAME_BUFFER_ADDR`) for the
+`DUALCORE_RTOS` build specifically (guarded, the legacy build keeps its
+own private static array) - this needs to happen now, not just at Stage 5,
+purely because of RAM size, before any cross-core sharing is even wired
+up. One real gotcha: `s_frameBuffer` becomes a pointer-valued macro in
+this mode, so `sizeof(s_frameBuffer)` (used in the buffer-clearing
+`memset()`) silently changes meaning from "153,600 bytes" to "4 bytes" -
+fixed by computing the byte count explicitly instead of via `sizeof()`.
+
+**A second, real `m_text` overflow found by linking, not estimated**:
+Stage 2's 60KB/43KB core1 text/data split (already a real-measurement-
+based rebalance of the vendor's 51KB/52KB default) still overflowed by
+5,584 bytes once the actual camera/LCD/SPI driver code was linked in.
+Investigated two candidate causes before finding the real fix:
+- **Wrong lead**: suspected USB Video Class code (auto-pulled via the
+  legacy top-level `prj.conf`'s `CONFIG_USB_DEVICE_CONFIG_VIDEO=1`, which
+  Kconfig `default y if USB_DEVICE_CONFIG_VIDEO > 0`-selects the video/
+  EHCI/PHY components) was bloating the link. Tried disabling it 3 ways in
+  `board_port/cm33_core1/prj.conf` (disabling the derived component,
+  disabling the root trigger with `# ... is not set` syntax, then with the
+  correct `=0` syntax for its actual int Kconfig type) - **none of the
+  three changed the final size by even one byte**, because `--gc-sections`
+  was already stripping all of it - it never cost anything in the first
+  place. Confirmed by removing the USB object files from the link
+  directly (`mcux_project_remove_source()`) and observing zero size change.
+- **Real fix**: the actual 62,992-67,024 bytes of `m_text` genuinely needed
+  by FreeRTOS + MCMGR + the real camera/LCD/SPI driver code. Trimmed
+  FreeRTOS down to only the modules this project's code actually calls
+  (`tasks.c`/`list.c`/`queue.c`/`port.c`/`portasm.c`/
+  `mpu_wrappers_v2_asm.c`/`heap_4.c` - dropped `timers.c` (no software
+  timers used anywhere, also set `configUSE_TIMERS=0`),
+  `event_groups.c`/`stream_buffer.c`/`croutine.c` (none of these APIs are
+  used - task notifications, used for all IPC, don't need any of them)),
+  which closed most of the gap (down to a 1,552-byte overflow), then
+  rebalanced core1's fixed 104KB text/data split a second time - 64KB
+  text / 39KB data (up from 60/43) - based on the real, now-measured
+  62,992/38,816-byte need instead of another guess. Both builds succeeded
+  after this with real margin (`m_text` and `m_data` both comfortably
+  under 100% - see the confirmed-on-hardware numbers below).
+
+**Confirmed on real hardware, exactly matches the documented single-core
+baseline** - serial log captured the same way as Stages 1-2:
+```
+Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
+LCD: hardware SPI (LPSPI1, shared bus) on the Arduino header
+LCD: SPI1 source clock = 48000000 Hz, requested 24000000 Hz, achieved 24000000 Hz
+LCD preview: 11 fps
+```
+**11fps, matching the legacy single-core build's own confirmed tear-free
+number exactly** (see the "LCD tearing FIXED" entry below - `Preview fps:
+18 -> 11`, the same real cost of the same Deinit/Reinit tearing fix) - the
+move to FreeRTOS + dual-core cost nothing extra on top of that fix, at
+least at this fps range. Legacy single-core build re-confirmed unaffected
+by all of the above (rebuilds with `ninja: no work to do` / unchanged
+`m_data` usage, per the established regression-check pattern).
+
+### Next steps for a fresh session
+
+1. Stage 4: port `sd_spi_disk.c`, `snapshot.c`, FatFs wiring onto core1 as
+   a `StorageTask`, triggered by a manual test hook (AI not wired up
+   yet) - confirm SD mount/write still works under RTOS scheduling. Watch
+   for the same class of core1 RAM-budget surprise found in Stage 3 - test
+   a real build early rather than assuming the current 64KB/39KB split
+   has enough headroom for FatFs + the SD driver.
+2. Stage 5 unchanged from the approved plan - see
+   `~/.claude/plans/stateful-churning-flurry.md`.
+
+## Dual-core RTOS migration Stage 2 CONFIRMED ON REAL HARDWARE - FreeRTOS running on both cores, full MCMGR ISR->task event round-trip (core1 ping -> core0 -> core1 pong) working; one real port-config bug found and fixed via live SWD fault analysis (2026-09-04)
+
+Follow-up to the Stage 1 entry below (same day, continuing directly after
+Stage 1's real-hardware confirmation). Added FreeRTOS to both cores plus
+one MCMGR event round-trip, per the approved plan's Stage 2.
+
+**FreeRTOS pulled in directly via CMakeLists.txt (`mcux_add_source`), not
+via the `CONFIG_MCUX_COMPONENT_middleware.freertos-kernel` Kconfig
+component** - that component's Kconfig lives in the same `prj.conf` files
+the legacy single-core build also reads, and FreeRTOS's `port.c`
+would then also compile into the legacy build even though it never calls
+`vTaskStartScheduler()`. Wrote `source/shared/FreeRTOSConfig.h` by hand
+instead of using the SDK's Kconfig-driven auto-generation
+(`FreeRTOSConfig_Gen.h`) - kept entirely inside the `DUALCORE_RTOS` CMake
+branch, zero risk to the legacy build. Required hook functions
+(`vApplicationStackOverflowHook`, `vApplicationMallocFailedHook` - both
+needed once `configCHECK_FOR_STACK_OVERFLOW=2`/`configUSE_MALLOC_FAILED_HOOK=1`
+are set) added in `source/shared/freertos_hooks.c`.
+
+**Real bug found and fixed via live SWD fault-register analysis, not
+guessed** (same debugging technique this project's own WORKLOG has used
+before, e.g. the CMSIS-NN stack-overflow bug): first attempt at
+`FreeRTOSConfig.h` built fine, flashed fine, but core0 silently hung
+right after printing "starting scheduler..." - no crash message (no
+`fault_handler.c`-equivalent installed in this minimal dual-core build),
+no further output, ever. Two wrong theories tried and ruled out along the
+way (documented so a future session doesn't repeat them):
+1. Guessed the `vPortPendSVHandler`/`vPortSysTickHandler` rename macros
+   (an older FreeRTOS naming convention) were wrong for this kernel
+   version - fixed the names to `xPortPendSVHandler`/`xPortSysTickHandler`
+   (matching a reference Kconfig-generated config) and rebuilt - **no
+   change in symptom**, disproving the theory. Then read `port.c`/
+   `portasm.c` directly: this kernel version defines `SVC_Handler`/
+   `PendSV_Handler`/`SysTick_Handler` as real, literal function names
+   (naked functions in `portasm.c`, direct definition in `port.c`) - none
+   of those rename macros do anything at all in this port version, they're
+   vestigial. Confirmed via `arm-none-eabi-nm`/`objdump` on the actual
+   built `.elf` that the real FreeRTOS `PendSV_Handler` (context-switch
+   assembly, not a stub) was correctly linked into the vector table -
+   ruled this out definitively before spending more time on it.
+2. With the real culprit still unknown, halted the running core directly
+   over SWD (`pyocd commander -c halt -c reg`) instead of guessing further -
+   found `pc` sitting exactly at `HardFault_Handler`. Read `CFSR`
+   (`0x00040000` = UsageFault bit 2, INVSTATE - invalid execution state),
+   `HFSR` (`0x40000000` = FORCED, meaning a fault escalated to HardFault
+   because the original handler wasn't enabled), and `SHCSR` (`0x84` -
+   `SVCALLACT` bit set, meaning the fault happened *while inside the SVC
+   call*, i.e. during `vTaskStartScheduler()`'s first-task-start sequence,
+   not later). This pointed at the initial fake exception stack frame
+   `pxPortInitialiseStack()` builds for the very first task having the
+   wrong execution-state assumptions baked in for the port's actual
+   secure/TrustZone configuration.
+3. Root cause: `configRUN_FREERTOS_SECURE_ONLY` was never defined in
+   `FreeRTOSConfig.h` - undefined evaluates to `0` in the preprocessor,
+   but `port.c`'s own header comment documents that for the "NTZ" (No
+   TrustZone) port variant this project uses, the valid combination is
+   `configRUN_FREERTOS_SECURE_ONLY=1` **with** `configENABLE_TRUSTZONE=0`,
+   not both `0` - confirmed by diffing against the SDK's own Kconfig-
+   generated reference config, which explicitly sets this to `1`. Added
+   `#define configRUN_FREERTOS_SECURE_ONLY 1` - fixed on the very next
+   flash, confirmed via the same SWD halt-and-read technique that the
+   fault no longer occurs, then confirmed via the actual serial log that
+   the scheduler now runs correctly on both cores.
+
+**Confirmed on real hardware, full round trip, clean serial capture**
+(`stty`+`cat` on `/dev/ttyACM0` around a reset, same technique as Stage 1):
+```
+core1: sending ping to core0...
+core0: got ping 0x1111 from core1, sending pong
+core1: got pong 0x2222 from core0 - round trip OK
+```
+This proves the whole ISR-safe IPC design end to end: `source/shared/
+ipc_events.c`'s `MCMGR_RegisterEvent`/`MCMGR_TriggerEvent` wrapper, the
+`xTaskNotifyFromISR`+`portYIELD_FROM_ISR` pattern inside the MAILBOX_IRQn
+ISR context (confirmed safe against `configMAX_SYSCALL_INTERRUPT_PRIORITY`
+in an earlier planning pass, now confirmed working for real), and
+`xTaskNotifyWait` on the receiving task - exactly the mechanism Stage 5's
+real frame-ready/result-ready doorbells will reuse.
+
+**Also re-confirmed, expected**: with two FreeRTOS tasks now both logging
+(not just one-shot boot banners like Stage 1), the shared-UART byte
+interleaving flagged in the Stage 1 entry is worse, as expected - fully
+decodable by hand in this capture, but a real argument for adding a
+mutex/arbitration around `PRINTF()` before Stage 3+ needs sustained,
+readable logging from both cores concurrently (e.g. camera fps stats on
+core1 next to inference timing on core0).
+
+**Legacy single-core build re-confirmed unaffected** after this change
+too (`ninja: no work to do` / unchanged `m_data` usage) - the
+`DUALCORE_RTOS` CMake option continues to fully gate this work away from
+the production build.
+
+### Next steps for a fresh session
+
+1. Consider a shared-UART print mutex before Stage 3 (camera+LCD on core1)
+   adds sustained logging - see "Also re-confirmed, expected" above.
+2. Stage 3: port `camera_capture.c`, `lcd_spi_hw.c`, `spi1_bus.c`,
+   `bbox_overlay.c`, `text_overlay.c` onto core1, running the existing
+   `LCD_CAMERA_PREVIEW` logic (Deinit/Reinit tearing fix + `skipNextFrame`)
+   inside a single task/discipline - re-measure fps against the documented
+   baseline (18fps tearing / 11fps tear-free) once real hardware access is
+   available.
+3. Stages 4-5 unchanged from the approved plan - see
+   `~/.claude/plans/stateful-churning-flurry.md`.
+
+## Dual-core RTOS migration Stage 1 CONFIRMED ON REAL HARDWARE - core1 boot-only bring-up, real RAM budget measured against actual reference builds instead of assumed (2026-09-04)
+
+User requested two changes: move from bare-metal to an RTOS (FreeRTOS), and
+actually boot core1 - split the app so core0 does AI inference only, core1
+does camera capture + LCD/SPI display + SD card saving. This is the
+project's first time booting core1 at all - ARCHITECTURE.md/this file's own
+history already document that reusing core1's RAM region *without* booting
+it correctly bricked the board once (recovered via `nxpdebugmbox`), so this
+migration is being done in small, real-hardware-confirmed stages rather
+than as one big rewrite. Full design doc:
+`~/.claude/plans/stateful-churning-flurry.md` (approved plan, dual-core
+architecture: single shared frame buffer, MCMGR events only - no
+RPMsg-Lite - for cross-core signaling).
+
+**Real measurement before writing any RAM-partition code (the "Phase 0"
+step the plan called for).** Built NXP's own
+`multicore_examples/rpmsg_lite_pingpong_rtos` secondary-core example for
+this exact board to get a real FreeRTOS-on-core1 code-size baseline, rather
+than guessing: **`m_text: 36,532B/51KB (70%)`, `m_data: 13,912B/52KB
+(26%)`** - this INCLUDES RPMsg-Lite, which this project doesn't use (MCMGR
+events only, lighter). Also measured this project's own existing
+camera/LCD/SD driver `.text` directly from the current single-core build's
+`.obj` files: **~26.6KB `.text`, ~9.7KB static `.bss`** (excluding the
+153,600-byte camera frame buffer, which moves to shared RAM - see below).
+
+**Corrected a wrong assumption from the initial plan**: the vendor's
+default core1 RAM split (1KB interrupts / 51KB text / 52KB data, all inside
+the fixed 104KB region at `0x2004E000-0x20068000`) leaves text tighter than
+expected once this project's own driver code is added on top of even a
+trimmed (no-RPMsg) FreeRTOS baseline. Fixed by **rebalancing the same fixed
+104KB total** (not widening it - that boundary is hardware/power-domain
+fixed, not a linker choice) to 1KB / **60KB text** / **43KB data** - data
+was barely a third used even with RPMsg-Lite, so it had margin to give.
+
+**Also found, by reading NXP's own reference example instead of assuming**:
+a 320x240 RGB565 frame buffer (153,600 bytes) does NOT fit in core1's
+104KB region at all - it has to live in core0's much larger `m_data`
+instead (312KB, only ~178KB used today), made visible to core1 via fixed
+pointer addresses (`source/shared/ipc_layout.h`), not a shared linker
+MEMORY region on core1's side - core1 doesn't need one, it just reads/
+writes the raw address. New `m_shared` region: `0x20024000`, 168KB,
+carved from the top of core0's `m_data` (which shrinks from `0x4E000` to
+`0x24000` accordingly, still comfortably fitting core0's NPU tensor arena).
+
+**How the base linker script gets replaced** (needed since this repartition
+requires a full MEMORY-block change, not an additive fragment - see
+`board_port/ei_sramx.ld`'s own comment on why additive `-T` scripts can't
+resize an existing named region, and the "m_data_ext.ld" incident earlier
+in this file for what happens when you try anyway): found and used
+`mcux_remove_armgcc_linker_script()` (cancels the SDK's own default `-T`
+for that exact file+path) followed by `mcux_add_armgcc_linker_script()`
+with this project's own fork - confirmed working by a real build showing
+the new `m_shared`/rebalanced-`m_data` regions in the link's own memory-
+usage report, not just by reading the CMake source.
+
+**How core0 embeds core1's binary**: NXP's `fsl_incbin.S`
+(`components/misc_utilities/`) uses the GNU assembler's `.incbin` directive
+to literally embed core1's raw `.bin` into core0's flash at build time -
+requires core1 to be built FIRST into a sibling `core1/` build directory
+so the assembler's include path (`../core1/armgcc/`) can find
+`core1_image.bin`. `main_core0.c` then `memcpy()`s it to RAM at
+`0x2004E000` and calls `MCMGR_StartCore()` - pattern copied from NXP's own
+`multicore_examples/hello_world` for this exact board.
+
+**Confirmed by real builds** (not just "should work"): core1 builds using
+its own `board_port/cm33_core1/MCXN947_cm33_core1_dualcore.ld`
+(`m_text: 22,268B/60KB (36%)`, `m_data: 4,168B/43KB (9.5%)` - real margin
+even before FreeRTOS/Stage 2 lands). core0 builds using its own
+`board_port/cm33_core0/MCXN947_cm33_core0_dualcore.ld`, correctly shows
+`m_core1_image: 23,892B/256KB` (core1's incbin'd binary) and
+`m_shared: 0B/168KB` (declared, unused until Stage 5). **The existing
+single-core production build was rebuilt afterward and confirmed
+unaffected** (`m_data: 182,192B/312KB`, same as before) - the whole
+dual-core path is gated behind a new `-DDUALCORE_RTOS=ON` CMake option
+(default OFF), specifically so this migration can proceed stage-by-stage
+without ever putting the working single-core firmware at risk.
+
+**New build command**: `./build.sh dualcore-build` (builds core1 then
+core0, confirmed working end-to-end from a clean state) / `dualcore-flash`
+/ `dualcore-all` - separate from the existing `build`/`all` commands and
+`build/` output directory (dual-core artifacts land in `build_dualcore/`).
+
+**CONFIRMED ON REAL HARDWARE - Stage 1's exit criteria met.** Flashed
+`dualcore-all`, captured the serial log directly (`stty`+`cat` on
+`/dev/ttyACM0` around a `./build.sh reset`, not just eyeballing a terminal).
+Both cores print their banners, repeatable across multiple resets, no hang,
+no bricked board - the single most important checkpoint in the whole
+migration (given this exact class of mistake, touching core1's RAM without
+booting it correctly, bricked the board once before) is now real, not
+theoretical.
+
+**Two real bugs found and fixed via the live serial log, not guessed
+upfront:** `MCMGR_StartCore(..., kMCMGR_Start_Synchronous)` on core0 kept
+silently blocking forever (core1 booted and printed fine, but core0's own
+"core0: core1 started." line never appeared) until BOTH of these were
+added to core1's `main_core1.c`, confirmed by reading `mcmgr.c`'s actual
+source rather than assuming:
+1. `MCMGR_Init()` - without it, core1 never participates in the MCMGR
+   protocol at all.
+2. `MCMGR_GetStartupData(kMCMGR_Core0, &startupData)` (looped until it
+   returns success) - `MCMGR_StartCore()`'s synchronous wait polls
+   `state != kMCMGR_RunningCoreState`, and that state transition is a
+   direct side effect of the *secondary* core calling this function (it
+   triggers `kMCMGR_FeedStartupDataEvent` back to core0) - `MCMGR_Init()`
+   alone does not do this. First attempt added only #1 and still hung;
+   re-reading `mcmgr.c`'s `MCMGR_StartCore()` line-by-line (not the header
+   docs, which don't spell this out) found the real mechanism. Pattern now
+   matches NXP's own `multicore_examples/hello_world` secondary/main.c
+   exactly.
+
+**Confirmed, expected, not a bug**: once the handshake was fixed, "core0:
+core1 started." and core1's own banner print at almost the same instant
+and land BYTE-INTERLEAVED in the captured log (e.g. "co\r\nCrea0m:e
+rcao_rAeI_1 Tsestatr1t e-d c.o\r\n...") - both cores share one physical
+debug UART with no arbitration between them. Manually decoding the
+interleave confirms both full lines are genuinely present and correct, just
+garbled in transmission order. This is a real, expected consequence of two
+cores writing to the same UART peripheral concurrently, not a data
+corruption bug - worth a mutex/arbitration scheme once Stage 2+ has real,
+frequent logging from both cores (not urgent for Stage 1's one-shot
+banners).
+
+### Next steps for a fresh session
+
+1. Stage 2: add FreeRTOS to both cores (Kconfig component already wired
+   for `middleware.freertos-kernel.cm33_non_trustzone` - not yet added to
+   prj.conf, that's Stage 2's job) plus one MCMGR event round-trip
+   (`kMCMGR_RemoteApplicationEvent`, ISR-context callback confirmed via
+   reading `mcmgr_internal_core_api_mcxnx4x.c` - must use
+   `xTaskNotifyFromISR`/`portYIELD_FROM_ISR`, never a blocking FreeRTOS
+   API). Consider whether the shared-UART interleaving above needs a
+   mutex before Stage 2's tasks start logging more frequently.
+2. Stages 3-5 (camera+LCD on core1, SD snapshot on core1, full AI pipeline
+   with the shared frame buffer) unchanged from the approved plan - see
+   `~/.claude/plans/stateful-churning-flurry.md`.
+
 ## LCD tearing FIXED - user-captured video showed a real horizontal tear line, root-caused to the single shared camera frame buffer having no synchronization with the LCD push; fixed by pausing SmartDMA around the push (same pattern the AI loop already uses). Preview fps: 18 -> 11 (real cost of the fix). A separate, NOT-fully-root-caused SmartDMA-adjacent memory corruption was found and worked around (2026-09-04)
 
 Follow-up to the entry directly below (same day). User sent a video of the

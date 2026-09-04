@@ -1,0 +1,10 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:97:13:SDCARD_SPI_Init	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:118:17:SDCARD_SPI_SetFrequency	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:123:17:SDCARD_SPI_Exchange	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:157:13:SDCARD_SPI_CsActivePolarity	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:166:6:SDCARD_DISK_IsReady	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:171:9:disk_initialize	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:206:9:disk_status	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:215:9:disk_read	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:238:9:disk_write	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/storage/sd_spi_disk.c:256:9:disk_ioctl	0	static
