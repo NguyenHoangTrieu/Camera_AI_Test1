@@ -48,7 +48,7 @@
 #include "lcd_spi_hw.h"
 #include "app.h"
 #include "board.h"
-#include "fsl_common.h" /* DWT, SystemCoreClock - see the diagnostic timing breakdown in LCD_PushPixelsOpen()/LCD_DrawImage() below. */
+#include "fsl_common.h" /* SystemCoreClock - used by SDK_DelayAtLeastUs() below. */
 #include "fsl_debug_console.h"
 #include "fsl_gpio.h"
 #include "fsl_lpspi.h"
@@ -312,45 +312,28 @@ void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
   LCD_EndWindow();
 }
 
-/* DIAGNOSTIC (2026-09-04, see WORKLOG.md): measures whole-frame push time
- * (SPI transfer + the small amount of command/window-setup overhead
- * around it), printed once/sec, for a more precise number than main.c's
- * coarser 1-second fps counter alone - useful again if/when the eDMA
- * path above is revisited. Defensively enables DWT (idempotent, same
- * pattern sd_spi_disk.c uses) - don't assume the caller already did it. */
+/* Per-frame LCD push time was measured and confirmed stable at ~56.9ms
+ * (near the ~51ms bit-clock floor for a 320x240 push at 24MHz) across
+ * multiple earlier sessions - see WORKLOG.md. The DWT-based diagnostic
+ * that used to live here (function-static counters, printed once/sec)
+ * was REMOVED (2026-09-04, see WORKLOG.md's tearing-fix entry): once
+ * main.c's camera-preview loop started calling
+ * CAMERA_CAPTURE_Deinit()/Reinit() every frame (to fix a real tearing
+ * bug), those specific static counters started reading back garbage
+ * (billions of "frames", nonsense window durations) - narrowed down to
+ * their memory landing directly adjacent to camera_capture.c's SmartDMA
+ * parameter/stack statics (confirmed via `nm`), but the exact write that
+ * corrupts them was NOT fully root-caused (doubling the SmartDMA stack
+ * size didn't fix it either - see WORKLOG.md for what was ruled out).
+ * Removed rather than ship a diagnostic that prints nonsense - the LCD
+ * push mechanism itself is unchanged by the tearing fix, so the
+ * previously-measured ~56.9ms/frame number is still the right one to
+ * cite. main.c's own fps/wait-for-frame counters (plain stack locals, not
+ * statics living in this danger zone) remained reliable throughout and
+ * are the diagnostic to trust if this needs re-measuring. */
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height,
                    const uint16_t *pixels) {
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-  uint32_t tStart = DWT->CYCCNT;
-
   LCD_SetWindow(x0, y0, (uint16_t)(x0 + width - 1U),
                 (uint16_t)(y0 + height - 1U));
   LCD_PushPixels(pixels, (uint32_t)width * height);
-
-  static uint32_t s_diagFrameCycles     = 0U;
-  static uint32_t s_diagWindowStartCycle = 0U;
-  static uint32_t s_diagFrameCount = 0U;
-  static bool s_diagWindowStarted = false;
-  s_diagFrameCycles += (DWT->CYCCNT - tStart);
-  s_diagFrameCount++;
-  if (!s_diagWindowStarted) {
-    s_diagWindowStartCycle = DWT->CYCCNT;
-    s_diagWindowStarted = true;
-  }
-  if ((int32_t)(DWT->CYCCNT - s_diagWindowStartCycle) >= (int32_t)SystemCoreClock) {
-    uint32_t totalMs = s_diagFrameCycles / (SystemCoreClock / 1000U);
-    /* DIAGNOSTIC (2026-09-04): the previous print showed only the raw
-     * per-window total, easy to misread as a single frame's time - added
-     * the /frame average explicitly (this is the number to compare
-     * against the ~51ms theoretical bit-clock floor for a full 320x240
-     * push at 24MHz, not the window total). */
-    PRINTF("LCD: diag - frame push=%ums (per window), %u frames, "
-           "%uus/frame avg\r\n",
-           totalMs, s_diagFrameCount,
-           (unsigned)(s_diagFrameCycles / (SystemCoreClock / 1000000U) / (s_diagFrameCount == 0U ? 1U : s_diagFrameCount)));
-    s_diagFrameCycles = 0U;
-    s_diagFrameCount  = 0U;
-    s_diagWindowStartCycle = DWT->CYCCNT;
-  }
 }

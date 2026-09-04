@@ -49,7 +49,23 @@ static camera_device_handle_t s_cameraHandle = {
 static volatile bool s_frameReady = false;
 static volatile uint32_t s_frameCount = 0;
 static uint16_t s_frameBuffer[DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT];
-static uint8_t s_smartdmaStack[32];
+
+/* BUG FOUND AND FIXED (2026-09-04, see WORKLOG.md): this was 32 bytes -
+ * HALF of what fsl_smartdma_fw.h's own smartdma_camera_param_t comment
+ * documents as the real requirement ("Stack used by SMARTDMA, shall be
+ * at least 64 bytes"). Harmless for a long time because SmartDMA was
+ * only ever booted once, at startup (CAMERA_CAPTURE_Init()) - but as
+ * soon as main.c's camera-preview loop started calling
+ * CAMERA_CAPTURE_Deinit()/Reinit() every displayed frame (to fix a
+ * separate tearing bug), SmartDMA started rebooting far more often, and
+ * a real stack overflow started scribbling into whatever static happened
+ * to sit right after this array in RAM - confirmed via `nm`: this buffer
+ * and lcd_spi_hw.c's diagnostic counters landed only 0x30 bytes apart,
+ * and those counters started reading back nonsense (billions of
+ * "frames", garbled window durations) the moment the reboot frequency
+ * went up. Sized to 128 bytes (double the documented minimum) for real
+ * margin, not just the bare minimum. */
+static uint8_t s_smartdmaStack[128];
 
 static void CAMERA_CAPTURE_CompleteCallback(void *param) {
   (void)param;

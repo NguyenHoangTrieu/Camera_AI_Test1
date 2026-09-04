@@ -9,6 +9,131 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## LCD tearing FIXED - user-captured video showed a real horizontal tear line, root-caused to the single shared camera frame buffer having no synchronization with the LCD push; fixed by pausing SmartDMA around the push (same pattern the AI loop already uses). Preview fps: 18 -> 11 (real cost of the fix). A separate, NOT-fully-root-caused SmartDMA-adjacent memory corruption was found and worked around (2026-09-04)
+
+Follow-up to the entry directly below (same day). User sent a video of the
+live camera-preview display and asked why it showed "striped" content.
+
+**Diagnosis from the video, not guesswork.** No video/frame-extraction
+tool was available directly (no ffmpeg) - used `cvlc`'s `scene` video
+filter (`--video-filter=scene --scene-format=png`, `--vout=dummy` alone
+hit a VLC filter-chain bug, needed `--no-spu --no-osd --avcodec-hw=none`
+too before it would actually write files) to pull dozens of PNG frames
+out of the phone video, then cropped/zoomed into just the LCD region with
+PIL. Found one frame (out of ~43 densely sampled) with a genuine, sharp
+horizontal white seam partway down the image - confirmed it was on the
+LCD's own displayed content, not a wire/reflection in front of it (no
+wire crosses that exact spot in the un-cropped frame).
+
+**Root cause**: `main.c`'s `LCD_CAMERA_PREVIEW` loop reads
+`CAMERA_CAPTURE_GetFrameBuffer()` directly while `LCD_DrawImage()` pushes
+it out over SPI/eDMA (~57ms) - single shared frame buffer, no
+double-buffering, no synchronization beyond the one-shot `s_frameReady`
+flag. This was harmless while the camera was slower than the LCD push
+(its real rate was ~7.3fps/~137ms before the XCLK fix two entries below),
+but that same fix made SmartDMA genuinely deliver ~30fps/~33ms - FASTER
+than the ~57ms LCD push - so a new camera frame can now land mid-push,
+producing exactly the observed seam (top of screen = older frame, bottom
+= newer one). This is the exact risk flagged as an open item in the
+"fps follow-up" entry below ("current single-buffer design has no
+overlap between capture and push") - this video is the first real visual
+confirmation of it, and a direct, unintended side effect of fixing the
+camera clock.
+
+**Real double-buffering (two full frame buffers) is not RAM-feasible
+here**: a second 320x240 RGB565 buffer is 153,600 bytes - bigger than
+this build's entire free `m_data` headroom (137KB) and bigger than
+`m_sramx` (96KB) on its own, and a single buffer can't be split across
+those two non-contiguous physical banks (same constraint this project's
+AI-arena RAM investigation already ran into).
+
+**Fix**: pause SmartDMA around the LCD push instead - `main.c`'s preview
+loop now calls `CAMERA_CAPTURE_Deinit()` before `LCD_DrawImage()` and
+`CAMERA_CAPTURE_Reinit()` after, plus a `skipNextFrame` flag to discard
+the frame immediately after each reinit (SmartDMA needs one cycle to
+resync with the sensor's HREF/VSYNC/PCLK timing after a fresh boot -
+exact same workaround already proven in the AI-build's loop, which uses
+this pattern for a different reason - RAM collision with SmartDMA's own
+firmware, see the "AI model integration" summary further down). This
+guarantees SmartDMA is never active while the buffer is being read, at
+the cost of some fps (re-init has a real cost, and every other real
+camera frame is now discarded).
+
+**Confirmed on real hardware**: `LCD preview: 11 fps` (down from 18fps
+without the fix), stable and consistent across repeated resets. Real,
+measured cost of the fix - not assumed. Production AI-enabled build
+reflashed too - boots clean, SD card + inference (~3.9ms/frame) + camera
+all still working normally, no regressions from the shared-file changes
+(`camera_capture.c`, `lcd_spi_hw.c`).
+
+**A second, separate bug was found (and worked around, not fully
+root-caused) while testing this fix**: as soon as Deinit()/Reinit() started
+running every displayed frame, `lcd_spi_hw.c`'s own per-window diagnostic
+print (`LCD: diag - frame push=...`) started reading back nonsense -
+billions of "frames", `0us/frame avg`, wildly wrong window durations.
+Narrowed down via `nm`: those diagnostic statics land in RAM immediately
+adjacent to `camera_capture.c`'s SmartDMA parameter/stack statics
+(`smartdmaParam`, `s_smartdmaStack`). Found that `s_smartdmaStack` was
+only 32 bytes - HALF of what `fsl_smartdma_fw.h`'s own comment documents
+as the real requirement ("shall be at least 64 bytes") - bumped it to 128
+bytes as a legitimate, independently-justified fix, but **this did NOT
+stop the corruption** - so the SmartDMA-stack-undersized theory, while a
+real documentation-vs-code gap worth having fixed anyway, was NOT the
+actual mechanism. (Also checked: NXP's own reference example,
+`smartdma_camera_flexio_mculcd`, uses the same 32-byte size without any
+reported issue, which is why this alone was never going to be the whole
+story.) Root cause NOT fully pinned down beyond "something about
+SmartDMA's teardown/reboot cycle occasionally writes into memory near its
+own parameter block" - `SMARTDMA_Deinit()` just gates a command register
+and a clock, with no confirmation the coprocessor has actually halted
+mid-instruction first, which is a plausible mechanism for a race but
+wasn't directly proven.
+
+**Why this was worked around instead of chased further**: the corrupted
+statics are diagnostic-only (a print, not read by anything else), and the
+real pixel data (`s_pixelSwapBuf`, which sits further along in the same
+RAM region) is fully rewritten by the byte-swap loop before every push,
+strictly AFTER `CAMERA_CAPTURE_Reinit()` already ran on the *previous*
+cycle - so even if that reinit transiently scribbles nearby memory, the
+pixel buffer gets fully overwritten with fresh correct data before the
+next push ever reads it. Removed the now-unreliable diagnostic from
+`lcd_spi_hw.c` entirely (the number it measured - ~56.9ms/frame LCD push
+time - was already firmly established in earlier sessions and is
+unchanged by this fix) rather than ship something that prints garbage.
+`main.c`'s own fps/wait-for-frame counters (plain stack locals, not
+statics living in this danger zone) stayed reliable throughout and are
+now the only per-frame timing diagnostic in the preview build.
+
+**Not yet confirmed: the tear is actually gone** - no camera/photo access
+this session. The reasoning above (SmartDMA fully stopped for the entire
+duration the buffer is being read) should make tearing structurally
+impossible now, not just less likely, but this needs a real look at the
+display (or another video) to confirm, same caveat as every other
+display-behavior entry in this file.
+
+### Next steps for a fresh session
+
+1. **Get the user to look at the live image (or another video)** and
+   confirm the tear is gone - the one thing this session's code-reasoning
+   can't substitute for.
+2. If the SmartDMA-adjacent memory corruption ever causes a REAL
+   (non-diagnostic) symptom - e.g. visible image corruption, or corruption
+   of some other static that isn't self-healing like `s_pixelSwapBuf` is -
+   revisit root-causing it properly: try reading `SMARTDMA->CTRL`/status
+   registers live via SWD right after `SMARTDMA_Deinit()` to see if the
+   coprocessor actually reports halted before the next boot starts, or try
+   adding a short busy-wait/poll after Deinit() before Reinit() to rule
+   out a teardown race empirically.
+3. 11fps is a real, working, tear-free number - worth explicitly checking
+   with the user whether that's an acceptable trade-off versus the
+   previous 18fps-but-tearing-risk state, before considering any further
+   optimization (e.g. real double-buffering would need freeing a lot more
+   RAM first - see the "not RAM-feasible" note above).
+4. The bus-sharing baud-reclaim/delay-register logic and touch still have
+   zero real-hardware confirmation beyond the LCD-only camera-preview
+   test - see earlier entries for what to test (unchanged from previous
+   entries - not touched this session).
+
 ## Camera fps ROOT-CAUSED AND FIXED: XCLK was actually 6MHz (MAIN_CLK/25), not the 24MHz the OV7670 driver assumed - a real ~4x mismatch, confirmed present in NXP's own reference example too - fixed by re-sourcing CLKOUT from FRO_HF/2. Preview fps: 7 -> 8 (eDMA) -> 18 (this fix) (2026-09-04)
 
 Follow-up to the entry directly below (same day). User asked to confirm the

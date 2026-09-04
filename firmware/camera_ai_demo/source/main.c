@@ -193,9 +193,34 @@ int main(void) {
    * status text - just the raw camera feed pushed straight to the LCD as
    * fast as frames arrive, so the image can be focused by eye. Camera
    * resolution (app.h) matches the panel 1:1, so no scaling needed.
-   * SmartDMA never has to stop/restart here (no AI tensor arena writes to
-   * conflict with, unlike the normal loop below), so this runs at the
-   * camera's native ~30fps rather than being inference-latency-bound. */
+   *
+   * TEARING FIX (2026-09-04, see WORKLOG.md): this loop used to leave
+   * SmartDMA free-running the whole time (comment here used to say "never
+   * has to stop/restart"), reading `CAMERA_CAPTURE_GetFrameBuffer()`
+   * directly while `LCD_DrawImage()` pushed it out over SPI/eDMA - single
+   * shared frame buffer, no synchronization beyond the one-shot
+   * `s_frameReady` flag. That was fine while the camera was slower than
+   * the ~57ms LCD push (its real rate was ~7.3fps/~137ms before the XCLK
+   * fix), but the camera-clock fix made SmartDMA genuinely deliver
+   * ~30fps/~33ms - FASTER than the LCD push - so it could (and, per a
+   * user-captured video, actually did) overwrite the buffer with a new
+   * frame mid-push, producing a visible horizontal tear where the top of
+   * the screen shows an older frame and the bottom shows a newer one.
+   * Fixed the same way the AI build's loop below already handles the
+   * exact same class of problem (there, a different reason: RAM
+   * collision with SmartDMA's own firmware, see "Bug #3" in WORKLOG.md) -
+   * stop SmartDMA before reading the buffer, restart it after, discard
+   * the first frame after each restart (SmartDMA needs one cycle to
+   * resync with the sensor's HREF/VSYNC/PCLK timing after a fresh
+   * `CAMERA_CAPTURE_Reinit()` - same proven fix as the AI loop's
+   * `skipNextFrame`). Real, two-full-frame-buffer double-buffering was
+   * considered instead - not RAM-feasible here: a second 320x240 RGB565
+   * buffer is 153,600 bytes, more than this build's entire free `m_data`
+   * headroom (137KB) and bigger than `m_sramx` (96KB) on its own, so it
+   * can't be split across the two non-contiguous banks either. This
+   * costs some fps (SmartDMA's re-init has a real cost, and every other
+   * frame is now discarded) in exchange for a tear-free image - measure
+   * the real fps hit below rather than assume it. */
   PRINTF("Display: raw camera preview on LCD, no AI (LCD_CAMERA_PREVIEW=ON) "
          "- for focusing the lens\r\n\r\n");
 
@@ -225,12 +250,31 @@ int main(void) {
   uint32_t diagWaitCycles = 0U;
   uint32_t diagWaitStartCycle = DWT->CYCCNT;
 
+  /* Set right after CAMERA_CAPTURE_Reinit() below, cleared once the
+   * following frame has been consumed - same SmartDMA-resync workaround
+   * as the AI loop's own `skipNextFrame` further down this file (see that
+   * one's comment for the full explanation). */
+  bool skipNextFrame = false;
+
   while (1) {
     if (CAMERA_CAPTURE_IsFrameReady()) {
       diagWaitCycles += (DWT->CYCCNT - diagWaitStartCycle);
       CAMERA_CAPTURE_ClearFrameReady();
+
+      if (skipNextFrame) {
+        skipNextFrame = false;
+        diagWaitStartCycle = DWT->CYCCNT;
+        continue;
+      }
+
+      /* Stop SmartDMA before reading the frame buffer, restart it after -
+       * see the file-level comment above for why (tearing fix). */
+      CAMERA_CAPTURE_Deinit();
       LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                     CAMERA_CAPTURE_GetFrameBuffer());
+      CAMERA_CAPTURE_Reinit();
+      skipNextFrame = true;
+
       fpsFrameCount++;
       diagWaitStartCycle = DWT->CYCCNT;
 
