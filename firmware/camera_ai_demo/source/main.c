@@ -203,11 +203,48 @@ int main(void) {
   LCD_Init();
   DEMO_ClearScreen(0x0000U);
 
+  /* DWT cycle counter, same technique AI_MODEL_RunInference()/snapshot.c's
+   * write-timing logs already use elsewhere in this project - not enabled
+   * by anything else in this build config (AI_MODEL_Init()/SNAPSHOT_Init()
+   * are both skipped here, see the file-level comment above), so enable it
+   * directly. Reports an actual measured LCD frame rate once/sec, to
+   * quantify the fps-optimization work in source/display/lcd_spi_hw.c
+   * (pixel-push batching, faster shared SPI clock - see WORKLOG.md's
+   * 2026-09-04 entry) instead of eyeballing it. */
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+  uint32_t fpsFrameCount = 0U;
+  uint32_t fpsWindowStartCycle = DWT->CYCCNT;
+
+  /* TEMPORARY DIAGNOSTIC (2026-09-04, see WORKLOG.md): after fixing the
+   * eDMA hang, LCD_DrawImage() itself measured ~57ms/frame (near the
+   * ~51ms bit-clock floor) but overall fps stayed at 8 (~125ms/frame) -
+   * meaning ~68ms/frame is being spent OUTSIDE the LCD push, most likely
+   * waiting for CAMERA_CAPTURE_IsFrameReady(). Measuring that wait time
+   * directly instead of guessing. */
+  uint32_t diagWaitCycles = 0U;
+  uint32_t diagWaitStartCycle = DWT->CYCCNT;
+
   while (1) {
     if (CAMERA_CAPTURE_IsFrameReady()) {
+      diagWaitCycles += (DWT->CYCCNT - diagWaitStartCycle);
       CAMERA_CAPTURE_ClearFrameReady();
       LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                     CAMERA_CAPTURE_GetFrameBuffer());
+      fpsFrameCount++;
+      diagWaitStartCycle = DWT->CYCCNT;
+
+      /* (int32_t) cast makes this wrap-safe across DWT->CYCCNT rollover,
+       * same idiom sd_spi_disk.c's init deadline check uses. */
+      if ((int32_t)(DWT->CYCCNT - fpsWindowStartCycle) >= (int32_t)SystemCoreClock) {
+        PRINTF("LCD preview: %u fps (wait-for-frame=%uus/frame avg)\r\n",
+               fpsFrameCount,
+               (unsigned)(diagWaitCycles / (SystemCoreClock / 1000000U) /
+                          (fpsFrameCount == 0U ? 1U : fpsFrameCount)));
+        fpsFrameCount = 0U;
+        diagWaitCycles = 0U;
+        fpsWindowStartCycle = DWT->CYCCNT;
+      }
     }
   }
 #else

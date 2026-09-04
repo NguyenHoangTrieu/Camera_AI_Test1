@@ -1,322 +1,460 @@
-# KNOWLEDGE.md — Kiến thức nền để hiểu project này
+# KNOWLEDGE.md — Background you need to understand this project
 
-File này **không nói về project cụ thể này đã làm gì** (cái đó xem
-[ARCHITECTURE.md](ARCHITECTURE.md)), mà giải thích **các khái niệm kỹ
-thuật đứng sau nó** — những thứ nếu chưa biết thì đọc code sẽ không hiểu
-tại sao lại viết như vậy. Viết theo kiểu giảng lại từ đầu, không cần biết
-trước gì về vi điều khiển.
+This file does **not** describe what this specific project built (see
+[ARCHITECTURE.md](ARCHITECTURE.md) for that), and it does **not** track
+"what was tried and what happened" (see [WORKLOG.md](WORKLOG.md) for
+that). It explains the **general technical ideas** behind the code — the
+things that, if you don't already know them, make the code look
+arbitrary or confusing. Written so you don't need any prior
+microcontroller background.
 
-Mục lục:
-1. [Camera số "nhìn thấy" và gửi ảnh đi như thế nào](#1-camera-số-nhìn-thấy-và-gửi-ảnh-đi-như-thế-nào)
-2. [Tại sao CPU không tự chụp ảnh được — khái niệm "coprocessor"](#2-tại-sao-cpu-không-tự-chụp-ảnh-được--khái-niệm-coprocessor)
-3. [AI chạy trên một con chip nhỏ xíu như thế nào](#3-ai-chạy-trên-một-con-chip-nhỏ-xíu-như-thế-nào)
-4. [NPU — phần cứng chuyên chạy AI, khác CPU ở đâu](#4-npu--phần-cứng-chuyên-chạy-ai-khác-cpu-ở-đâu)
-5. [Bộ nhớ RAM trong chip nhúng không "phẳng" như bạn tưởng](#5-bộ-nhớ-ram-trong-chip-nhúng-không-phẳng-như-bạn-tưởng)
-6. [Nạp chương trình vào chip: SWD/JTAG và "Debug Mailbox"](#6-nạp-chương-trình-vào-chip-swdjtag-và-debug-mailbox)
-7. [Điện áp lõi chip: vì sao camera và USB "đánh nhau"](#7-điện-áp-lõi-chip-vì-sao-camera-và-usb-đánh-nhau)
-8. [Bảng thuật ngữ nhanh](#8-bảng-thuật-ngữ-nhanh)
-
----
-
-## 1. Camera số "nhìn thấy" và gửi ảnh đi như thế nào
-
-### Ảnh số thực chất là một lưới số
-
-Một tấm ảnh 320×240 là một lưới 320 cột × 240 hàng ô vuông (pixel), mỗi ô
-là 1-3 byte số (độ sáng/màu). Camera không "gửi cả tấm ảnh" một lần — nó
-gửi **từng byte một, theo một nhịp đồng hồ**, giống như đọc từng ký tự
-trong một cuốn sách theo đúng thứ tự trái-qua-phải, trên-xuống-dưới.
-
-Ở 320×240, 30 khung hình/giây: 320 × 240 × 30 ≈ **2,3 triệu byte mỗi
-giây** phải được "hứng" đúng lúc — không hứng kịp là mất pixel, ảnh bị
-lỗi/nhòe.
-
-### Hai cách camera "nói chuyện" với chip: song song (DVP) hay nối tiếp (MIPI-CSI)
-
-Camera trong project này (OV7670) dùng **DVP** (Digital Video Port) — một
-kiểu giao tiếp **song song**, nghĩa là nó có **8 dây dữ liệu riêng** (gọi
-là D0..D7), mỗi dây mang 1 bit, nên **1 byte pixel đi trong đúng 1 nhịp
-đồng hồ**. Ngoài 8 dây dữ liệu, DVP còn có 3 dây "tín hiệu nhịp":
-
-- **PCLK** (Pixel Clock) — do chính camera phát ra, giống tiếng "tách" của
-  máy đếm: mỗi lần tách, có nghĩa là "dữ liệu trên D0-D7 đang hợp lệ, đọc
-  ngay bây giờ".
-- **HREF** — bật lên trong lúc camera đang gửi *một hàng ngang* của ảnh.
-- **VSYNC** — đánh dấu điểm bắt đầu/kết thúc *một khung hình đầy đủ*.
-
-Camera đời mới hơn thường dùng **MIPI-CSI**, kiểu **nối tiếp** — chỉ 1-2
-dây tốc độ rất cao thay vì 8 dây, dữ liệu được "dồn" (serialize) lại rồi
-"tháo" (deserialize) ra ở đầu nhận. Giống như so sánh giữa việc chở 8
-người bằng 8 xe máy chạy song song (DVP) và chở 8 người bằng 1 xe khách
-chạy rất nhanh (MIPI-CSI) — MIPI-CSI cần thêm mạch điện tử để "gói/tháo
-gói", nhưng cần ít dây hơn hẳn nên phù hợp cho camera nhỏ gọn hiện đại.
-
-### Có một kênh thứ ba, tách biệt hoàn toàn: kênh điều khiển (SCCB)
-
-Ngoài luồng ảnh, camera còn có 2 dây riêng (SIOC/SIOD) chạy giao thức
-**SCCB** — gần giống hệt **I2C** (một chuẩn giao tiếp 2 dây rất phổ biến
-để "hỏi/ra lệnh" cho các linh kiện điện tử nhỏ). Kênh này **không truyền
-ảnh** — nó chỉ dùng để chip "ra lệnh" cho camera: đặt độ phân giải, độ
-sáng, lật ảnh, v.v. Hình dung: HREF/VSYNC/PCLK/D0-D7 là "băng chuyền ảnh",
-còn SCCB là "bộ đàm" nói chuyện riêng với camera để cấu hình nó.
+Table of contents:
+1. [How a digital camera "sees" and sends out an image](#1-how-a-digital-camera-sees-and-sends-out-an-image)
+2. [Why the CPU can't capture images by itself — the "coprocessor" idea](#2-why-the-cpu-cant-capture-images-by-itself--the-coprocessor-idea)
+3. [How AI runs on a tiny chip](#3-how-ai-runs-on-a-tiny-chip)
+4. [NPU — dedicated AI hardware, and how it differs from a CPU](#4-npu--dedicated-ai-hardware-and-how-it-differs-from-a-cpu)
+5. [RAM on an embedded chip isn't "flat" the way you'd expect](#5-ram-on-an-embedded-chip-isnt-flat-the-way-youd-expect)
+6. [Loading a program onto the chip: SWD/JTAG and the "Debug Mailbox"](#6-loading-a-program-onto-the-chip-swdjtag-and-the-debug-mailbox)
+7. [Core voltage: why the camera and USB "fight" each other](#7-core-voltage-why-the-camera-and-usb-fight-each-other)
+8. [SPI and DMA: how the chip talks to the display, and why "leftover" hardware settings can silently break things](#8-spi-and-dma-how-the-chip-talks-to-the-display-and-why-leftover-hardware-settings-can-silently-break-things)
+9. [Quick glossary](#9-quick-glossary)
 
 ---
 
-## 2. Tại sao CPU không tự chụp ảnh được — khái niệm "coprocessor"
+## 1. How a digital camera "sees" and sends out an image
 
-### CPU là "người quản lý bận rộn", không phải "công nhân dây chuyền"
+### A digital image is really just a grid of numbers
 
-CPU (Cortex-M33 trong chip này) chạy chương trình chính — logic, AI, hiển
-thị màn hình... Nếu bắt CPU tự đọc từng bit trên D0-D7 đúng lúc PCLK
-"tách" (làm bằng phần mềm, gọi là *bit-banging*), CPU sẽ phải bỏ hoàn
-toàn mọi việc khác để canh me từng cạnh xung nhịp, ~2,3 triệu lần mỗi
-giây — không còn thời gian làm gì khác (chạy AI, vẽ màn hình...). Đây là
-vấn đề **thời gian thực cứng** (hard real-time): trễ một nhịp là mất dữ
-liệu vĩnh viễn, không "chờ rồi làm bù" được.
+A 320×240 picture is a grid of 320 columns × 240 rows of tiny squares
+(pixels), and each square is 1-3 bytes of number (brightness/color). The
+camera doesn't send "the whole picture" in one go — it sends **one byte
+at a time, in step with a clock signal**, the same way you'd read a book
+one character at a time, left to right, top to bottom.
 
-### Giải pháp: thuê một "công nhân chuyên trách" — coprocessor
+At 320×240 resolution and 30 frames per second, that's 320 × 240 × 30 ≈
+**2.3 million bytes per second** that have to be "caught" at exactly the
+right moment — miss the timing even slightly and you lose pixels; the
+image comes out corrupted or smeared.
 
-Nhiều chip vi điều khiển hiện đại có thêm những **bộ xử lý phụ nhỏ, độc
-lập** bên trong, mỗi bộ chuyên làm đúng một việc lặp đi lặp lại tốc độ
-cao, chạy **song song** với CPU chính mà không cần CPU can thiệp từng
-bước. Chip trong project này có **SmartDMA** — khác với "DMA thường" (chỉ
-copy khối bộ nhớ A→B theo lệnh có sẵn), SmartDMA là một **bộ xử lý có thể
-nạp firmware/vi mã (microcode) riêng**, tự hiểu được nhịp PCLK/HREF/VSYNC
-và tự ráp từng byte thành khung hình hoàn chỉnh trong bộ nhớ, hoàn toàn
-độc lập với CPU.
+### Two ways a camera "talks" to a chip: parallel (DVP) or serial (MIPI-CSI)
 
-Ví von: nếu CPU là quản lý nhà hàng (lo thực đơn, order, tính tiền...) thì
-SmartDMA là một máy pha cà phê tự động chuyên dụng — cắm nguyên liệu vào,
-nó tự làm đúng quy trình đó liên tục, quản lý chỉ cần ra lệnh "bắt đầu" và
-nhận thông báo "xong rồi" (ngắt/interrupt), không cần đứng canh từng
-bước.
+The camera in this project (OV7670) uses **DVP** (Digital Video Port) — a
+**parallel** interface, meaning it has **8 separate data wires** (called
+D0..D7), one wire per bit, so **one whole pixel byte travels in a single
+clock tick**. Besides the 8 data wires, DVP also has 3 "timing" wires:
 
-Đây là **một mẫu hình rất phổ biến** trong chip nhúng hiện đại: phần nào
-đòi hỏi thời gian thực khắt khe (bắt đúng từng xung nhịp) thì giao cho một
-lõi phần cứng chuyên dụng; phần nào là logic/quyết định thì để CPU chính
-lo. Bạn sẽ gặp lại đúng mẫu hình này ở phần AI (mục 4).
+- **PCLK** (Pixel Clock) — generated by the camera itself, like the
+  "click" of a counting machine: every click means "the data on D0-D7 is
+  valid right now, read it immediately."
+- **HREF** — stays high while the camera is sending *one horizontal row*
+  of the image.
+- **VSYNC** — marks the start/end of *one complete frame*.
+
+Newer cameras usually use **MIPI-CSI**, a **serial** interface — just 1-2
+very fast wires instead of 8, with the data packed together
+(serialized) and unpacked (deserialized) again on the receiving end.
+Think of it like the difference between moving 8 people using 8
+motorbikes side by side (DVP) versus moving the same 8 people in one
+very fast bus (MIPI-CSI) — MIPI-CSI needs extra circuitry to pack/unpack
+the data, but needs far fewer wires, which suits small modern cameras.
+
+### There's a third, completely separate channel: the control channel (SCCB)
+
+Besides the image stream, the camera also has 2 dedicated wires
+(SIOC/SIOD) running a protocol called **SCCB** — almost identical to
+**I2C** (a very common 2-wire protocol for "asking/commanding" small
+electronic parts). This channel **does not carry image data** — it's only
+used by the chip to "give orders" to the camera: set resolution,
+brightness, flip the image, etc. Picture it this way: HREF/VSYNC/PCLK/
+D0-D7 are the "image conveyor belt," while SCCB is a separate "walkie-
+talkie" used just to configure the camera.
 
 ---
 
-## 3. AI chạy trên một con chip nhỏ xíu như thế nào
+## 2. Why the CPU can't capture images by itself — the "coprocessor" idea
 
-### "Model AI" chỉ là một đống phép nhân-cộng rất lớn
+### The CPU is a "busy manager," not a "production-line worker"
 
-Một mạng nơ-ron (neural network) sau khi huấn luyện xong, về bản chất là
-**một danh sách các con số cố định** (gọi là *trọng số* — weights) và một
-**thứ tự các phép toán** (chủ yếu là nhân ma trận + cộng) áp lên ảnh đầu
-vào để ra một kết quả (ví dụ: "có mặt người hay không, ở đâu"). "Chạy AI"
-(gọi là **inference**) nghĩa là thực hiện đúng chuỗi phép toán đó trên dữ
-liệu mới — không "học" gì thêm lúc chạy, việc học (training) đã làm xong
-từ trước, trên máy tính mạnh, không phải trên chip nhỏ này.
+The CPU (a Cortex-M33 in this chip) runs the main program — logic, AI,
+drawing to the screen, and so on. If you made the CPU read every single
+bit on D0-D7 exactly when PCLK "clicks" (done purely in software, called
+*bit-banging*), the CPU would have to drop everything else just to watch
+for clock edges, about 2.3 million times per second — leaving no time
+for anything else (running AI, drawing the screen...). This is a **hard
+real-time** problem: miss one tick and the data is gone forever, there's
+no "catch up later."
 
-### Vấn đề: số thực (float) rất "đắt" với một MCU nhỏ
+### The fix: hire a "dedicated worker" — a coprocessor
 
-Máy tính thường tính với số thực dấu phẩy động (float, ví dụ 0.7391...).
-Nhưng một vi điều khiển nhỏ (MCU) không có phần cứng tính float nhanh như
-máy tính/điện thoại — tính float trên MCU chậm và tốn năng lượng. Giải
-pháp gọi là **lượng tử hóa (quantization)**: đổi hết các số thực đó thành
-**số nguyên 8-bit** (int8, chỉ từ -128 đến 127) trước khi nạp vào chip,
-theo một công thức quy đổi cố định:
+Many modern microcontroller chips include extra, small, **independent
+processing units** built in, each one dedicated to doing one repetitive,
+high-speed task **in parallel** with the main CPU, without needing the
+CPU to babysit every step. The chip in this project has **SmartDMA** —
+different from a "plain DMA" (which just copies a block of memory from A
+to B following a fixed pre-set instruction), SmartDMA is a **processor
+you can load your own firmware/microcode onto**, which understands the
+PCLK/HREF/VSYNC timing itself and assembles bytes into a complete frame
+in memory, entirely independent of the CPU.
+
+An analogy: if the CPU is the restaurant manager (handling the menu,
+orders, billing...), SmartDMA is a dedicated automatic coffee machine —
+you plug in the ingredients, and it keeps repeating the exact same
+process by itself; the manager only needs to say "start" and get
+notified "done" (an interrupt) — no need to stand there watching every
+step.
+
+This is a **very common pattern** in modern embedded chips: whatever
+requires strict real-time timing (catching every clock edge exactly) gets
+handed to a dedicated hardware core; whatever is logic/decision-making
+stays with the main CPU. You'll see this exact same pattern again in the
+AI section (section 4).
+
+---
+
+## 3. How AI runs on a tiny chip
+
+### An "AI model" is really just one giant list of multiply-adds
+
+A trained neural network is, underneath, just **a fixed list of numbers**
+(called *weights*) plus **a sequence of operations** (mostly matrix
+multiplication + addition) applied to an input image to produce a result
+(e.g., "is there a face, and where"). "Running AI" (called **inference**)
+means executing that exact sequence of math on new data — nothing is
+"learned" at this point; the learning (training) already happened
+earlier, on a powerful computer, not on this small chip.
+
+### The problem: real numbers (floats) are "expensive" for a small MCU
+
+Regular computers usually compute with floating-point numbers (floats,
+e.g. 0.7391...). But a small microcontroller (MCU) doesn't have
+fast floating-point hardware like a computer or phone does — computing
+with floats on an MCU is slow and power-hungry. The fix is called
+**quantization**: converting all those real numbers into **8-bit
+integers** (int8, ranging only from -128 to 127) before loading them onto
+the chip, using a fixed conversion formula:
 
 ```
-giá_trị_lượng_tử = round(giá_trị_thực / scale) + zero_point
+quantized_value = round(real_value / scale) + zero_point
 ```
 
-`scale` và `zero_point` là hai con số cố định được tính sẵn lúc huấn
-luyện, đi kèm theo model. Với ảnh (pixel gốc 0..255), model trong project
-này có `scale ≈ 1/255` và `zero_point = -128` — nghĩa là công thức trên
-rút gọn lại chỉ còn **`giá_trị_lượng_tử = pixel - 128`** (chỉ là phép trừ,
-không cần nhân/chia gì cả) — cực kỳ rẻ để tính trên một MCU không có bộ
-tính float mạnh.
+`scale` and `zero_point` are two fixed numbers computed ahead of time
+during training and shipped alongside the model. For images (raw pixels
+0..255), the model in this project has `scale ≈ 1/255` and
+`zero_point = -128` — which means the formula above simplifies down to
+just **`quantized_value = pixel - 128`** (a plain subtraction, no
+multiply/divide needed at all) — extremely cheap to compute on an MCU
+without strong floating-point hardware.
 
-Đổi lại, số nguyên 8-bit có ít "mức" hơn số thực rất nhiều, nên độ chính
-xác của model giảm đi một chút so với bản gốc — đây là cái giá phải trả
-để model chạy vừa trên một con chip vài trăm KB RAM thay vì cần cả GB như
-trên máy tính.
+In exchange, 8-bit integers have far fewer "levels" than real numbers, so
+the model's accuracy drops a bit compared to the original — that's the
+price paid to make the model fit on a chip with a few hundred KB of RAM
+instead of needing gigabytes like a computer would.
 
-### FOMO: một kiểu model được "cắt gọt" riêng cho MCU
+### FOMO: a model design "cut down" specifically for MCUs
 
-Các model nhận diện vật thể "đầy đủ" (như YOLO) thường vẽ được khung
-(bounding box) rất chính xác nhưng nặng, không chạy nổi trên MCU. **FOMO**
-(Faster Objects, More Objects — một kiểu kiến trúc do Edge Impulse tạo ra)
-là bản rút gọn: thay vì "vẽ khung" chính xác, nó chia ảnh thành **một
-lưới ô vuông nhỏ** và chỉ trả lời "ô này có tâm vật thể hay không" cho
-từng ô — rẻ hơn nhiều lần về tính toán, đổi lại độ chính xác vị trí thô
-hơn (theo kích thước ô lưới, không phải theo từng pixel).
+"Full" object-detection models (like YOLO) usually draw a very accurate
+bounding box but are too heavy to run on an MCU. **FOMO** (Faster
+Objects, More Objects — an architecture created by Edge Impulse) is a
+stripped-down version: instead of "drawing an accurate box," it splits
+the image into **a grid of small cells** and only answers "does this cell
+contain the center of an object or not" for each cell — many times
+cheaper to compute, at the cost of coarser position accuracy (limited to
+the grid cell size, not per-pixel).
 
 ---
 
-## 4. NPU — phần cứng chuyên chạy AI, khác CPU ở đâu
+## 4. NPU — dedicated AI hardware, and how it differs from a CPU
 
-### Vì sao CPU "chạy được" AI nhưng vẫn cần thêm phần cứng riêng
+### Why a CPU "can run" AI but still benefits from extra hardware
 
-CPU có thể chạy AI bằng phần mềm thuần (ở đây gọi là đường "CPU +
-CMSIS-NN" — CMSIS-NN là một thư viện được NXP/ARM tối ưu sẵn cho các phép
-nhân ma trận trên CPU dòng Cortex-M). Nhưng phần lớn thời gian tính AI là
-**hàng triệu phép nhân-cộng lặp đi lặp lại giống hệt nhau** (nhân ma trận
-cho từng lớp conv/depthwise-conv trong model) — CPU (dù có CMSIS-NN hỗ
-trợ) vẫn xử lý các phép này **tuần tự từng bước một**.
+A CPU can run AI purely in software (referred to here as the "CPU +
+CMSIS-NN" path — CMSIS-NN is a library optimized by NXP/ARM specifically
+for matrix-multiply operations on Cortex-M CPUs). But most of the time
+spent on AI is **millions of identical, repetitive multiply-add
+operations** (matrix multiplication for each conv/depthwise-conv layer in
+the model) — a CPU (even with CMSIS-NN's help) still processes these
+**one step at a time, sequentially**.
 
-### NPU: nhiều "bộ nhân" chạy song song, chỉ để làm đúng việc đó
+### NPU: many "multipliers" running in parallel, built for exactly this job
 
-**NPU** (Neural Processing Unit — ở đây là "Neutron", coprocessor AI của
-NXP) là một mạch phần cứng thiết kế **chỉ để** làm phép nhân-cộng ma trận,
-nhưng làm **hàng trăm/hàng nghìn phép cùng lúc** thay vì từng phép một,
-nhờ có rất nhiều mạch nhân nhỏ chạy song song. Đây chính là mẫu hình
-coprocessor đã nói ở mục 2 — CPU giao việc, NPU tự chạy độc lập, gửi kết
-quả lại. Trên model từng đo trong project này, chênh lệch tốc độ đo được
-trên phần cứng thật là:
+An **NPU** (Neural Processing Unit — here it's "Neutron," NXP's AI
+coprocessor) is a piece of hardware designed **only** to do matrix
+multiply-add operations, but doing **hundreds or thousands of them at
+once** instead of one at a time, thanks to having many small multiplier
+circuits running in parallel. This is exactly the same coprocessor
+pattern described in section 2 — the CPU hands off the work, the NPU runs
+it independently, and sends the result back. Measured on real hardware
+for the model used in this project, the speed difference is:
 
 | | CPU (CMSIS-NN) | NPU (Neutron) |
 |---|---|---|
-| Thời gian mỗi lần suy luận | ~1,27 giây | ~3,3 mili-giây |
-| Tốc độ tương đối | 1x | **nhanh hơn ~370-390 lần** |
+| Time per inference | ~1.27 seconds | ~3.3 milliseconds |
+| Relative speed | 1x | **~370-390x faster** |
 
-### NPU không tự nhiên "hiểu" mọi model — cần một bước chuyển đổi riêng
+### An NPU doesn't automatically "understand" every model — it needs a conversion step
 
-Đây là điểm khác biệt lớn nhất so với CPU: CPU (qua CMSIS-NN) chạy được
-gần như mọi model TFLite int8 chuẩn ngay lập tức. NPU thì không — nó chỉ
-hiểu một tập lệnh/microcode riêng của chính nó. Cần một công cụ chuyển đổi
-(ở đây là `neutron_converter` của NXP) quét qua model, tìm các lớp mà NPU
-hỗ trợ (conv, pool, add...), rồi **gộp cả cụm lớp đó lại thành một "khối
-lệnh" duy nhất** đã biên dịch sẵn cho NPU. Những lớp NPU không hỗ trợ vẫn
-chạy bình thường trên CPU như cũ — model không cần "toàn bộ" chạy trên NPU
-mới có lợi, chỉ cần phần nặng nhất (thường là >90% khối lượng tính toán)
-được gộp là đã nhanh hơn rất nhiều.
-
----
-
-## 5. Bộ nhớ RAM trong chip nhúng không "phẳng" như bạn tưởng
-
-### Trên máy tính, "RAM" là một khối liền; trên chip nhúng thì không
-
-Khi lập trình trên máy tính/điện thoại, bạn hầu như không cần biết RAM
-"nằm ở đâu" — hệ điều hành lo hết. Nhưng bên trong một con chip vi điều
-khiển, RAM thực ra được chia thành **nhiều bank vật lý riêng biệt** (ví
-dụ: `m_data`, `m_sramx`...), mỗi bank có thể:
-
-- Được nối vào các đường bus khác nhau (nên tốc độ truy cập khác nhau),
-- Bị **một coprocessor khác "chiếm dụng ngầm"** để lưu firmware/trạng thái
-  riêng của nó, mà **trình biên dịch/linker không hề biết** — vì
-  coprocessor đó nạp dữ liệu vào bank đó lúc chương trình đang chạy (qua
-  một lệnh gọi hàm), không phải lúc biên dịch.
-
-Hệ quả: một bank RAM "trông có vẻ trống" khi bạn nhìn vào bản đồ bộ nhớ do
-trình biên dịch tạo ra (linker map), **không có nghĩa là nó thực sự
-trống** lúc chương trình chạy. Đây là một cái bẫy rất dễ mắc phải: nhìn
-linker map thấy "chưa ai dùng bank này", tưởng an toàn để nhét dữ liệu
-của mình vào, nhưng thực ra một coprocessor khác đang âm thầm dùng nó.
-
-### Không phải mọi bank RAM đều "được cấp điện"
-
-Có một cấp bẫy sâu hơn nữa: trên chip nhiều lõi CPU (đa nhân), nhà sản
-xuất thường chia RAM theo **vùng cấp điện riêng** (power domain) cho từng
-lõi, để tiết kiệm điện — lõi nào không dùng thì cắt điện luôn cả vùng RAM
-gắn với nó. Nếu chương trình chỉ chạy 1 lõi và **không bao giờ khởi động
-lõi thứ hai**, thì vùng RAM dành riêng cho lõi đó có thể **chưa từng được
-cấp điện** — không phải "đang được dùng bởi ai đó" như trường hợp trên,
-mà là **về mặt vật lý mạch điện chưa bật**. Truy cập vào đó không gây "dữ
-liệu sai" — nó gây lỗi bus (bus fault), chương trình treo cứng ngay lập
-tức.
-
-Bài học chung: **"linker map thấy trống" không đồng nghĩa với "an toàn để
-dùng"** — cần biết rõ có coprocessor/lõi nào khác đang (hoặc có thể) đụng
-vào vùng nhớ đó không, trước khi tái sử dụng nó.
+This is the biggest difference from a CPU: a CPU (via CMSIS-NN) can run
+almost any standard int8 TFLite model right away. An NPU cannot — it only
+understands its own private instruction set/microcode. A conversion tool
+is needed (here, NXP's `neutron_converter`) that scans through the model,
+finds the layers the NPU supports (conv, pool, add...), and **fuses that
+whole cluster of layers into a single pre-compiled "instruction block"**
+for the NPU. Layers the NPU doesn't support still run normally on the
+CPU as before — the model doesn't need to run "entirely" on the NPU to
+benefit; fusing just the heaviest part (usually >90% of the total
+computation) is already enough for a huge speedup.
 
 ---
 
-## 6. Nạp chương trình vào chip: SWD/JTAG và "Debug Mailbox"
+## 5. RAM on an embedded chip isn't "flat" the way you'd expect
 
-### Làm sao máy tính "nói chuyện" được với một con chip chưa chạy gì cả
+### On a computer, "RAM" is one single block; on a chip, it isn't
 
-Khi bạn nạp code vào vi điều khiển, máy tính không dùng USB/mạng thông
-thường — nó dùng một giao thức phần cứng cấp thấp gọi là **SWD** (Serial
-Wire Debug, chỉ 2 dây) hoặc **JTAG** (nhiều dây hơn, cũ hơn), đi qua một
-mạch nhỏ trung gian gọi là **debug probe** (ở đây là MCU-Link, gắn ngay
-trên board). Đây là kênh **cấp thấp nhất có thể** — nó hoạt động được kể
-cả khi chip chưa hề chạy chương trình nào, dùng để: nạp firmware vào
-flash, đọc/ghi thanh ghi, tạm dừng CPU để debug từng dòng lệnh.
+When programming on a computer or phone, you almost never need to know
+"where" RAM physically is — the operating system handles it. But inside
+a microcontroller chip, RAM is actually split into **several separate
+physical banks** (e.g. `m_data`, `m_sramx`...), and each bank can:
 
-### Vì sao đôi khi công cụ nạp chip "chuẩn" vẫn không hoạt động
+- Be wired to a different internal bus (so access speed differs),
+- Be **silently claimed by a different coprocessor** to store its own
+  firmware/state, **without the compiler/linker ever knowing** — because
+  that coprocessor loads data into that bank while the program is already
+  running (through a function call), not at compile time.
 
-Công cụ nạp chip phổ biến (`pyOCD`) hoạt động dựa trên một **gói mô tả
-chip** (CMSIS-Pack) do nhà sản xuất cung cấp — file này mô tả các bước cụ
-thể ("debug sequence") cần làm để kết nối đúng cách với từng dòng chip cụ
-thể (mỗi hãng, mỗi dòng chip có thể khác nhau). Nếu gói mô tả này (hoặc
-cách `pyOCD` thực thi nó) không khớp hoàn hảo với đúng phiên bản
-probe/chip đang dùng, bước kết nối có thể thất bại — dù kết nối vật lý
-(dây SWD) hoàn toàn ổn.
+The consequence: a RAM bank that "looks empty" when you look at the
+memory map the compiler produced (the linker map) **does not mean it's
+actually empty** while the program is running. This is a very easy trap
+to fall into: you look at the linker map, see "nobody's using this
+bank," and assume it's safe to put your own data there — but in reality a
+different coprocessor is quietly using it.
 
-Trong trường hợp đó, có một đường vòng: nhiều chip có sẵn một cơ chế điều
-khiển thấp hơn nữa, gọi là **Debug Mailbox** — về cơ bản là một "hộp thư"
-phần cứng nhỏ mà bạn gửi lệnh vào (mở khóa truy cập, xóa flash...) mà
-không cần đi qua toàn bộ quy trình debug sequence phức tạp ở trên. Công
-cụ `nxpdebugmbox` (từ chính NXP) nói chuyện trực tiếp qua kênh này, và có
-sẵn cơ chế tự thử lại khi gặp lỗi kết nối — cái mà `pyOCD` không có sẵn
-cho riêng dòng chip này.
+### Not every RAM bank is even "powered on"
 
-Bài học chung: khi công cụ nạp chip "chuẩn" báo lỗi ngay từ bước kết nối
-(chưa tới bước ghi flash), đừng chỉ thử đổi tốc độ/cáp/cổng USB — hãy tìm
-xem nhà sản xuất chip có công cụ debug cấp thấp hơn riêng của họ không.
+There's an even deeper trap: on chips with multiple CPU cores, the
+manufacturer often splits RAM into separate **power domains** per core,
+to save energy — whichever core isn't in use has its associated RAM
+region cut off from power entirely. If a program only runs on one core
+and **never starts up the second core**, the RAM region dedicated to that
+second core may **never have been powered on at all** — this isn't
+"someone else is using it" like the case above, it's that the physical
+circuit is literally switched off. Accessing it doesn't cause "wrong
+data" — it causes a bus fault, and the program freezes immediately.
 
----
-
-## 7. Điện áp lõi chip: vì sao camera và USB "đánh nhau"
-
-### Chip không chạy ở một điện áp cố định duy nhất
-
-Nhiều chip hiện đại có một mạch điều chỉnh điện áp lõi bên trong gọi là
-**DCDC regulator** (hay buck converter) — nó có thể **thay đổi điện áp
-cấp cho lõi CPU/các khối chức năng**, tùy theo việc chip đang cần tốc độ
-cao (điện áp cao hơn) hay tiết kiệm điện (điện áp thấp hơn). Đây là kỹ
-thuật rất phổ biến để cân bằng hiệu năng/năng lượng.
-
-### Vấn đề: hai thiết bị cần hai mức điện áp khác nhau, không thể cùng lúc
-
-Trong project này, camera (qua SmartDMA) chạy ổn định nhất ở điện áp
-**trung bình (~1.0V)**, còn cổng **USB tốc độ cao (High-Speed)** cần điện
-áp **cao hơn (~1.2V, gọi là chế độ Overdrive)** thì mạch PLL của nó mới
-**khóa pha** được (PLL là mạch tạo xung nhịp cực chính xác cần thiết để
-truyền dữ liệu tốc độ cao — nếu điện áp không đủ, PLL không "bắt" được
-tần số đúng, USB không hoạt động được).
-
-Vì đây là **cùng một mạch DCDC**, chip **chỉ có thể ở một mức điện áp tại
-một thời điểm** — không thể vừa chạy camera ổn định vừa chạy USB
-High-Speed ổn định cùng lúc. Đây khác hẳn với các lỗi phần mềm thông
-thường: dù bạn viết driver camera và driver USB "đúng" tuyệt đối, hai cái
-vẫn không thể chạy đồng thời, vì **giới hạn nằm ở phần cứng vật lý** (một
-mạch điều áp, hai yêu cầu điện áp xung đột), không nằm ở logic code.
-
-Cách duy nhất để "né" giới hạn này (nếu thực sự cần cả hai) là **luân
-phiên theo thời gian** — chuyển qua chuyển lại giữa hai mức điện áp, mỗi
-lần chỉ chạy một thứ trong một khoảng ngắn — đổi lại là cả hai đều chạy
-"chập chờn" chứ không mượt liên tục.
+General lesson: **"the linker map shows it as empty" does not mean "safe
+to use"** — you need to know whether any other coprocessor/core could
+touch that memory region before reusing it.
 
 ---
 
-## 8. Bảng thuật ngữ nhanh
+## 6. Loading a program onto the chip: SWD/JTAG and the "Debug Mailbox"
 
-| Thuật ngữ | Giải thích ngắn |
+### How a computer "talks" to a chip that isn't running anything yet
+
+When you load code onto a microcontroller, the computer doesn't use
+regular USB/network — it uses a low-level hardware protocol called
+**SWD** (Serial Wire Debug, just 2 wires) or **JTAG** (more wires, older),
+going through a small intermediate circuit called a **debug probe** (here,
+the MCU-Link, built right onto the board). This is the **lowest-level
+channel possible** — it works even when the chip hasn't run any program
+at all yet, and is used to: load firmware into flash, read/write
+registers, and pause the CPU to step through code line by line.
+
+### Why the "standard" flashing tool sometimes still doesn't work
+
+The common flashing tool (`pyOCD`) works based on a **chip description
+package** (CMSIS-Pack) provided by the manufacturer — this file describes
+the exact steps (a "debug sequence") needed to connect properly to a
+specific chip family (each vendor, each chip family, can differ). If this
+description package (or how `pyOCD` executes it) doesn't match perfectly
+with the exact probe/chip version in use, the connection step can fail —
+even though the physical connection (the SWD wires) is completely fine.
+
+In that case, there's a workaround: many chips have an even lower-level
+control mechanism built in, called a **Debug Mailbox** — essentially a
+small hardware "mailbox" you send commands into (unlock access, erase
+flash...) without going through the whole complex debug-sequence process
+above. The `nxpdebugmbox` tool (from NXP itself) talks directly through
+this channel, and comes with a built-in retry mechanism for connection
+errors — something `pyOCD` doesn't have specifically for this chip
+family.
+
+General lesson: when the "standard" flashing tool fails right at the
+connection step (before even reaching the flash-write step), don't just
+try different speeds/cables/USB ports — check whether the chip
+manufacturer has their own lower-level debug tool.
+
+---
+
+## 7. Core voltage: why the camera and USB "fight" each other
+
+### A chip doesn't run at one single fixed voltage
+
+Many modern chips have a built-in core voltage regulator called a
+**DCDC regulator** (or buck converter) — it can **change the voltage
+supplied to the CPU core/functional blocks**, depending on whether the
+chip currently needs high speed (higher voltage) or power savings (lower
+voltage). This is a very common technique for balancing performance
+against power consumption.
+
+### The problem: two devices need two different voltage levels, and can't have both at once
+
+In this project, the camera (through SmartDMA) runs most reliably at a
+**medium voltage (~1.0V)**, while the **High-Speed USB** port needs a
+**higher voltage (~1.2V, called Overdrive mode)** for its PLL circuit to
+**lock phase** properly (a PLL is a very precise clock-generating circuit
+needed for high-speed data transfer — if the voltage isn't high enough,
+the PLL can't "lock onto" the correct frequency, and USB simply doesn't
+work).
+
+Since this is the **same DCDC circuit**, the chip **can only be at one
+voltage level at a time** — it cannot run the camera reliably and
+High-Speed USB reliably at the same time. This is very different from a
+typical software bug: even if you write the camera driver and the USB
+driver perfectly correctly, the two still cannot run simultaneously,
+because the **limitation is in the physical hardware** (one voltage
+regulator, two conflicting voltage requirements), not in the code logic.
+
+The only way to "work around" this limit (if you genuinely need both) is
+to **time-share** — switch back and forth between the two voltage
+levels, running only one thing at a time for a short window each — the
+trade-off being that both end up running "in bursts" rather than
+smoothly and continuously.
+
+---
+
+## 8. SPI and DMA: how the chip talks to the display, and why "leftover" hardware settings can silently break things
+
+### SPI: a simple, very common wire protocol between chips
+
+**SPI** (Serial Peripheral Interface) is one of the most common ways one
+chip talks to another small chip (a display, an SD card, a sensor...).
+One side is the **master** (here, the microcontroller) and the other is
+the **slave** (the display panel, the SD card...). SPI normally uses 4
+wires:
+
+- **SCK** (clock) — generated by the master, ticks at a steady rate; one
+  bit of data moves on every tick, exactly like PCLK for the camera in
+  section 1.
+- **MOSI** (Master Out, Slave In) — data going FROM the microcontroller
+  TO the display/SD card.
+- **MISO** (Master In, Slave Out) — data coming BACK from the display/SD
+  card TO the microcontroller.
+- **CS** (Chip Select) — a separate wire per device on a shared bus,
+  telling one specific device "this data is for you, everyone else
+  ignore it."
+
+The one detail that trips people up: SPI is built around a **shift
+register** — on every single clock tick, one bit shifts OUT on MOSI **at
+the exact same instant** one bit shifts IN on MISO. This happens whether
+or not you actually care about the incoming data — sending is
+structurally impossible to separate from receiving on real SPI hardware,
+they ride the very same clock.
+
+### FIFO: a small hardware "waiting queue" between software and the wire
+
+Talking to the wire one bit at a time, timed to the clock, is too slow
+and fiddly to do directly from software. So the SPI hardware has a small
+built-in queue called a **FIFO** (First In, First Out) — software drops a
+whole byte into the FIFO whenever it wants, and the hardware clocks it
+out to the wire on its own schedule, refilling from the FIFO as needed.
+Same idea on the receiving side: incoming bytes land in a FIFO, and
+software (or another piece of hardware) picks them up whenever it's
+convenient, not necessarily the instant each bit arrives.
+
+### The "slow but simple" way: CPU feeds the FIFO itself (blocking/polled transfer)
+
+The simplest way to move data is: software checks "is there room in the
+FIFO yet?" and once there is, writes the next byte in — repeated for
+every single byte. For a full 320×240 camera-preview frame (153,600
+bytes), that's 153,600 separate checks-and-writes. Each one of those
+checks has to cross from the CPU's own fast internal bus into the SPI
+peripheral's slower bus domain — a small, fixed cost each time, that adds
+up hugely when repeated 150,000+ times per frame. This project measured
+that cost directly and confirmed it was the dominant remaining slowdown
+after the SPI clock speed itself was fixed.
+
+### The "hands-off" way: DMA / eDMA — a dedicated copy-robot for the FIFO
+
+**DMA** (Direct Memory Access) is a small hardware unit whose only job is
+to move bytes between memory and a peripheral's FIFO **on its own**,
+without asking the CPU to check/write each one. This is the exact same
+"coprocessor" pattern from section 2, applied to feeding a FIFO instead
+of capturing a camera frame. **eDMA** ("enhanced DMA") is a more capable
+version that can chain multiple transfer steps together and be
+configured in more detail.
+
+The key thing DMA needs to know is **when to move the next chunk**. It
+does this using the FIFO's **watermark**: a threshold level configured in
+advance (e.g. "trigger whenever the FIFO count crosses 4"). When the
+peripheral's FIFO crosses that watermark, it raises a signal called a
+**hardware request**, and the DMA engine responds by moving the next
+batch of bytes — entirely automatically, with the CPU never involved.
+
+### The trap this project actually hit: hardware "remembers" settings between calls, and different helper functions don't always agree on what those settings should be
+
+A peripheral like SPI has configuration registers that **persist between
+calls** — nothing resets them automatically just because a different
+function is called next. If two different pieces of driver code both
+touch the same peripheral, but were written assuming they're the *only*
+user, one of them can silently leave behind a setting the other doesn't
+expect — and there's no compiler warning for this, because from the
+compiler's point of view both calls are perfectly valid; the mistake only
+exists at the hardware-register level.
+
+That's exactly what happened here: one driver helper (used for sending
+single command bytes, where the reply is thrown away) has a legitimate
+optimization — a control-register bit that tells the hardware "don't
+bother storing whatever comes back on MISO, we don't want it." That's a
+sensible thing to do for that specific call, and it's not a bug there.
+But that setting stays in the register afterward, and a *different*
+helper (the eDMA transfer, called right after) needed the opposite:
+it needed the hardware to genuinely store incoming data into the FIFO,
+because eDMA's own completion signal is tied to that FIFO actually
+filling up. Since the setting was never explicitly reset back to normal
+before the eDMA transfer began, the FIFO could never fill, the "watermark
+crossed" signal could never fire, and the DMA transfer waited forever —
+even though sending data out (the other half of the same full-duplex
+exchange) worked completely fine, which made the symptom especially
+confusing: half the transfer visibly "worked," while the other half
+silently never started at all.
+
+The general lesson: **a hardware peripheral's configuration is shared,
+persistent state** — not something that resets itself just because your
+code moved on to a different function. Whenever two different code paths
+touch the same piece of hardware, it's worth asking "what did the
+*previous* caller leave behind in this peripheral's registers, and does
+this new call actually need it reset first?" instead of assuming a fresh
+start.
+
+---
+
+## 9. Quick glossary
+
+| Term | Short explanation |
 |---|---|
-| **DVP** | Giao thức camera song song, 8 dây dữ liệu + 3 dây nhịp (PCLK/HREF/VSYNC). |
-| **MIPI-CSI** | Giao thức camera nối tiếp, ít dây hơn DVP, phổ biến trên camera đời mới. |
-| **SCCB** | Kênh điều khiển 2 dây của camera (giống I2C), dùng để cấu hình, không truyền ảnh. |
-| **Coprocessor** | Bộ xử lý phụ chuyên một việc, chạy song song với CPU chính, không cần CPU can thiệp từng bước. |
-| **SmartDMA** | Coprocessor của NXP, nạp được firmware riêng, ở đây dùng để tự "hứng" khung hình camera. |
-| **Hard real-time** | Việc phải xử lý đúng hạn tuyệt đối — trễ là mất dữ liệu, không "làm bù" được. |
-| **Inference** | Bước "chạy" một model AI đã huấn luyện xong trên dữ liệu mới, không học thêm gì. |
-| **Quantization** | Đổi số thực (float) thành số nguyên nhỏ (int8) để tính nhanh/rẻ hơn trên phần cứng yếu. |
-| **scale / zero_point** | Hai hằng số dùng trong công thức quy đổi số thực ↔ số nguyên lượng tử hóa. |
-| **FOMO** | Kiểu model nhận diện vật thể rút gọn cho MCU — chia ảnh thành lưới ô, đoán "có tâm vật thể" theo ô. |
-| **NPU** | Phần cứng chuyên chạy phép nhân-cộng ma trận của AI, song song hàng loạt thay vì tuần tự như CPU. |
-| **TFLite Micro** | Runtime (bộ máy thực thi) chạy model AI dạng `.tflite` trên vi điều khiển, không cần hệ điều hành. |
-| **Tensor arena** | Vùng RAM cấp phát sẵn để model AI dùng làm bộ nhớ tạm khi tính toán. |
-| **RAM bank / power domain** | RAM trong chip nhúng chia thành nhiều vùng vật lý riêng, có vùng có thể chưa được cấp điện. |
-| **SWD / JTAG** | Giao thức phần cứng cấp thấp để máy tính nạp code/debug trực tiếp vào chip. |
-| **Debug probe** | Mạch trung gian (ví dụ MCU-Link) nối máy tính với chip qua SWD/JTAG. |
-| **CMSIS-Pack / debug sequence** | Gói mô tả từng bước kết nối debug riêng cho từng dòng chip, do hãng chip cung cấp. |
-| **Debug Mailbox** | Cơ chế điều khiển chip cấp thấp hơn cả SWD thường, dùng để mở khóa/xóa chip khi debug sequence chuẩn thất bại. |
-| **DCDC regulator** | Mạch điều chỉnh điện áp lõi chip, có thể thay đổi mức điện áp tùy nhu cầu tốc độ/tiết kiệm điện. |
-| **PLL** | Mạch tạo xung nhịp chính xác cần thiết cho truyền dữ liệu tốc độ cao (như USB High-Speed). |
-</content>
+| **DVP** | Parallel camera protocol, 8 data wires + 3 timing wires (PCLK/HREF/VSYNC). |
+| **MIPI-CSI** | Serial camera protocol, fewer wires than DVP, common on newer cameras. |
+| **SCCB** | The camera's 2-wire control channel (like I2C), used for configuration, not image data. |
+| **Coprocessor** | A dedicated secondary processor for one task, running in parallel with the main CPU, without needing step-by-step CPU involvement. |
+| **SmartDMA** | NXP's coprocessor that can be loaded with its own firmware; used here to capture camera frames on its own. |
+| **Hard real-time** | A task that must be handled by an absolute deadline — miss it and the data is lost, no "catching up" later. |
+| **Inference** | The step of "running" an already-trained AI model on new data, without learning anything further. |
+| **Quantization** | Converting real numbers (float) into small integers (int8) to compute faster/cheaper on weak hardware. |
+| **scale / zero_point** | Two constants used in the formula that converts between real numbers and quantized integers. |
+| **FOMO** | A stripped-down object-detection model design for MCUs — splits the image into a grid, guesses "object center here" per cell. |
+| **NPU** | Dedicated hardware for AI matrix multiply-add operations, running many at once in parallel instead of one at a time like a CPU. |
+| **TFLite Micro** | The runtime (execution engine) that runs a `.tflite` AI model on a microcontroller, without needing an operating system. |
+| **Tensor arena** | A pre-allocated block of RAM the AI model uses as scratch space while computing. |
+| **RAM bank / power domain** | Embedded-chip RAM is split into several separate physical regions; some regions may not even be powered on. |
+| **SWD / JTAG** | Low-level hardware protocols letting a computer load code/debug a chip directly. |
+| **Debug probe** | The intermediate circuit (e.g. MCU-Link) connecting a computer to a chip over SWD/JTAG. |
+| **CMSIS-Pack / debug sequence** | A chip-vendor-provided package describing the exact connection steps needed for debugging a specific chip family. |
+| **Debug Mailbox** | An even lower-level chip control mechanism than standard SWD, used to unlock/erase a chip when the standard debug sequence fails. |
+| **DCDC regulator** | The chip's core voltage regulator circuit, able to change voltage levels depending on speed/power needs. |
+| **PLL** | A precise clock-generating circuit needed for high-speed data transfer (like USB High-Speed). |
+| **SPI** | A simple wire protocol (clock + data-out + data-in + chip-select) for one chip to talk to small peripheral chips. |
+| **MOSI / MISO / SCK / CS** | The four SPI wires: data-out, data-in, clock, and chip-select. |
+| **FIFO** | A small hardware queue that buffers bytes between software and the wire, so software doesn't have to move at wire speed. |
+| **Watermark** | A configured FIFO fill-level threshold that triggers a hardware request signal (e.g., to wake up a DMA transfer). |
+| **DMA / eDMA** | Hardware that moves data between memory and a peripheral's FIFO on its own, without the CPU checking/writing each byte. |
+| **Blocking / polled transfer** | A CPU-driven transfer where software itself repeatedly checks and feeds the FIFO, one step at a time. |

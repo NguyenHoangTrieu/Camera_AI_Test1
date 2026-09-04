@@ -1,6 +1,7 @@
 /*
  * sd_spi_disk.h - SD card over SPI (LPSPI1, Arduino D10..D13 - see
- * BOARD_InitSdCardPins() in pin_mux.c), wired into FatFs as physical
+ * BOARD_InitSdCardPins() in pin_mux.c; that bus is now shared with the LCD
+ * and touch controller, see ../spi1_bus.h), wired into FatFs as physical
  * drive 0 via the standard diskio.h API (disk_initialize/status/read/
  * write/ioctl, defined in sd_spi_disk.c - called by ff.c, not meant to be
  * called directly).

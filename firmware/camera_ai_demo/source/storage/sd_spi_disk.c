@@ -12,13 +12,26 @@
  *     project only ever has the one card, see ffconf.h's FF_VOLUMES=1),
  *     no multi-backend dispatch needed.
  *
- * PCS (chip select) is real LPSPI1 hardware PCS0 (P0_27), not a bit-banged
- * GPIO - SDSPI_Init() needs to flip its active-polarity at runtime via
+ * LPSPI1 is now a SHARED bus (see ../spi1_bus.h): the LCD
+ * (source/display/lcd_spi_hw.c) and touch controller
+ * (source/display/touch_xpt2046.c) ride the same SCK/MOSI/MISO pins with
+ * their own manual GPIO chip-selects. The SD card is the only device that
+ * still uses the peripheral's real hardware PCS0 (P0_27/D10) - SDSPI_Init()
+ * needs to flip its active-polarity at runtime via
  * SDCARD_SPI_CsActivePolarity() (temporarily active-high) to emit the SD
  * card's power-up sequence with CS deasserted, then every real command
  * uses kLPSPI_MasterPcsContinuous so CS stays asserted across the whole
  * multi-exchange() command/response/data sequence, not just one exchange()
- * call - exactly the same pattern NXP's own DSPI reference glue uses.
+ * call - exactly the same pattern NXP's own DSPI reference glue uses; that
+ * runtime-polarity trick only works through real PCS hardware, which is
+ * why the SD card (unlike the LCD/touch) couldn't move to a plain GPIO CS.
+ * Because the bus is shared, disk_read()/disk_write() below explicitly
+ * reclaim the SD card's operating baud rate before every FatFs-triggered
+ * transfer - the LCD or touch driver may have left the bus at a different
+ * rate since the last SD access. SDSPI_Init() itself doesn't need this: it
+ * already re-asserts the 400kHz identification speed unconditionally at
+ * its own start (middleware/sdmmc/sdspi/fsl_sdspi.c), regardless of
+ * whatever the bus was left at.
  *
  * CONFIRMED on real hardware (2026-08-25, live SWD register inspection -
  * see WORKLOG.md): if the card/wiring is bad in a way that makes every SPI
@@ -37,14 +50,18 @@
 #include "sd_spi_disk.h"
 #include "ff.h" /* Must come before diskio.h - defines BYTE/UINT/LBA_t/... that diskio.h's prototypes need. */
 #include "diskio.h"
-#include "fsl_clock.h"
 #include "fsl_common.h" /* DWT, SystemCoreClock - see SDCARD_SPI_Exchange()'s deadline check below. */
 #include "fsl_debug_console.h"
 #include "fsl_lpspi.h"
 #include "fsl_sdspi.h"
+#include "spi1_bus.h"
 
+/* Only needed directly in this file for SDCARD_SPI_CsActivePolarity()'s
+ * LPSPI_SetAllPcsPolarity() call - everything else routes through
+ * spi1_bus.h now (init/baud-rate/transfers), since those are shared with
+ * the LCD/touch controller. Polarity is SD-only (real hardware PCS0), so
+ * it isn't part of the shared-bus wrapper. */
 #define SD_SPI_BASEADDR LPSPI1
-#define SD_SPI_CLK_FREQ CLOCK_GetLPFlexCommClkFreq(1u) /* FRO12M/1, see hardware_init.c */
 
 /* Operating-speed cap for host->busBaudRate below, NOT the mandatory
  * 400kHz card-identification speed (SDMMC_CLOCK_400KHZ, set separately
@@ -79,14 +96,12 @@ static bool s_initInProgress;
 
 static void SDCARD_SPI_Init(void)
 {
-    lpspi_master_config_t masterConfig;
-
-    LPSPI_MasterGetDefaultConfig(&masterConfig);
-    masterConfig.baudRate  = 400000U; /* SDSPI_Init() immediately calls setFrequency() anyway. */
-    masterConfig.whichPcs  = kLPSPI_Pcs0;
-    /* Defaults already match what SD-over-SPI needs: 8 bits/frame, CPOL=0/
-     * CPHA=0 (SPI mode 0), MSB first, PCS0 active-low, SDI in/SDO out. */
-    LPSPI_MasterInit(SD_SPI_BASEADDR, &masterConfig, SD_SPI_CLK_FREQ);
+    /* Brings up LPSPI1 once (idempotent - a no-op if the LCD or touch
+     * driver already did this, whichever runs first). Baseline config
+     * (8 bits/frame, mode 0, MSB first) already matches what SD-over-SPI
+     * needs; SDSPI_Init() immediately calls setFrequency() anyway, so the
+     * shared module's own baseline baud rate doesn't matter here. */
+    SPI1_BUS_Init();
 
     /* DWT is already enabled by AI_MODEL_Init() (see model_runner*.cpp),
      * which always runs before SNAPSHOT_Init() in main.c - but enable it
@@ -102,27 +117,11 @@ static void SDCARD_SPI_Init(void)
 
 static status_t SDCARD_SPI_SetFrequency(uint32_t frequency)
 {
-    uint32_t prescaler; /* out-only, LPSPI_MasterSetBaudRate() asserts this is non-NULL. */
-    uint32_t actualBaud;
-
-    /* LPSPI_MasterSetBaudRate() silently returns 0 (failure) unless the
-     * peripheral is disabled first - LPSPI_MasterInit() leaves it enabled. */
-    LPSPI_Enable(SD_SPI_BASEADDR, false);
-    actualBaud = LPSPI_MasterSetBaudRate(SD_SPI_BASEADDR, frequency, SD_SPI_CLK_FREQ, &prescaler);
-    LPSPI_Enable(SD_SPI_BASEADDR, true);
-
-    return (actualBaud == 0U) ? kStatus_Fail : kStatus_Success;
+    return (SPI1_BUS_SetBaudRate(frequency) == 0U) ? kStatus_Fail : kStatus_Success;
 }
 
 static status_t SDCARD_SPI_Exchange(uint8_t *in, uint8_t *out, uint32_t size)
 {
-    lpspi_transfer_t transfer = {
-        .txData      = in,
-        .rxData      = out,
-        .dataSize    = size,
-        .configFlags = kLPSPI_MasterPcs0 | kLPSPI_MasterPcsContinuous,
-    };
-
     /* See the file-level comment: fsl_sdspi.c calls exchange() many times
      * per SDSPI_Init() attempt, and every one of its own retry loops
      * bails out immediately the moment exchange() itself reports failure
@@ -152,7 +151,7 @@ static status_t SDCARD_SPI_Exchange(uint8_t *in, uint8_t *out, uint32_t size)
         return kStatus_Fail;
     }
 
-    return LPSPI_MasterTransferBlocking(SD_SPI_BASEADDR, &transfer);
+    return SPI1_BUS_TransferBlocking(in, out, size, kLPSPI_MasterPcs0 | kLPSPI_MasterPcsContinuous);
 }
 
 static void SDCARD_SPI_CsActivePolarity(sdspi_cs_active_polarity_t polarity)
@@ -204,6 +203,12 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
     {
         return RES_PARERR;
     }
+    /* Reclaim the SD card's operating baud rate before this file-I/O
+     * transfer - the LCD or touch driver may have used (and left at a
+     * different rate) the shared bus since the last SD access. Unlike
+     * disk_initialize()'s SDSPI_Init(), plain reads/writes never call
+     * setFrequency() again on their own - see the file-header comment. */
+    (void)SPI1_BUS_SetBaudRate(SD_SPI_OPERATING_BAUDRATE);
     return (SDSPI_ReadBlocks(&s_card, buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
 }
 
@@ -214,6 +219,7 @@ DRESULT disk_write(BYTE pdrv, const BYTE *buff, LBA_t sector, UINT count)
     {
         return RES_PARERR;
     }
+    (void)SPI1_BUS_SetBaudRate(SD_SPI_OPERATING_BAUDRATE); /* See disk_read()'s comment above. */
     return (SDSPI_WriteBlocks(&s_card, (uint8_t *)buff, sector, count) == kStatus_Success) ? RES_OK : RES_ERROR;
 }
 #endif

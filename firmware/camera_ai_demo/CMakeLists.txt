@@ -117,18 +117,26 @@ mcux_add_macro(
 )
 
 # Which LCD connector/transport to build for - see WORKLOG.md "LCD history"
-# for the full story. Default (ON): GPIO bit-bang on the Arduino header,
-# the project's original design (requirement.md) and the one confirmed to
-# display a correct image. Set OFF to instead build for J8 (abandoned -
-# signal-integrity issues never fully resolved on the FlexIO hardware-bus
-# path); LCD_BITBANG_DIAGNOSTIC then additionally selects J8 bit-bang
+# for the full story. Default (ON): hardware LPSPI1 on the Arduino header,
+# driving the current 2.4" SPI TFT module (ILI9341-family) - replaces this
+# project's original 8-bit-parallel Arduino-header panel, see
+# source/display/lcd_spi_hw.c. That bus is SHARED with the module's onboard
+# microSD slot and XPT2046 touch controller (see source/spi1_bus.h) - when
+# this option is ON, TOUCH_BACKEND_SOURCE below additionally pulls in the
+# touch driver (source/display/touch_xpt2046.c), since its pin macros only
+# exist in app.h's DEMO_LCD_ARDUINO_HEADER=1 branch. Set OFF to instead
+# build for J8 (abandoned - signal-integrity issues never fully resolved on
+# the FlexIO hardware-bus path, no touch/SD sharing there either);
+# LCD_BITBANG_DIAGNOSTIC then additionally selects J8 bit-bang
 # (diagnostic-only, see source/display/lcd_bitbang.c) vs. J8 FlexIO.
-option(LCD_ARDUINO_HEADER_BITBANG "Drive the TFT via GPIO bit-bang on the Arduino header (fallback from J8 - see WORKLOG.md)" ON)
+option(LCD_ARDUINO_HEADER_BITBANG "Drive the TFT via hardware SPI on the Arduino header, shared with the microSD/touch (fallback from J8 - see WORKLOG.md)" ON)
 if(LCD_ARDUINO_HEADER_BITBANG)
-    set(LCD_BACKEND_SOURCE source/display/lcd_bitbang.c source/display/lcd_bitbang.h)
+    set(LCD_BACKEND_SOURCE source/display/lcd_spi_hw.c source/display/lcd_spi_hw.h)
+    set(TOUCH_BACKEND_SOURCE source/display/touch_xpt2046.c source/display/touch_xpt2046.h)
     mcux_add_macro(CC "-DDEMO_LCD_ARDUINO_HEADER=1 -DDEMO_LCD_BITBANG=1")
 else()
     option(LCD_BITBANG_DIAGNOSTIC "Bit-bang the J8 LCD bus via GPIO instead of FlexIO (diagnostic)" OFF)
+    set(TOUCH_BACKEND_SOURCE "")
     if(LCD_BITBANG_DIAGNOSTIC)
         set(LCD_BACKEND_SOURCE source/display/lcd_bitbang.c source/display/lcd_bitbang.h)
         mcux_add_macro(CC "-DDEMO_LCD_ARDUINO_HEADER=0 -DDEMO_LCD_BITBANG=1")
@@ -211,6 +219,8 @@ mcux_add_source(
     BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
     SOURCES source/main.c
             source/fault_handler.c
+            source/spi1_bus.c
+            source/spi1_bus.h
             source/camera/camera_capture.c
             source/camera/camera_capture.h
             source/display/lcd_display.h
@@ -220,6 +230,7 @@ mcux_add_source(
             source/display/text_overlay.c
             source/display/text_overlay.h
             ${LCD_BACKEND_SOURCE}
+            ${TOUCH_BACKEND_SOURCE}
             ${AI_MODEL_RUNNER_SOURCE}
             source/ai/model_runner.h
             source/ai/model_data.h
@@ -460,6 +471,23 @@ endif() # AI_MODEL_USE_NPU
 #         PROPERTIES COMPILE_OPTIONS "-O2"
 #     )
 # endif()
+#
+# lcd_spi_hw.c (Arduino header's hardware-SPI driver) is a DIFFERENT case
+# from the -O2-is-wrong reasoning right above, and IS built at -O2 here:
+# its bus timing comes entirely from the LPSPI peripheral's own hardware
+# baud-rate generator (see lcd_spi_hw.c's LCD_SPI_BAUDRATE_HZ), not from
+# software instruction latency the way the GPIO bit-bang driver's was - so
+# -O2 here can only speed up CPU-side work (LCD_PushPixelsOpen()'s
+# byte-swap loop), it cannot make the electrical SPI signal itself
+# "too fast" the way it did for lcd_bitbang.c. Part of the same 2026-09-04
+# fps fix as the LPSPI1 clock-source change in hardware_init.c and the
+# pixel-batching rewrite in lcd_spi_hw.c itself - see WORKLOG.md.
+if(LCD_ARDUINO_HEADER_BITBANG)
+    set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/source/display/lcd_spi_hw.c
+        PROPERTIES COMPILE_OPTIONS "-O2"
+    )
+endif()
 
 # So source/main.c can #include "camera_capture.h" etc. by simple name.
 # NOTE: mcux_add_include() joins INCLUDES onto CMAKE_CURRENT_LIST_DIR itself

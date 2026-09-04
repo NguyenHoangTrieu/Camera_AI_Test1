@@ -78,42 +78,37 @@
 
 #if DEMO_LCD_ARDUINO_HEADER
 /*******************************************************************************
- * Arduino header (current default). Bit-bang only - no FlexIO route there.
- * See README.md for the full pinout table and physical wiring notes.
+ * Arduino header (current default). Panel is a 2.4" SPI TFT module
+ * (ILI9341-family: VCC/GND/CS/RESET/DC/SDI(MOSI)/SCK/LED/SDO(MISO)) with an
+ * onboard microSD slot and an XPT2046 touch controller - see README.md.
+ * SCK/SDI/SDO ride the hardware LPSPI1 bus, SHARED with the microSD slot
+ * and touch controller (D10..D13, muxed in pin_mux.c's
+ * BOARD_InitSdCardPins() - see spi1_bus.h for how the sharing works). Only
+ * LCD_DC/CS/RST/BLK are plain GPIO here, all still directly on the Arduino
+ * header (A2..A5, unchanged from the earlier bit-bang design). See
+ * README.md for the full pinout table and physical wiring notes.
  ******************************************************************************/
-#define DEMO_LCD_D0_GPIO GPIO0
-#define DEMO_LCD_D0_PIN  28U /* Arduino D8 */
-#define DEMO_LCD_D1_GPIO GPIO0
-#define DEMO_LCD_D1_PIN  10U /* Arduino D9 */
-#define DEMO_LCD_D2_GPIO GPIO0
-#define DEMO_LCD_D2_PIN  29U /* Arduino D2 */
-#define DEMO_LCD_D3_GPIO GPIO1
-#define DEMO_LCD_D3_PIN  23U /* Arduino D3 */
-#define DEMO_LCD_D4_GPIO GPIO0
-#define DEMO_LCD_D4_PIN  30U /* Arduino D4 */
-#define DEMO_LCD_D5_GPIO GPIO1
-#define DEMO_LCD_D5_PIN  21U /* Arduino D5 */
-#define DEMO_LCD_D6_GPIO GPIO1
-#define DEMO_LCD_D6_PIN  2U /* Arduino D6 */
-#define DEMO_LCD_D7_GPIO GPIO0
-#define DEMO_LCD_D7_PIN  31U /* Arduino D7 */
-
-#define DEMO_LCD_RS_GPIO GPIO0
-#define DEMO_LCD_RS_PIN  14U /* Arduino A2 */
+#define DEMO_LCD_DC_GPIO GPIO0
+#define DEMO_LCD_DC_PIN  14U /* Arduino A2 */
 #define DEMO_LCD_CS_GPIO GPIO0
 #define DEMO_LCD_CS_PIN  22U /* Arduino A3 */
 #define DEMO_LCD_RST_GPIO GPIO0
 #define DEMO_LCD_RST_PIN  15U /* Arduino A4 */
 
-/* Jumper-wired: shield's A0 pad (LCD_RD) -> board Arduino D0; shield's A1
- * pad (LCD_WR) -> board Arduino D1. A0/A1 themselves have no GPIO. */
-#define DEMO_LCD_RD_GPIO GPIO4
-#define DEMO_LCD_RD_PIN  3U /* Arduino D0 */
-#define DEMO_LCD_WR_GPIO GPIO4
-#define DEMO_LCD_WR_PIN  2U /* Arduino D1 */
-
 #define DEMO_LCD_BLK_GPIO GPIO0
-#define DEMO_LCD_BLK_PIN  23U /* Arduino A5 - unused otherwise, safe default */
+#define DEMO_LCD_BLK_PIN  23U /* Arduino A5 - panel's LED pin, safe default even if unconnected */
+
+/*******************************************************************************
+ * Touch controller (XPT2046) - source/display/touch_xpt2046.c. T_CLK/
+ * T_DIN/T_DO ride the same shared LPSPI1 bus as the LCD/microSD slot
+ * (D11/D12/D13); only T_CS/T_IRQ need their own Arduino pins, reusing the
+ * two pins the earlier bit-bang LCD design used for SCK/SDI (no longer
+ * needed now that the LCD is on hardware SPI - see lcd_spi_hw.c).
+ ******************************************************************************/
+#define DEMO_TOUCH_CS_GPIO GPIO0
+#define DEMO_TOUCH_CS_PIN  10U /* Arduino D9 */
+#define DEMO_TOUCH_IRQ_GPIO GPIO0
+#define DEMO_TOUCH_IRQ_PIN  28U /* Arduino D8 - input, active low when pressed */
 
 #else /* !DEMO_LCD_ARDUINO_HEADER: J8 pin set (FlexIO or J8 bit-bang) */
 
