@@ -42,7 +42,7 @@
 365	590	1788534532168909985	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_dci.c.obj	5ad928496255f580
 377	591	1788534532180909888	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/usb_device_ch9.c.obj	db994fdf4ad4545d
 285	595	1788534532088910635	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c.obj	6a7afa0d7454fbd2
-565	595	1788534532368908361	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_incbin.S.obj	364590fb2b5cf317
+11	23	1788534990319189060	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_incbin.S.obj	364590fb2b5cf317
 547	597	1788534532351908499	CMakeFiles/camera_ai_demo_cm33_core0.dir/source/shared/ipc_events.c.obj	30782b7ef4d3920
 539	599	1788534532342908572	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/GCC/ARM_CM33_NTZ/non_secure/mpu_wrappers_v2_asm.c.obj	6a4a4974e9c67e3
 337	600	1788534532140910213	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/ov7670/fsl_ov7670.c.obj	85248ff4b7bacc8e
@@ -56,4 +56,6 @@
 394	654	1788534532198418547	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/usb/device/class/usb_device_video.c.obj	a45cec49617f839f
 472	665	1788534532275909116	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/tasks.c.obj	ef9eb7515c32e4b1
 578	691	1788534532381908256	CMakeFiles/camera_ai_demo_cm33_core0.dir/source/main_core0.c.obj	48caf1932be26ce4
-691	734	1788534532494907338	camera_ai_demo_cm33_core0.elf	1a4259fbb2e1e0a2
+23	55	1788534990332188954	camera_ai_demo_cm33_core0.elf	1a4259fbb2e1e0a2
+14	26	1788535536002757214	CMakeFiles/camera_ai_demo_cm33_core0.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_incbin.S.obj	364590fb2b5cf317
+26	59	1788535536014757117	camera_ai_demo_cm33_core0.elf	1a4259fbb2e1e0a2

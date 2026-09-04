@@ -46,7 +46,7 @@
 177	868	1788534528677938337	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpi2c/fsl_lpi2c.c.obj	ece4de56527f7bc5
 197	890	1788534528697938174	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpspi/fsl_lpspi.c.obj	eaf9af4f1319933f
 690	921	1788534529191934163	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj	63b60dfaaaa3d032
-681	930	1788534529182934236	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj	308ca486d3af0a1b
+13	116	1788534988336205164	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj	308ca486d3af0a1b
 741	931	1788534529242933748	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj	e8c08bb821fd77d2
 232	938	1788534528732937890	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpuart/fsl_lpuart.c.obj	1289a5686ed2a1e0
 700	939	1788534529201934081	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj	9f27567d1bde98c
@@ -56,4 +56,7 @@
 655	1041	1788534529156934447	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj	4adbe5301783960b
 540	1053	1788534529041935381	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/tasks.c.obj	1697af7e163a1fdb
 661	1184	1788534529162934398	CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj	58edfc7362f8388d
-1184	1219	1788534529685930151	camera_ai_demo_cm33_core1.elf	202bde30ff28ffd1
+116	152	1788534988439204328	camera_ai_demo_cm33_core1.elf	202bde30ff28ffd1
+12	101	1788535534060859892	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj	308ca486d3af0a1b
+12	105	1788535534059772994	CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj	257075db07843871
+105	137	1788535534152772238	camera_ai_demo_cm33_core1.elf	202bde30ff28ffd1

@@ -26,7 +26,7 @@
  * 0x2004E000-0x20068000 region. core0's own m_data shrinks from its vendor
  * default (0x20000000, length 0x4E000) to (0x20000000, length 0x24000) to
  * make room. */
-#define IPC_SHARED_BASE 0x20010000u /* TEMP DIAGNOSTIC TEST - see WORKLOG.md, testing whether SmartDMA can reach a lower address */
+#define IPC_SHARED_BASE 0x20024000u
 #define IPC_SHARED_SIZE 0x0002A000u /* 172KB */
 
 /* Layout within the shared region. */

@@ -126,17 +126,33 @@ static void CameraLcdTask(void *pvParameters)
             CAMERA_CAPTURE_Deinit();
             uint16_t *frame = CAMERA_CAPTURE_GetFrameBuffer();
             LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, frame);
-            CAMERA_CAPTURE_Reinit();
-            skipNextFrame = true;
 
             fpsFrameCount++;
+            bool logSignature = false;
             if ((int32_t)(DWT->CYCCNT - fpsWindowStartCycle) >= (int32_t)SystemCoreClock)
             {
                 PRINTF("LCD preview: %u fps\r\n", fpsFrameCount);
-                DEMO_LogFrameSignature(frame);
+                /* Must run BEFORE CAMERA_CAPTURE_Reinit() below - Reinit()
+                 * memsets the frame buffer back to zero to prepare for the
+                 * next capture (see CAMERA_CAPTURE_InitSmartDma()), so
+                 * logging after it would always see a freshly-cleared
+                 * buffer regardless of whether real pixel data had just
+                 * been captured and drawn - this was confirmed on real
+                 * hardware via SWD memory reads on 2026-09-04 (see
+                 * WORKLOG.md): the buffer actually contains live, changing
+                 * camera data, this function's own call ordering was the
+                 * only bug, not SmartDMA or the shared-buffer address. */
+                logSignature = true;
                 fpsFrameCount       = 0U;
                 fpsWindowStartCycle = DWT->CYCCNT;
             }
+            if (logSignature)
+            {
+                DEMO_LogFrameSignature(frame);
+            }
+
+            CAMERA_CAPTURE_Reinit();
+            skipNextFrame = true;
         }
     }
 }

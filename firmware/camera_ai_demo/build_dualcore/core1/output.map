@@ -4712,7 +4712,7 @@ LOAD linker stubs
  .comment       0x00000026        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/crtend.o
                                  0x27 (size before relaxing)
 
-.debug_line     0x00000000    0x27741
+.debug_line     0x00000000    0x2775f
  .debug_line    0x00000000       0x75 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/crt0.o
  .debug_line    0x00000075      0x3d6 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
  .debug_line    0x0000044b      0x3af CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/gcc/startup_MCXN947_cm33_core1.S.obj
@@ -4756,44 +4756,44 @@ LOAD linker stubs
  .debug_line    0x0001cac7      0x221 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/shared/freertos_hooks.c.obj
  .debug_line    0x0001cce8     0x1371 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj
  .debug_line    0x0001e059     0x2ddd CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
- .debug_line    0x00020e36      0x88a CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
- .debug_line    0x000216c0      0x821 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
- .debug_line    0x00021ee1      0xdab CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
- .debug_line    0x00022c8c      0x899 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
- .debug_line    0x00023525      0x809 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
- .debug_line    0x00023d2e      0x920 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
- .debug_line    0x0002464e      0x1f9 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
- .debug_line    0x00024847       0xd2 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
- .debug_line    0x00024919      0x16d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
- .debug_line    0x00024a86      0x1d9 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
- .debug_line    0x00024c5f       0xdd /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
- .debug_line    0x00024d3c      0x16b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
- .debug_line    0x00024ea7       0xf4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
- .debug_line    0x00024f9b      0x10c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
- .debug_line    0x000250a7      0x12d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
- .debug_line    0x000251d4       0xc3 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
- .debug_line    0x00025297      0x129 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
- .debug_line    0x000253c0       0xe7 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
- .debug_line    0x000254a7      0x516 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
- .debug_line    0x000259bd      0x443 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
- .debug_line    0x00025e00      0x2a3 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
- .debug_line    0x000260a3      0x208 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
- .debug_line    0x000262ab      0x27b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
- .debug_line    0x00026526      0x153 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
- .debug_line    0x00026679      0x193 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
- .debug_line    0x0002680c      0x23e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
- .debug_line    0x00026a4a      0x103 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
- .debug_line    0x00026b4d      0x123 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
- .debug_line    0x00026c70       0x62 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
- .debug_line    0x00026cd2       0x5e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
- .debug_line    0x00026d30       0x4e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
- .debug_line    0x00026d7e       0xb7 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
- .debug_line    0x00026e35      0x59f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
- .debug_line    0x000273d4       0xf5 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
- .debug_line    0x000274c9       0x4a /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
- .debug_line    0x00027513      0x16f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
- .debug_line    0x00027682       0x5e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
- .debug_line    0x000276e0       0x61 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
+ .debug_line    0x00020e36      0x8a8 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+ .debug_line    0x000216de      0x821 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+ .debug_line    0x00021eff      0xdab CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+ .debug_line    0x00022caa      0x899 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+ .debug_line    0x00023543      0x809 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+ .debug_line    0x00023d4c      0x920 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+ .debug_line    0x0002466c      0x1f9 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+ .debug_line    0x00024865       0xd2 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
+ .debug_line    0x00024937      0x16d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
+ .debug_line    0x00024aa4      0x1d9 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
+ .debug_line    0x00024c7d       0xdd /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
+ .debug_line    0x00024d5a      0x16b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
+ .debug_line    0x00024ec5       0xf4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+ .debug_line    0x00024fb9      0x10c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
+ .debug_line    0x000250c5      0x12d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
+ .debug_line    0x000251f2       0xc3 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
+ .debug_line    0x000252b5      0x129 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
+ .debug_line    0x000253de       0xe7 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
+ .debug_line    0x000254c5      0x516 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+ .debug_line    0x000259db      0x443 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+ .debug_line    0x00025e1e      0x2a3 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+ .debug_line    0x000260c1      0x208 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
+ .debug_line    0x000262c9      0x27b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
+ .debug_line    0x00026544      0x153 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
+ .debug_line    0x00026697      0x193 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
+ .debug_line    0x0002682a      0x23e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+ .debug_line    0x00026a68      0x103 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
+ .debug_line    0x00026b6b      0x123 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
+ .debug_line    0x00026c8e       0x62 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
+ .debug_line    0x00026cf0       0x5e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
+ .debug_line    0x00026d4e       0x4e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
+ .debug_line    0x00026d9c       0xb7 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
+ .debug_line    0x00026e53      0x59f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+ .debug_line    0x000273f2       0xf5 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
+ .debug_line    0x000274e7       0x4a /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_line    0x00027531      0x16f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
+ .debug_line    0x000276a0       0x5e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
+ .debug_line    0x000276fe       0x61 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
 
 .debug_line_str
                 0x00000000      0x330
@@ -4840,7 +4840,7 @@ LOAD linker stubs
                 0x00000330        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
                                  0x9d (size before relaxing)
 
-.debug_info     0x00000000    0x71ae0
+.debug_info     0x00000000    0x71af9
  .debug_info    0x00000000       0x24 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/crt0.o
  .debug_info    0x00000024     0x19da CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
  .debug_info    0x000019fe      0xf57 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/gcc/startup_MCXN947_cm33_core1.S.obj
@@ -4884,46 +4884,46 @@ LOAD linker stubs
  .debug_info    0x0005c4d1      0x107 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/shared/freertos_hooks.c.obj
  .debug_info    0x0005c5d8     0x21e3 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj
  .debug_info    0x0005e7bb     0x3459 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
- .debug_info    0x00061c14      0xb0d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
- .debug_info    0x00062721     0x191e CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
- .debug_info    0x0006403f     0x212d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
- .debug_info    0x0006616c     0x2264 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
- .debug_info    0x000683d0     0x140a CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
- .debug_info    0x000697da     0x14ed CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
- .debug_info    0x0006acc7      0x59f CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
- .debug_info    0x0006b266       0xf7 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
- .debug_info    0x0006b35d      0x12b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
- .debug_info    0x0006b488      0x130 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
- .debug_info    0x0006b5b8       0x33 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
- .debug_info    0x0006b5eb      0x796 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
- .debug_info    0x0006bd81       0xbd /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
- .debug_info    0x0006be3e      0x6f1 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
- .debug_info    0x0006c52f      0x11b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
- .debug_info    0x0006c64a      0x11e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
- .debug_info    0x0006c768      0x10b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
- .debug_info    0x0006c873      0x70b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
- .debug_info    0x0006cf7e      0xe8c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
- .debug_info    0x0006de0a      0x9b6 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
- .debug_info    0x0006e7c0      0x87f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
- .debug_info    0x0006f03f      0x278 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
- .debug_info    0x0006f2b7      0x89f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
- .debug_info    0x0006fb56      0x71c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
- .debug_info    0x00070272      0x778 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
- .debug_info    0x000709ea      0x26d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
- .debug_info    0x00070c57       0xca /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
- .debug_info    0x00070d21       0x57 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
- .debug_info    0x00070d78       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
- .debug_info    0x00070db4       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
- .debug_info    0x00070df0       0x24 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
- .debug_info    0x00070e14      0x3a9 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
- .debug_info    0x000711bd      0x6f5 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
- .debug_info    0x000718b2       0x3f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
- .debug_info    0x000718f1       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
- .debug_info    0x0007192d       0xd3 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
- .debug_info    0x00071a00       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
- .debug_info    0x00071a3c       0xa4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
+ .debug_info    0x00061c14      0xb26 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+ .debug_info    0x0006273a     0x191e CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+ .debug_info    0x00064058     0x212d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+ .debug_info    0x00066185     0x2264 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+ .debug_info    0x000683e9     0x140a CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+ .debug_info    0x000697f3     0x14ed CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+ .debug_info    0x0006ace0      0x59f CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+ .debug_info    0x0006b27f       0xf7 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
+ .debug_info    0x0006b376      0x12b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
+ .debug_info    0x0006b4a1      0x130 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
+ .debug_info    0x0006b5d1       0x33 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
+ .debug_info    0x0006b604      0x796 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
+ .debug_info    0x0006bd9a       0xbd /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+ .debug_info    0x0006be57      0x6f1 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
+ .debug_info    0x0006c548      0x11b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
+ .debug_info    0x0006c663      0x11e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
+ .debug_info    0x0006c781      0x10b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
+ .debug_info    0x0006c88c      0x70b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
+ .debug_info    0x0006cf97      0xe8c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+ .debug_info    0x0006de23      0x9b6 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+ .debug_info    0x0006e7d9      0x87f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+ .debug_info    0x0006f058      0x278 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
+ .debug_info    0x0006f2d0      0x89f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
+ .debug_info    0x0006fb6f      0x71c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
+ .debug_info    0x0007028b      0x778 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
+ .debug_info    0x00070a03      0x26d /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+ .debug_info    0x00070c70       0xca /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
+ .debug_info    0x00070d3a       0x57 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
+ .debug_info    0x00070d91       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
+ .debug_info    0x00070dcd       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
+ .debug_info    0x00070e09       0x24 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
+ .debug_info    0x00070e2d      0x3a9 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
+ .debug_info    0x000711d6      0x6f5 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+ .debug_info    0x000718cb       0x3f /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
+ .debug_info    0x0007190a       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_info    0x00071946       0xd3 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
+ .debug_info    0x00071a19       0x3c /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
+ .debug_info    0x00071a55       0xa4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
 
-.debug_abbrev   0x00000000     0xb150
+.debug_abbrev   0x00000000     0xb155
  .debug_abbrev  0x00000000       0x14 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/crt0.o
  .debug_abbrev  0x00000014      0x188 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
  .debug_abbrev  0x0000019c       0x26 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/gcc/startup_MCXN947_cm33_core1.S.obj
@@ -4967,44 +4967,44 @@ LOAD linker stubs
  .debug_abbrev  0x000070ba       0x9d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/shared/freertos_hooks.c.obj
  .debug_abbrev  0x00007157      0x472 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj
  .debug_abbrev  0x000075c9      0x38a CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
- .debug_abbrev  0x00007953      0x33f CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
- .debug_abbrev  0x00007c92      0x413 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
- .debug_abbrev  0x000080a5      0x497 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
- .debug_abbrev  0x0000853c      0x438 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
- .debug_abbrev  0x00008974      0x3c1 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
- .debug_abbrev  0x00008d35      0x3d4 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
- .debug_abbrev  0x00009109      0x173 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
- .debug_abbrev  0x0000927c       0xcc /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
- .debug_abbrev  0x00009348       0x90 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
- .debug_abbrev  0x000093d8       0x97 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
- .debug_abbrev  0x0000946f       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
- .debug_abbrev  0x00009497      0x1cf /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
- .debug_abbrev  0x00009666       0x78 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
- .debug_abbrev  0x000096de      0x15e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
- .debug_abbrev  0x0000983c       0xd8 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
- .debug_abbrev  0x00009914       0xc1 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
- .debug_abbrev  0x000099d5       0xc9 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
- .debug_abbrev  0x00009a9e      0x149 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
- .debug_abbrev  0x00009be7      0x408 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
- .debug_abbrev  0x00009fef      0x24a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
- .debug_abbrev  0x0000a239      0x249 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
- .debug_abbrev  0x0000a482      0x1d4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
- .debug_abbrev  0x0000a656      0x1ee /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
- .debug_abbrev  0x0000a844      0x192 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
- .debug_abbrev  0x0000a9d6      0x1da /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
- .debug_abbrev  0x0000abb0      0x17a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
- .debug_abbrev  0x0000ad2a       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
- .debug_abbrev  0x0000ad52       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
- .debug_abbrev  0x0000ad7a       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
- .debug_abbrev  0x0000ada2       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
- .debug_abbrev  0x0000adca       0x14 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
- .debug_abbrev  0x0000adde      0x103 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
- .debug_abbrev  0x0000aee1      0x16a /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
- .debug_abbrev  0x0000b04b       0x26 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
- .debug_abbrev  0x0000b071       0x26 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
- .debug_abbrev  0x0000b097       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
- .debug_abbrev  0x0000b0bf       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
- .debug_abbrev  0x0000b0e7       0x69 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
+ .debug_abbrev  0x00007953      0x344 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+ .debug_abbrev  0x00007c97      0x413 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+ .debug_abbrev  0x000080aa      0x497 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+ .debug_abbrev  0x00008541      0x438 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+ .debug_abbrev  0x00008979      0x3c1 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+ .debug_abbrev  0x00008d3a      0x3d4 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+ .debug_abbrev  0x0000910e      0x173 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+ .debug_abbrev  0x00009281       0xcc /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
+ .debug_abbrev  0x0000934d       0x90 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
+ .debug_abbrev  0x000093dd       0x97 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
+ .debug_abbrev  0x00009474       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
+ .debug_abbrev  0x0000949c      0x1cf /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
+ .debug_abbrev  0x0000966b       0x78 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+ .debug_abbrev  0x000096e3      0x15e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
+ .debug_abbrev  0x00009841       0xd8 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
+ .debug_abbrev  0x00009919       0xc1 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
+ .debug_abbrev  0x000099da       0xc9 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
+ .debug_abbrev  0x00009aa3      0x149 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
+ .debug_abbrev  0x00009bec      0x408 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+ .debug_abbrev  0x00009ff4      0x24a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+ .debug_abbrev  0x0000a23e      0x249 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+ .debug_abbrev  0x0000a487      0x1d4 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
+ .debug_abbrev  0x0000a65b      0x1ee /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
+ .debug_abbrev  0x0000a849      0x192 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
+ .debug_abbrev  0x0000a9db      0x1da /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
+ .debug_abbrev  0x0000abb5      0x17a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+ .debug_abbrev  0x0000ad2f       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
+ .debug_abbrev  0x0000ad57       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
+ .debug_abbrev  0x0000ad7f       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
+ .debug_abbrev  0x0000ada7       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
+ .debug_abbrev  0x0000adcf       0x14 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
+ .debug_abbrev  0x0000ade3      0x103 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
+ .debug_abbrev  0x0000aee6      0x16a /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+ .debug_abbrev  0x0000b050       0x26 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
+ .debug_abbrev  0x0000b076       0x26 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_abbrev  0x0000b09c       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
+ .debug_abbrev  0x0000b0c4       0x28 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
+ .debug_abbrev  0x0000b0ec       0x69 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
 
 .debug_aranges  0x00000000     0x1f40
  .debug_aranges
@@ -5170,172 +5170,172 @@ LOAD linker stubs
  .debug_aranges
                 0x00001f20       0x20 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
 
-.debug_str      0x00000000    0x45709
- .debug_str     0x00000000    0x45709 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/crt0.o
+.debug_str      0x00000000    0x45716
+ .debug_str     0x00000000    0x45716 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/crt0.o
                                  0x92 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
                                0x1b2e (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/gcc/startup_MCXN947_cm33_core1.S.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/gcc/startup_MCXN947_cm33_core1.S.obj
                                0x1ec5 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.c.obj
                                0x608f (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_edma_soc.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_edma_soc.c.obj
                                 0x5d7 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.c.obj
                                0x1520 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/board.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/board.c.obj
                                0x3448 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/examples/_boards/frdmmcxn947/clock_config.c.obj
                                0x4016 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/board_port/pin_mux.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/board_port/pin_mux.c.obj
                                0x1b90 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/board_port/cm33_core1/hardware_init.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/board_port/cm33_core1/hardware_init.c.obj
                               0x28d4e (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/common/fsl_common_arm.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/common/fsl_common_arm.c.obj
                                 0x3eb (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/edma4/fsl_edma.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/edma4/fsl_edma.c.obj
                                0x48b0 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/flexio/fsl_flexio.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/flexio/fsl_flexio.c.obj
                                0x49fd (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/gpio/fsl_gpio.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/gpio/fsl_gpio.c.obj
                                0x22e2 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c.obj
                               0x28d90 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/fsl_lpflexcomm.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/fsl_lpflexcomm.c.obj
                                0x3734 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/mcx_spc/fsl_spc.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/mcx_spc/fsl_spc.c.obj
                                0x1d2e (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/smartdma/fsl_smartdma.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/smartdma/fsl_smartdma.c.obj
                                0x2b24 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/smartdma/mcxn/fsl_smartdma_fw.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/smartdma/mcxn/fsl_smartdma_fw.c.obj
                                 0xdbc (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpi2c/fsl_lpi2c.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpi2c/fsl_lpi2c.c.obj
                                0x43b6 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpspi/fsl_lpspi.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpspi/fsl_lpspi.c.obj
                                0x3f42 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpspi/fsl_lpspi_edma.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpspi/fsl_lpspi_edma.c.obj
                                0x175d (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpuart/fsl_lpuart.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/lpflexcomm/lpuart/fsl_lpuart.c.obj
                                0x2f6c (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/assert/fsl_assert.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/assert/fsl_assert.c.obj
                                 0x2af (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/debug_console_lite/fsl_debug_console.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/debug_console_lite/fsl_debug_console.c.obj
                                0x1483 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_sbrk.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_sbrk.c.obj
                                 0x270 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_memcpy.S.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_memcpy.S.obj
                                  0xdf (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_memset.S.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/misc_utilities/fsl_memset.S.obj
                                  0xdf (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c.obj
                                0x17d8 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/fsl_video_common.c.obj
                                 0x89e (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/sccb/fsl_sccb.c.obj
                                 0x3ef (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/ov7670/fsl_ov7670.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/video/camera/device/ov7670/fsl_ov7670.c.obj
                                0x2835 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr.c.obj
                                 0xa60 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/multicore/mcmgr/src/mcmgr_internal_core_api_mcxnx4x.c.obj
                                0x3adf (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/tasks.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/tasks.c.obj
                                0x1000 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c.obj
                                 0x36c (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/queue.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/queue.c.obj
                                 0xb4f (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/GCC/ARM_CM33_NTZ/non_secure/port.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/GCC/ARM_CM33_NTZ/non_secure/port.c.obj
                                 0x542 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/GCC/ARM_CM33_NTZ/non_secure/portasm.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/GCC/ARM_CM33_NTZ/non_secure/portasm.c.obj
                                 0x2fd (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/portable/MemMang/heap_4.c.obj
                                 0x601 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/shared/freertos_hooks.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/shared/freertos_hooks.c.obj
                                 0x2b6 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/sdmmc/sdspi/fsl_sdspi.c.obj
                                0x17ea (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
                                 0x7a2 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
-                                0x7b4 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+                                0x7c1 (size before relaxing)
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
                                0x26d1 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
                                0x11ec (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
                                0x3a3b (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
                                0x1ac1 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
                                0x1320 (size before relaxing)
- .debug_str     0x00045709        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+ .debug_str     0x00045716        0x0 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
                                 0x289 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
                                 0x1d2 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
                                 0x19b (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
                                 0x1a6 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strcmp.o)
                                  0xb0 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
                                 0x4e3 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
                                 0x1a5 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-errno.o)
                                 0x4b8 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
                                 0x1c1 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
                                 0x1d8 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
                                 0x1fc (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-impure.o)
                                 0x4be (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
                                 0x6c1 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
                                 0x59f (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
                                 0x53e (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
                                 0x28b (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
                                 0x4dd (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mlock.o)
                                 0x4dc (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
                                 0x4c7 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
                                 0x259 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubsf3.o)
                                 0x149 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldivsf3.o)
                                  0xd5 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixsfsi.o)
                                  0xc0 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunssfsi.o)
                                  0xc4 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_aeabi_uldivmod.o)
                                  0xa4 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
                                 0x682 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
                                 0x687 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_muldf3.o)
                                  0xbf (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_dvmd_tls.o)
                                  0xc4 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_addsubdf3.o)
                                 0x155 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_arm_fixunsdfsi.o)
                                  0xc4 (size before relaxing)
- .debug_str     0x00045709        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
+ .debug_str     0x00045716        0x0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
                                 0x16b (size before relaxing)
 
 .debug_rnglists
-                0x00000000     0x281d
+                0x00000000     0x2835
  .debug_rnglists
                 0x00000000       0x20 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
  .debug_rnglists
@@ -5415,31 +5415,31 @@ LOAD linker stubs
  .debug_rnglists
                 0x00001ecf      0x263 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
  .debug_rnglists
-                0x00002132       0x63 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+                0x00002132       0x7b CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
  .debug_rnglists
-                0x00002195       0x5f CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+                0x000021ad       0x5f CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
  .debug_rnglists
-                0x000021f4      0x232 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+                0x0000220c      0x232 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
  .debug_rnglists
-                0x00002426       0x80 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+                0x0000243e       0x80 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
  .debug_rnglists
-                0x000024a6       0x64 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+                0x000024be       0x64 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
  .debug_rnglists
-                0x0000250a      0x15d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+                0x00002522      0x15d CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
  .debug_rnglists
-                0x00002667       0x50 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+                0x0000267f       0x50 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
  .debug_rnglists
-                0x000026b7       0x13 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+                0x000026cf       0x13 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
  .debug_rnglists
-                0x000026ca       0x66 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+                0x000026e2       0x66 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
  .debug_rnglists
-                0x00002730       0x1e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+                0x00002748       0x1e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
  .debug_rnglists
-                0x0000274e       0x13 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+                0x00002766       0x13 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
  .debug_rnglists
-                0x00002761       0x2e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+                0x00002779       0x2e /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
  .debug_rnglists
-                0x0000278f       0x8e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+                0x000027a7       0x8e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
 
 .debug_frame    0x00000000     0x5254
  .debug_frame   0x00000000       0x50 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core1.c.obj
@@ -5519,7 +5519,7 @@ LOAD linker stubs
  .debug_frame   0x00005234       0x20 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
 
 .debug_loclists
-                0x00000000    0x1d187
+                0x00000000    0x1d197
  .debug_loclists
                 0x00000000     0x28da CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.c.obj
  .debug_loclists
@@ -5591,52 +5591,52 @@ LOAD linker stubs
  .debug_loclists
                 0x0001754a     0x2724 CMakeFiles/camera_ai_demo_cm33_core1.dir/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/fatfs/source/ff.c.obj
  .debug_loclists
-                0x00019c6e      0x1af CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
+                0x00019c6e      0x1bf CMakeFiles/camera_ai_demo_cm33_core1.dir/source/main_core1.c.obj
  .debug_loclists
-                0x00019e1d       0x6e CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
+                0x00019e2d       0x6e CMakeFiles/camera_ai_demo_cm33_core1.dir/source/camera/camera_capture.c.obj
  .debug_loclists
-                0x00019e8b      0xbb2 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
+                0x00019e9b      0xbb2 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/lcd_spi_hw.c.obj
  .debug_loclists
-                0x0001aa3d      0x253 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
+                0x0001aa4d      0x253 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/spi1_bus.c.obj
  .debug_loclists
-                0x0001ac90      0x2ef CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
+                0x0001aca0      0x2ef CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/sd_spi_disk.c.obj
  .debug_loclists
-                0x0001af7f      0x60b CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
+                0x0001af8f      0x60b CMakeFiles/camera_ai_demo_cm33_core1.dir/source/storage/snapshot.c.obj
  .debug_loclists
-                0x0001b58a      0x485 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
+                0x0001b59a      0x485 CMakeFiles/camera_ai_demo_cm33_core1.dir/source/display/bbox_overlay.c.obj
  .debug_loclists
-                0x0001ba0f       0x42 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
+                0x0001ba1f       0x42 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-fini.o)
  .debug_loclists
-                0x0001ba51       0xcf /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
+                0x0001ba61       0xcf /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-memcmp.o)
  .debug_loclists
-                0x0001bb20      0x18f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
+                0x0001bb30      0x18f /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strchr.o)
  .debug_loclists
-                0x0001bcaf       0x4a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
+                0x0001bcbf       0x4a /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-malloc.o)
  .debug_loclists
-                0x0001bcf9       0x29 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
+                0x0001bd09       0x29 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-strlen-stub.o)
  .debug_loclists
-                0x0001bd22       0x1b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
+                0x0001bd32       0x1b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-exit.o)
  .debug_loclists
-                0x0001bd3d       0x2b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
+                0x0001bd4d       0x2b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-atexit.o)
  .debug_loclists
-                0x0001bd68       0x65 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
+                0x0001bd78       0x65 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-init.o)
  .debug_loclists
-                0x0001bdcd      0x1d0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
+                0x0001bddd      0x1d0 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-findfp.o)
  .debug_loclists
-                0x0001bf9d      0x26c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
+                0x0001bfad      0x26c /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-mallocr.o)
  .debug_loclists
-                0x0001c209      0x137 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
+                0x0001c219      0x137 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-freer.o)
  .debug_loclists
-                0x0001c340      0x127 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
+                0x0001c350      0x127 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__atexit.o)
  .debug_loclists
-                0x0001c467       0x80 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
+                0x0001c477       0x80 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-reent.o)
  .debug_loclists
-                0x0001c4e7       0x4b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
+                0x0001c4f7       0x4b /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-sbrkr.o)
  .debug_loclists
-                0x0001c532      0x181 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
+                0x0001c542      0x181 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libc_nano.a(libc_a-__call_atexit.o)
  .debug_loclists
-                0x0001c6b3       0x82 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
+                0x0001c6c3       0x82 /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_fixunssfdi.o)
  .debug_loclists
-                0x0001c735      0xa3e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
+                0x0001c745      0xa3e /usr/lib/gcc/arm-none-eabi/14.2.1/thumb/v8-m.main/nofp/libgcc.a(_udivmoddi4.o)
  .debug_loclists
-                0x0001d173       0x14 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
+                0x0001d183       0x14 /usr/lib/gcc/arm-none-eabi/14.2.1/../../../arm-none-eabi/lib/thumb/v8-m.main/nofp/libnosys.a(_exit.o)
