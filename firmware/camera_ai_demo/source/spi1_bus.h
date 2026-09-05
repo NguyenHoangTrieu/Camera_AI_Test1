@@ -134,14 +134,27 @@ void SPI1_BUS_Unlock(void);
  *  during this code path at all, which is why the identical code/wiring/
  *  24MHz clock worked there but not here - this is a scheduler
  *  interaction, not a signal-integrity problem, confirmed by testing the
- *  well-known-safe fix (a real critical section, not just a mutex) before
- *  touching the SPI clock at all. Wrap the same complete-transaction
- *  scope Lock/Unlock already wraps (LCD_Init()'s panel init,
- *  LCD_DrawImage()) with these instead when testing whether preemption -
- *  not clock speed - is the actual cause. Uses vTaskSuspendAll()/
- *  xTaskResumeAll() (scheduler suspension, not interrupt masking) so
- *  ISRs - including the camera's own SmartDMA completion - are still
- *  serviced normally; only task-level context switches are held off. */
+ *  well-known-safe fix (a real critical section) before touching the SPI
+ *  clock at all. Wrap the same complete-transaction scope Lock/Unlock
+ *  already wraps (LCD_Init()'s panel init, LCD_DrawImage()) with these
+ *  instead when testing whether preemption - not clock speed - is the
+ *  actual cause.
+ *
+ *  SECOND FOLLOW-UP, same day: initially implemented with
+ *  vTaskSuspendAll()/xTaskResumeAll() (blocks task switches only, not
+ *  ISRs) - this was NOT sufficient once Stage 5 added the core0<->core1
+ *  MCMGR IPC round trip, whose MAILBOX_IRQn runs at exactly
+ *  configMAX_SYSCALL_INTERRUPT_PRIORITY (confirmed by reading
+ *  mcmgr_internal_core_api_mcxnx4x.c directly) and can fire mid-LCD-
+ *  transaction just like a task ever could. Confirmed on real hardware via
+ *  a direct A/B against the single-core `spi_tft_change` branch on the
+ *  same physical hardware (stayed clean, ruling out wiring). Now uses
+ *  taskENTER_CRITICAL()/taskEXIT_CRITICAL() instead (raises BASEPRI to
+ *  that same threshold - masks MAILBOX_IRQn AND blocks PendSV/task
+ *  switches in one primitive, so this fully replaces the old
+ *  vTaskSuspendAll() call rather than layering both). SmartDMA's own
+ *  completion IRQ is unaffected either way, since SmartDMA is always
+ *  Deinit()'d/clock-gated for the whole duration this lock is held. */
 void SPI1_BUS_LockNoPreempt(void);
 void SPI1_BUS_UnlockNoPreempt(void);
 #endif

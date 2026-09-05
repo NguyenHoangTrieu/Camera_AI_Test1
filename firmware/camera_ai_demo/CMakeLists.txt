@@ -189,6 +189,7 @@ if(DUALCORE_RTOS)
         mcux_add_source(
             BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
             SOURCES source/main_core1.c
+                    source/fault_handler.c
                     source/camera/camera_capture.c
                     source/camera/camera_capture.h
                     source/display/lcd_display.h
@@ -247,6 +248,7 @@ if(DUALCORE_RTOS)
         mcux_add_source(
             BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
             SOURCES source/main_core0.c
+                    source/fault_handler.c
                     source/ai/model_runner.h
                     source/ai/model_runner_npu.cpp
         )

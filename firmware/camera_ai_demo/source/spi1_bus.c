@@ -75,21 +75,43 @@ void SPI1_BUS_Unlock(void)
     (void)xSemaphoreGive(s_busMutex);
 }
 
-/* See spi1_bus.h's comment - the plain mutex above only stops another
- * TASK from touching the bus, not the scheduler from preempting the lock
- * HOLDER mid-transaction. vTaskSuspendAll()/xTaskResumeAll() block task
- * switches (not ISRs) for the duration - takes the mutex first, same
- * ordering the plain Lock() uses, so this composes safely with any other
- * caller still using the plain Lock()/Unlock() pair. */
+/* See spi1_bus.h's comment - the plain mutex above only stops another TASK
+ * from touching the bus, not the scheduler OR an ISR from preempting the
+ * lock HOLDER mid-transaction.
+ *
+ * CONFIRMED on real hardware (WORKLOG.md, dual-core Stage 5 second
+ * follow-up) that vTaskSuspendAll()/xTaskResumeAll() alone - which only
+ * block TASK switches, not interrupt servicing - were NOT sufficient once
+ * Stage 5 added the core0<->core1 MCMGR IPC round trip: the LCD went back
+ * to showing torn images (user did a direct A/B against the
+ * `spi_tft_change` single-core branch on the exact same hardware, which
+ * stayed clean, definitively ruling out a hardware/wiring cause and
+ * pointing back at this dual-core build specifically). Root-caused by
+ * checking MAILBOX_IRQn's actual configured priority
+ * (mcmgr_internal_core_api_mcxnx4x.c: `NVIC_SetPriority(MAILBOX_IRQn, 2)`
+ * on core1) against this project's own `configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY`
+ * (also 2, FreeRTOSConfig.h) - MCMGR's own mailbox interrupt (which
+ * delivers core0's "result ready" doorbell, a real new interrupt source
+ * Stage 5 introduced) sits exactly at the FreeRTOS-maskable threshold, so
+ * it can fire and interrupt an LCD SPI transaction mid-stream at any time
+ * - something `vTaskSuspendAll()` was never able to prevent, since it only
+ * ever addressed task-level preemption, not this. `taskENTER_CRITICAL()`/
+ * `taskEXIT_CRITICAL()` raise BASEPRI to that same threshold, which DOES
+ * mask MAILBOX_IRQn (and also blocks PendSV, so no task switch can happen
+ * either - this fully subsumes what vTaskSuspendAll() was providing,
+ * hence dropping it here rather than layering both). Takes the mutex
+ * first, before entering the critical section - correct order, since
+ * xSemaphoreTake() can block/yield and must never be called from inside a
+ * critical section. */
 void SPI1_BUS_LockNoPreempt(void)
 {
     SPI1_BUS_Lock();
-    vTaskSuspendAll();
+    taskENTER_CRITICAL();
 }
 
 void SPI1_BUS_UnlockNoPreempt(void)
 {
-    (void)xTaskResumeAll();
+    taskEXIT_CRITICAL();
     SPI1_BUS_Unlock();
 }
 #endif

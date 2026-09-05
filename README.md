@@ -145,6 +145,58 @@ this board, unrelated to firmware correctness — see
 [ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes) for the
 working recipe (`nxpdebugmbox` + specific pyOCD flags).
 
+### Dual-core RTOS build (in progress — see WORKLOG.md)
+
+A separate, opt-in build (`-DDUALCORE_RTOS=ON`, default `OFF`) boots core1
+and splits the app across both cores: core1 runs camera capture + LCD push
++ SD snapshot (`source/main_core1.c`), core0 runs AI inference only
+(`source/main_core0.c`), both under FreeRTOS, talking over MCMGR
+mailbox-event doorbells (`source/shared/ipc_events.*`) and a shared frame
+buffer (`source/shared/ipc_layout.h`) — no RPMsg-Lite. Full migration
+history/stage-by-stage bring-up: [ARCHITECTURE.md](ARCHITECTURE.md),
+[WORKLOG.md](WORKLOG.md).
+
+This is a **completely separate build directory and command set** from the
+single-core build above — the two never share build artifacts and flashing
+one never disturbs the other:
+
+```bash
+./firmware/camera_ai_demo/build.sh dualcore-build   # build core1, then core0 (core0 embeds core1's image)
+./firmware/camera_ai_demo/build.sh dualcore-flash   # flash core0's combined .elf - one flash op, core1 rides along
+./firmware/camera_ai_demo/build.sh dualcore-all     # both of the above
+./firmware/camera_ai_demo/build.sh monitor          # same serial console works for either build
+```
+
+Notes specific to this build:
+
+- **core1 must always build before core0** — core0's link step `.incbin`s
+  core1's raw `.bin` (see `board_port/cm33_core0/app.h`), which needs
+  core1's build directory to already exist. `dualcore-build` always does
+  both in the right order and also force-deletes core0's cached
+  `fsl_incbin.S` object file first, since Ninja has no way to know that
+  `.incbin` depends on core1's binary — without that, core0 can silently
+  re-link a **stale** embedded core1 image after only core1's source
+  changed. Always use `dualcore-build` (not a manual `west build` for a
+  single core) when iterating, especially on core1 code.
+- No `rebuild`/`clean` equivalent for `build_dualcore/` yet — remove it by
+  hand (`rm -rf firmware/camera_ai_demo/build_dualcore`) for a truly clean
+  dual-core rebuild.
+- **The `LCD_CAMERA_PREVIEW`, `AI_MODEL_USE_NPU`, `LCD_ARDUINO_HEADER_BITBANG`,
+  and `USB_STREAM_DIAGNOSTIC_DISABLE` flags documented above do NOT apply
+  to this build** — `CMakeLists.txt`'s `DUALCORE_RTOS` branch `return()`s
+  before any of those `option()`s are even declared. Core1's
+  `CameraLcdTask` always runs one fixed loop (camera preview + AI overlay
+  + rate-limited snapshot together); there is currently no dual-core
+  equivalent of the AI-off, preview-only diagnostic build.
+- **Status: Stage 5 of the plan in WORKLOG.md.** Camera capture, LCD push,
+  the core0 AI round-trip, and SD snapshot have each been individually
+  confirmed on real hardware at some point in the migration, but the full
+  pipeline running together still has open, unconfirmed issues (LCD
+  tearing under the cross-core IPC interrupt, a currently-unexplained
+  "no image / backlight stays off" report) — read WORKLOG.md's most recent
+  entries before assuming this build is stable. **The single-core build
+  above remains the confirmed-stable, production default.**
+
 ### Expected output on success
 
 ```

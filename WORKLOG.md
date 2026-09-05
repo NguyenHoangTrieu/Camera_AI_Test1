@@ -9,6 +9,214 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 5 FOURTH FOLLOW-UP - user reported a full blackout (no image, backlight never turns on) on the exact build this file's own THIRD FOLLOW-UP entry claimed was fixed; found that entry's own fix was NEVER ACTUALLY APPLIED (comment-only edit, real bug), fixed it for real, added the missing HardFault diagnostic to the dual-core build so a crash-before-LCD_Init() theory can actually be confirmed or ruled out next time - NOT yet confirmed on real hardware, this session had no working USB/pyOCD access to the probe at all (2026-09-05)
+
+Follow-up to the THIRD FOLLOW-UP entry directly below (same day). User
+reported a NEW, more severe symptom on what should have been that entry's
+fix: total blackout - no image AND the backlight itself never turns on -
+not the torn/wrong-color-but-visible image every previous entry in this
+file describes. Since `LCD_Init()` (`lcd_spi_hw.c`) turns the backlight on
+as literally its second GPIO write, before any SPI traffic at all, a fully
+dark backlight means `CameraLcdTask` (`main_core1.c`) never reached
+`LCD_Init()` - a strictly earlier, more severe failure than anything
+this file's tearing investigation has been chasing.
+
+**Real bug found by reading the code the THIRD FOLLOW-UP entry claimed had
+already fixed something: it hadn't.** `git diff` against the last commit
+showed that entry's actual code change to `spi1_bus.c` was a
+**comment-only edit** - `SPI1_BUS_LockNoPreempt()`/`UnlockNoPreempt()`
+still called `vTaskSuspendAll()`/`xTaskResumeAll()`, word for word
+identical to the SECOND FOLLOW-UP's implementation, even though both
+`spi1_bus.h`'s doc comment and this file's THIRD FOLLOW-UP entry
+explicitly describe switching to `taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`
+and explain in detail why. The narrative was written (correctly) but the
+actual code edit was never made in the same pass - a real process failure,
+not a hardware bug. Fixed now, for real: `SPI1_BUS_LockNoPreempt()`/
+`UnlockNoPreempt()` (`spi1_bus.c`) now do call
+`taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()`, matching what the comments
+already claimed. **This alone does not explain the blackout symptom** -
+backlight is set well before this lock is ever touched - but it needed
+fixing regardless before trusting anything else in that entry.
+
+**No serial log or SWD access was available this session to actually
+confirm why `CameraLcdTask` never reaches `LCD_Init()`** - this sandbox's
+`pyocd`/`nxpdebugmbox` could enumerate the MCU-Link over USB (`lsusb`,
+`pyocd json --probes`-equivalent listing all worked instantly) but every
+actual data-transfer operation to it (`pyocd list`'s device query,
+`nxpdebugmbox ... start-debug-session`) failed with a flat
+`[Errno 110] Operation timed out`, even under passwordless `sudo` and with
+sandboxing explicitly disabled for the command - consistent with this
+specific shell environment lacking real raw-USB (bulk/interrupt transfer)
+passthrough even though device enumeration metadata is visible, not a
+probe or firmware problem (the same probe/board this file's whole history
+was debugged on). Per this project's own "confirm on real hardware, don't
+guess" standard - the blackout's root cause is NOT yet confirmed, only
+prepared for.
+
+**Added the one piece of infrastructure needed to actually root-cause a
+silent early crash next time it can be tested: `source/fault_handler.c`
+(the project's existing HardFault register-dump handler) was compiled into
+the LEGACY single-core build only - `CMakeLists.txt`'s `DUALCORE_RTOS`
+branch never added it for either core.** A HardFault in the dual-core
+build currently falls through to the SDK's default weak handler (a silent
+infinite loop, no UART output at all) instead of printing
+CFSR/HFSR/MMFAR/BFAR/PC/LR the way the legacy build always has - and this
+project's own history (STKOF stack-overflow, RAM-bank collisions,
+TrustZone/`configRUN_FREERTOS_SECURE_ONLY` UsageFault, all documented
+earlier in this file) shows HardFaults are a real, recurring failure mode
+here, not a hypothetical one. Added `source/fault_handler.c` to both
+cores' `mcux_add_source()` lists in `CMakeLists.txt`. Real, measured build
+confirms it fits with margin on both sides (not guessed): core1
+`m_text` 49,116/64KB (75%), `m_data` 39,472/39KB (98.8% - tight, as this
+region always has been, but builds and links successfully); core0
+`m_text` 146,208B/767KB (18.6%), `m_data` unchanged at 94.7%. If the
+blackout is a HardFault (a live theory, not confirmed), the NEXT flash
+will print a real fault dump over UART instead of nothing - if it's
+instead a hang with no fault at all (e.g. stuck in `CAMERA_CAPTURE_Init()`,
+or the core0<->core1 MCMGR handshake itself, both of which have hung this
+project before per earlier entries), the fault dump staying silent while
+the board is provably unresponsive is itself a useful, real data point
+that rules out a whole class of explanation.
+
+**Not touched, deliberately, given no way to test any of it this
+session**: `TEMP_SKIP_IPC_ROUNDTRIP` (`main_core1.c`) is still `1`
+(bypasses the core0 AI round-trip entirely) - unrelated to the backlight
+theory (it only affects whether the AI overlay/snapshot branch runs, not
+whether `LCD_Init()`/the base camera-preview push happen), left as-is
+rather than changing two things at once before either can be verified.
+
+### Next steps for a fresh session
+
+1. **Flash `dualcore-all` (this session's build already succeeded, just
+   couldn't be flashed) on a machine/shell with real USB access to the
+   probe** and capture the serial log across a fresh reset - the single
+   most useful thing to know is simply whether ANY of core1's own prints
+   appear at all (`"Camera_AI_Test1 - core1 ..."` banner, then
+   `"LCD: hardware SPI ..."` from `LCD_Init()` itself) before deciding
+   between "never reached `CameraLcdTask`"/"hung inside `CAMERA_CAPTURE_Init()`"/
+   "a HardFault now dumping real registers thanks to this session's fix"/
+   "something else entirely."
+2. If a HardFault dump does appear: read CFSR/HFSR directly (same decode
+   this file's earlier TrustZone/STKOF entries already used) before
+   guessing at a specific cause - core1's RAM is now genuinely near its
+   ceiling (`m_data` 98.8%) after this session's addition, so a stack
+   overflow (`vApplicationStackOverflowHook()`, `freertos_hooks.c` - also
+   currently a silent infinite loop, no print at all, worth the same
+   "add a diagnostic before guessing" treatment as fault_handler.c above if
+   this turns out to be the cause) is a live, cheap-to-check candidate.
+3. If no fault fires and the board is just silent/hung: bisect by
+   commenting out `CameraLcdTask`'s body down to just
+   `CAMERA_CAPTURE_Init(); LCD_Init();` (removing `SNAPSHOT_Init()` and the
+   whole per-frame loop) and re-testing - narrows "never gets past camera
+   init" vs. "gets past LCD_Init() fine, something later in the loop wedges
+   the board so fast the backlight-on moment isn't visible" (the latter
+   seems unlikely given the user described a sustained blackout, not a
+   flicker, but not yet ruled out without a real log).
+4. Once the blackout is explained and fixed, re-confirm the THIRD
+   FOLLOW-UP entry's actual (now real, not just documented) fix - point
+   the camera at a face, trigger detections, and look at the LCD for
+   tearing during active AI operation specifically (the MAILBOX_IRQn this
+   fix targets only fires during the AI round trip).
+
+## Dual-core RTOS migration Stage 5 THIRD FOLLOW-UP - the two-consecutive-frame check from the previous entry was replaced with a direct buffer-content settle check (also ineffective alone, but proved the frame buffer WAS stable), which combined with a user-provided A/B test against the single-core `spi_tft_change` branch (ruled out hardware/wiring entirely) pointed at the real cause: Stage 5's new MCMGR mailbox interrupt runs at exactly the FreeRTOS-maskable priority threshold, so the earlier `vTaskSuspendAll()`-based LCD fix (blocks task switches only) never actually protected against it. Fixed with a real critical section - NOT yet confirmed by the user on real hardware (2026-09-05)
+
+Follow-up to the SECOND FOLLOW-UP entry below (same day). The two-
+consecutive-frame mitigation shipped in that entry was tested on real
+hardware with actual saved snapshots and did NOT reduce the torn-image
+symptom - visually identical corruption (a diagonal boundary + fine
+horizontal banding, confirmed by converting and viewing the actual saved
+BMPs, not just checking file size) still appeared, non-deterministically,
+across multiple captures.
+
+**Replaced the frame-count check with a direct buffer-content settle
+check, which produced a genuinely useful negative result.** Rather than
+trusting `CAMERA_CAPTURE_GetFrameCount()` sequencing, added a check that
+hashes a sparse sample of the frame buffer right after
+`CAMERA_CAPTURE_Deinit()`, waits 2ms, hashes it again, and retries (bounded)
+until two consecutive hashes agree - directly testing whether `Deinit()`
+is truly an instantaneous, synchronous stop. Confirmed on real hardware:
+**zero instability ever detected**, across many frames including a real
+detection/save event - proving the buffer is genuinely frozen and stable
+by the time it's read. This ruled out the leading theory from the
+previous entry (a SmartDMA DMA-completion race letting `Deinit()` freeze
+a mid-write buffer) - the frozen buffer's *content* is exactly what
+SmartDMA actually wrote, whatever that content is.
+
+**User provided the decisive test: a direct A/B against the single-core
+`spi_tft_change` branch on the exact same physical hardware.** With the
+buffer confirmed stable, the working theory shifted to a camera DVP-bus
+signal-integrity issue (PCLK/HREF/VSYNC on breadboard wiring) - raised to
+the user as the likely remaining explanation. The user correctly rejected
+this: flashing `spi_tft_change` (legacy single-core, same hardware, same
+camera, same wiring) showed a clean LCD and clean captures, twice: while
+`full_refactor` (this dual-core build) showed torn LCD images on the same
+physical setup. This is the same "diff against the known-good branch"
+technique that already worked earlier for the SD corruption investigation
+(see [[feedback-dont-conclude-early-root-cause]]) - it directly falsified
+the hardware theory and correctly redirected the investigation back to
+this dual-core build's own software.
+
+**Root cause: Stage 5's new MCMGR mailbox interrupt runs at exactly the
+FreeRTOS-maskable priority threshold, and the LCD tearing fix from the
+first Stage 4 follow-up entry only ever protected against task-level
+preemption, never interrupts.** Re-examined `spi1_bus.c`'s
+`SPI1_BUS_LockNoPreempt()` (added for the original LCD tearing fix,
+`vTaskSuspendAll()`/`xTaskResumeAll()`) against what's actually NEW in
+Stage 5: the core0<->core1 IPC round trip, which delivers its "result
+ready" doorbell via a real hardware interrupt (`MAILBOX_IRQn`), not
+present at all in Stage 4's simpler camera+LCD+SD pipeline. Checked its
+configured priority directly in
+`mcmgr_internal_core_api_mcxnx4x.c`: `NVIC_SetPriority(MAILBOX_IRQn, 2)`
+on core1 - exactly equal to this project's own
+`configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY` (2, `FreeRTOSConfig.h`).
+`vTaskSuspendAll()` only blocks task switches, NOT interrupt servicing -
+so this real, new interrupt source could fire and interrupt an
+in-progress LCD SPI transaction at any time, something the existing fix
+never actually addressed. This is a different, additional gap on top of
+the original (task-preemption) finding, not a contradiction of it - both
+needed fixing, Stage 4's fix only caught the first one because Stage 4
+had no interrupt-driven cross-core signaling yet.
+
+**Fix**: `SPI1_BUS_LockNoPreempt()`/`UnlockNoPreempt()` now use
+`taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` instead of
+`vTaskSuspendAll()`/`xTaskResumeAll()` - raises BASEPRI to
+`configMAX_SYSCALL_INTERRUPT_PRIORITY`, which masks `MAILBOX_IRQn`
+directly AND blocks PendSV (task switches) in the same primitive, fully
+superseding the old call rather than needing both. Still takes the mutex
+first, before entering the critical section (required ordering -
+`xSemaphoreTake()` can block/yield and must never run inside a critical
+section). SmartDMA's own completion IRQ is unaffected either way, since
+SmartDMA is always `Deinit()`'d/clock-gated for this lock's entire
+duration regardless.
+
+**Confirmed on real hardware: builds clean, runs without crashing, fps
+unchanged (8-9), no new warnings.** NOT yet confirmed by the user to
+actually show a clean LCD - this entry's fix is flashed and awaiting that
+specific visual confirmation before being called done.
+
+### Next steps for a fresh session
+
+1. Get the user's direct visual confirmation that the LCD is clean during
+   active AI/face-detection operation (not just idle preview) - the
+   MAILBOX_IRQn fires specifically during the AI round trip, so a
+   preview-only check without any detections happening wouldn't fully
+   exercise this fix.
+2. If the LCD is confirmed clean, re-test actual saved snapshots too
+   (view the BMPs, not just file size) - the SD write path never used
+   `SPI1_BUS_LockNoPreempt()` at all (confirmed to break SD mount, see the
+   SECOND FOLLOW-UP entry below), so if snapshot tearing persists even
+   with a clean LCD, that's now isolated to something specific to the SD
+   write path or the buffer's state during that specific window, not this
+   shared LCD-lock mechanism.
+3. SD card mount was failing again in this session's tests ("SD card init
+   timed out after 2000ms") - separate from the tearing investigation,
+   still needs a fresh look (last confirmed working after the full
+   reformat in the first Stage 4 follow-up entry).
+4. Phase 4 (final stage in the approved plan) is otherwise unstarted:
+   delete the legacy single-core `main.c`/board_port/CMakeLists once the
+   dual-core build is confirmed as the new default, update
+   ARCHITECTURE.md accordingly.
+
 ## Dual-core RTOS migration Stage 5 SECOND FOLLOW-UP - raised the NPU detection threshold to cut false positives, found and reverted a real regression my own earlier LCD fix caused on the SD mount path, and added a two-consecutive-frame stability check for a real (pre-existing, now more visible) torn-snapshot bug - NOT yet confirmed to actually fix the tearing, needs a real-hardware retest with saved BMPs (2026-09-05)
 
 Follow-up to the Stage 5 entry below (same day). User reported two real,

@@ -246,6 +246,14 @@ static void CameraLcdTask(void *pvParameters)
             }
 
             frameSeq++;
+            /* TEMP DIAGNOSTIC (WORKLOG.md, Stage 5 tearing investigation):
+             * skip the whole core0 IPC round trip to test whether the
+             * cross-core AI exchange itself (by whatever mechanism -
+             * MAILBOX_IRQn was checked and ruled out via a real register
+             * read confirming it's correctly masked) correlates with the
+             * LCD tearing, independent of any specific interrupt theory. */
+#define TEMP_SKIP_IPC_ROUNDTRIP 1
+#if !TEMP_SKIP_IPC_ROUNDTRIP
             IPC_SignalFrameReady(frameSeq);
 
             uint32_t notifiedSeq;
@@ -258,6 +266,9 @@ static void CameraLcdTask(void *pvParameters)
                        "frame.\r\n",
                        frameSeq, AI_RESULT_TIMEOUT_MS);
             }
+#else
+            bool haveResult = false;
+#endif
 
             ai_model_result_t aiResult = {0};
             if (haveResult)
