@@ -1,6 +1,6 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:220:6:LCD_Init	32	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:250:6:LCD_SetWindow	32	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:301:6:LCD_PushPixelsOpen	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:318:6:LCD_EndWindow	0	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:320:6:LCD_PushPixels	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:344:6:LCD_DrawImage	24	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:227:6:LCD_Init	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:259:6:LCD_SetWindow	32	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:310:6:LCD_PushPixelsOpen	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:327:6:LCD_EndWindow	0	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:329:6:LCD_PushPixels	8	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/source/display/lcd_spi_hw.c:353:6:LCD_DrawImage	24	static

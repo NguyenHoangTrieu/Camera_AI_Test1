@@ -122,6 +122,28 @@ status_t SPI1_BUS_TransferBytesDMA(const uint8_t *data, uint32_t size);
 void SPI1_BUS_CreateLock(void);
 void SPI1_BUS_Lock(void);
 void SPI1_BUS_Unlock(void);
+
+/*! @brief Dual-core RTOS build only - see WORKLOG.md's LCD tearing/wrong-
+ *  color follow-up (2026-09-05): the mutex above only stops ANOTHER task
+ *  from touching the bus - it does NOT stop configUSE_TIME_SLICING's
+ *  round-robin from preempting the LOCK HOLDER itself mid-transaction
+ *  (StorageTask, equal priority, is legally scheduled in and immediately
+ *  blocks on the same mutex, but that context-switch round trip - or any
+ *  ISR/scheduler activity - can still stall the bus with CS held low for
+ *  real time). The bare-metal single-core build has zero preemption
+ *  during this code path at all, which is why the identical code/wiring/
+ *  24MHz clock worked there but not here - this is a scheduler
+ *  interaction, not a signal-integrity problem, confirmed by testing the
+ *  well-known-safe fix (a real critical section, not just a mutex) before
+ *  touching the SPI clock at all. Wrap the same complete-transaction
+ *  scope Lock/Unlock already wraps (LCD_Init()'s panel init,
+ *  LCD_DrawImage()) with these instead when testing whether preemption -
+ *  not clock speed - is the actual cause. Uses vTaskSuspendAll()/
+ *  xTaskResumeAll() (scheduler suspension, not interrupt masking) so
+ *  ISRs - including the camera's own SmartDMA completion - are still
+ *  serviced normally; only task-level context switches are held off. */
+void SPI1_BUS_LockNoPreempt(void);
+void SPI1_BUS_UnlockNoPreempt(void);
 #endif
 
 #endif /* _SPI1_BUS_H_ */

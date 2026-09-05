@@ -15,6 +15,7 @@
 #define _SD_SPI_DISK_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /*! @brief True once SDSPI_Init() has completed successfully - snapshot.c
  *  checks this before attempting f_mount()/f_open() so a missing/dead
@@ -22,5 +23,14 @@
  *  true lazily, on the first FatFs call that triggers disk_initialize()
  *  (normally the first f_mount()). */
 bool SDCARD_DISK_IsReady(void);
+
+/*! @brief Raw capacity the SD-over-SPI driver itself detected (from the
+ *  card's CSD register, via SDSPI_Init() - see fsl_sdspi.c's
+ *  SDSPI_DecodeCsd()), in bytes. Only valid once SDCARD_DISK_IsReady()
+ *  is true. Diagnostic: compare against the card's real, known capacity
+ *  to rule out a CSD-decode/capacity-detection mismatch as the cause of
+ *  writes failing while small reads (f_getfree()) succeed - see
+ *  WORKLOG.md's SD write-failure investigation. */
+uint64_t SDCARD_DISK_GetCapacityBytes(void);
 
 #endif /* _SD_SPI_DISK_H_ */

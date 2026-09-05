@@ -9,6 +9,279 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 5 CONFIRMED ON REAL HARDWARE - full pipeline wired: AI inference on core0 (Neutron NPU, unchanged model_runner.h API), real cross-core frame-ready/result-ready doorbell round trip, live bbox overlay + snapshot save on core1 all driven by real detections instead of Stage 4's fake ones. One real, fully-reproduced boot-hang bug found and fixed (FreeRTOS API calls before the core0<->core1 MCMGR boot handshake completes). SD card save NOT yet re-confirmed working in this exact build - separate, pre-existing symptom, not caused by this stage (2026-09-05)
+
+Follow-up to the Stage 4 FOLLOW-UP entry below (same day). Implements the
+approved plan's Stage 5: real shared-buffer handoff + AI on core0, per
+`~/.claude/plans/stateful-churning-flurry.md`.
+
+**Design**: `source/shared/ipc_layout.h` gained a plain-data `ai_ipc_result_t`/
+`ai_ipc_bbox_t` pair - deliberately NOT the same type as `model_runner.h`'s
+`ai_model_result_t`, whose `ai_bbox_t.label` is a `const char *` into
+core0's own flash; copying that byte-for-byte into shared RAM would hand
+core1 a pointer with no defined meaning as portable cross-core data (even
+though it would likely still be *readable*, since flash is one physical
+bus-shared resource - not worth relying on). `ai_ipc_result_t` carries the
+label as a small inline byte array instead. `source/shared/ipc_events.h`
+gained `IPC_SignalFrameReady()`/`IPC_SignalResultReady()`, thin wrappers
+over Stage 2's existing `IPC_EVENTS_Trigger()`, matching the plan's
+originally-named doorbells. Per-frame flow (`CameraLcdTask`,
+`main_core1.c`): `CAMERA_CAPTURE_Deinit()` (as before) -> signal frame-
+ready with a sequence number -> block on `xTaskNotifyWait()` (100ms
+timeout - generous vs. the ~4ms NPU inference actually measured, same
+"fail loud, don't hang" pattern as this project's other cross-boundary
+waits) -> on success, convert the wire-safe result back to
+`ai_model_result_t` shape (labels point into the local stack copy, valid
+for the remainder of the same scope) -> draw the bbox onto the live
+preview -> call `SNAPSHOT_OnFrame()` with the REAL result (replacing Stage
+4's synthesized fake box) -> `LCD_DrawImage()` -> `CAMERA_CAPTURE_Reinit()`.
+`StorageTask` is retired entirely (exactly as its own Stage 4 comments
+predicted) - `SNAPSHOT_Init()` moved into `CameraLcdTask`'s own startup.
+core0's `AiInferenceTask` mirrors this: block on the doorbell, read the
+frame (safe by construction - core1 guarantees the buffer is frozen for
+this entire round trip), run inference via the unmodified
+`model_runner.h` API (same NPU backend the legacy single-core build
+defaults to), convert to the wire-safe type, write it to shared RAM, reply.
+
+**Confirmed dead code removed, RAM reclaimed for it**: the original Stage
+1 plan reserved a ~15KB "AI input crop buffer" in the shared region,
+before Stage 5's actual API was implemented. Checked `model_runner_npu.cpp`
+directly before wiring anything up: `AI_MODEL_RunInference()` takes the
+raw camera frame and does its own internal resize/quantize into the
+model's 72x72 input - nothing was ever going to read a separate crop
+buffer. Removed it from `ipc_layout.h` and reclaimed the space (0x4000,
+16KB) for core0's own `m_data` instead (`MCXN947_cm33_core0_dualcore.ld`:
+`m_data` 0x24000->0x28000, `m_shared` origin/length shifted to match,
+core1's own region unchanged) - core0's NPU tensor arena is 120KB, which
+did not fit the original 144KB `m_data` budget at all once FreeRTOS's own
+heap was added; final build uses 155,160/163,840 bytes (94.7%) - tight but
+fits with real (if modest) margin, no further guessing needed since it
+was a real, measured build.
+
+**Real bug found and fixed - core0<->core1 boot handshake hangs if ANY
+FreeRTOS API runs before `MCMGR_StartCore()` finishes.** First attempt
+created `AiInferenceTask` and called `IPC_EVENTS_RegisterHandler()` before
+`MCMGR_StartCore()` (seemed harmless - no event could possibly arrive that
+early) - core0 hung forever printing only "core0: starting core1..." (no
+"core0: core1 started.", no core1 banner at all). Root-caused via SWD
+halt on BOTH cores (pyocd's `core 0`/`core 1` selector) rather than
+guessing: core0 was stuck inside `MCMGR_StartCore()`'s own busy-wait loop
+(`mcmgr.c:212`, waiting for `state == kMCMGR_RunningCoreState`); core1 was
+stuck inside `MCMGR_GetStartupData()` -> `MAILBOX_GetValue()` - confirmed
+genuinely stuck, not just sampled mid-poll, by resuming core1, waiting
+200ms, halting again, and observing an *identical* PC both times. Two
+follow-up A/B tests isolated the exact cause: (1) reverting `main_core0.c`
+to the Stage 4 shape (no AI task at all) while KEEPING the new Stage 5
+linker layout still booted cleanly - ruled out the `m_data`/`m_shared`
+resize as the cause; (2) moving only `IPC_EVENTS_RegisterHandler()` to
+after `MCMGR_StartCore()` did NOT fix it (still hung identically) - ruled
+out event-registration ordering specifically; only moving `xTaskCreate()`
+itself to after `MCMGR_StartCore()` fixed it. Exact underlying mechanism
+not fully root-caused (plausibly an interrupt-priority/BASEPRI side
+effect of FreeRTOS's critical-section macros running before the scheduler
+has initialized anything, colliding with the mailbox IRQ the handshake
+needs - not confirmed to that level of detail, and not worth over-
+investing in given the fix is clean, safe, and well-isolated by real A/B
+tests). Fixed by strictly sequencing `main_core0.c`: finish ALL of the
+MCMGR-level handshake (image copy, `MCMGR_StartCore()`) FIRST, only touch
+any FreeRTOS API (`xTaskCreate()`, `IPC_EVENTS_RegisterHandler()`) after.
+
+**Confirmed on real hardware, full pipeline, real detections**:
+```
+AI_MODEL_Init: Neutron NPU face detector ready (72x72 input, 1 class(es), arena used 94388/122880 bytes)
+Camera: OV7670 detected on J9 (PID=0x76 VER=0x73 confirmed), 320x240 @ 30 fps.
+LCD preview: 8 fps
+AI_MODEL_RunInference: total classifier time = 3913us (3ms)
+AI result: box[0] label=face x=56 y=16 w=8 h=8 score=53%
+```
+fps: 11 -> 8-9 (real cost of the added cross-core round trip on top of the
+existing 24MHz LCD push - each frame now also waits for a full NPU
+inference cycle via IPC, ~4ms, plus scheduling/IPC overhead). NPU
+inference time itself (~3.9ms) is unchanged from the legacy single-core
+measurement - moving it to its own core didn't slow inference down, it
+just adds the round-trip cost to core1's per-frame budget.
+
+**NOT yet re-confirmed: SD card save.** `Snapshot: SD card init timed out
+after 2000ms` in this exact build - but this is NOT a Stage 5 regression:
+the identical symptom appeared in the isolated Stage-4-shape/Stage-5-
+linker test used to root-cause the boot hang above (i.e., before any of
+Stage 5's AI wiring existed), so it predates this stage's changes.
+Separate, not-yet-investigated issue - see next steps.
+
+### Next steps for a fresh session
+
+1. Investigate the SD card timeout above - check card seating/wiring
+   first (this project's own established first check), then reapply the
+   "confirm on real hardware, don't guess" standard from the Stage 4
+   FOLLOW-UP entry if it isn't simply a seating issue - do not assume it's
+   the same root cause as any earlier SD bug without checking fresh.
+2. Confirm a real saved BMP snapshot end-to-end once SD is working again -
+   the approved plan's Stage 5 acceptance criterion ("confirm face
+   detection and a real saved BMP snapshot on actual hardware, not just
+   log output") is only half-confirmed right now (detection: yes, real
+   hardware, real boxes; snapshot save: blocked on the SD issue above).
+3. Phase 4 (final stage in the approved plan): delete the legacy
+   single-core `main.c`/board_port/CMakeLists once the dual-core build is
+   confirmed as the new default, update ARCHITECTURE.md accordingly, and
+   fold this WORKLOG's dual-core entries into a proper summary rather than
+   the current chronological blow-by-blow.
+
+## Dual-core RTOS migration Stage 4 FOLLOW-UP - three separate real bugs found and fixed on real hardware: a "black screen" that was actually a diagnostic ordering mistake (not a capture bug), an SD card that needed reformatting (not a code regression), and LCD tearing/wrong-color that was FreeRTOS task preemption mid-transaction, NOT the signal-integrity bug first (wrongly) suspected - runs clean at the original 24MHz once the scheduler is held off during the transfer (2026-09-05)
+
+Follow-up to the Stage 4 entry below. User reported two new symptoms after
+Stage 4: the TFT showing pure black, and (separately, after extensive
+mutex/locking work that never actually fixed it) a persistently failing
+SD card. Investigated both from scratch rather than continuing to guess
+at the locking code, per this project's own "confirm on real hardware,
+don't guess" standard - and per explicit user pushback ("the old code
+before start changing work fine but now why i encounter this bug") that
+the SD problem was not adequately explained yet.
+
+**"Black screen" - root cause was this session's own diagnostic code, not
+a capture bug.** Added `DEMO_LogFrameSignature()` (`main_core1.c`) to
+check actual pixel content instead of trusting the fps counter alone -
+it reported flat `0x0000` on every single frame, which looked like
+SmartDMA never writing real data to the shared-region frame buffer
+(`ipc_layout.h`'s `IPC_FRAME_BUFFER_ADDR`, `0x20024000`). Formed and
+tested a wrong theory first (SmartDMA can't reach that address - lowered
+`IPC_SHARED_BASE` to `0x20010000` as a test, still flat zero, hypothesis
+falsified) before checking the AHB Secure Controller
+(`AHBSC->MASTER_SEC_LEVEL`/`RAMx_MEM_RULE`, `PERI_AHBSC.h`) as a possible
+non-secure-master-blocked-from-secure-RAM explanation - also falsified by
+directly reading `AHBSC->MISC_CTRL_REG` over SWD: `ENABLE_SECURE_CHECKING`
+is set to "disabled" on this chip, so none of those rules are even being
+enforced. The actual bug: halted the target over SWD mid-run and read the
+frame buffer directly at `0x20010000` - it contained real, plausible,
+CHANGING RGB565 pixel values across two samples 0.3s apart, proving
+SmartDMA was writing real data the whole time. The diagnostic function was
+just being called from the wrong place in `CameraLcdTask`'s loop - after
+`CAMERA_CAPTURE_Reinit()`, which immediately `memset()`s the buffer to
+zero to prepare for the next capture, so it only ever saw an
+already-cleared buffer. Moved the log call to run before `Reinit()`;
+confirmed on hardware immediately after: real pixel data (`0x2945..0xE77A`
+range), fps unchanged at 11. Reverted `IPC_SHARED_BASE` back to
+`0x20024000` - it was never the problem.
+
+**SD card failures - isolated to the card itself, not this project's
+locking code.** User confirmed the card mount/write failure survived a
+full revert to the exact pre-Stage-4-followup code, which is real evidence
+the many locking-scope experiments earlier in Stage 4 were not the cause
+(this was flagged as an open disagreement in the previous entry - now
+resolved). Decisive test: temporarily disabled `CameraLcdTask` entirely
+so `StorageTask` had 100% exclusive, zero-contention access to the shared
+SPI1 bus - the exact same failures still happened (`write failed`, then
+`FR_DISK_ERR` stuck on the same file index across three consecutive
+retries), which rules out bus contention/mutex scope as the cause
+outright. Added real `FRESULT`/index logging to `snapshot.c` instead of
+the old generic "could not create a new file" message. Given `f_getfree()`
+(read-only) succeeded and reported a plausible free-space number, but
+every write-path operation failed and got *worse* over time (stuck, not
+random) - consistent with accumulated FAT corruption from many earlier
+sessions where writes failed mid-transfer and the board was reset without
+a clean unmount, not a hardware or code defect. Investigated (and ruled
+out via code review) a theory that the SD-over-SPI driver's CSD/capacity
+decode (`fsl_sdspi.c`'s `SDSPI_DecodeCsd()`) might be mis-sizing this
+particular (58GB, SDXC) card - the CSD v2.0 branch's math is standard and
+correct, so this was set aside as unlikely, but a `SDCARD_DISK_GetCapacityBytes()`
+diagnostic (`sd_spi_disk.c`/`.h`) was added anyway and is now printed by
+`SNAPSHOT_Init()` so a future session has a real number instead of having
+to reason about it from code alone. Reformatted the card as FAT32 from a
+PC (after a careful device-identification check - the card's reported
+58GB size didn't match the firmware's own ~1.66GB free-space report, which
+turned out to just be years of accumulated snapshot/corruption reducing
+usable free space on a much bigger card than assumed, not a different
+physical card as first suspected) - **confirmed on real hardware
+afterward: SD mount and snapshot save both work.**
+
+**LCD tearing/wrong-color - WRONG THEORY FIRST, then root-caused for
+real.** User sent a photo of the actual LCD showing heavy color noise and
+diagonal tearing - the first time this bug had been checked by eye rather
+than by fps counter/log alone (the fps counter and even the SWD
+pixel-content check above cannot detect this class of problem, since both
+looked completely normal).
+
+*Wrong first theory*: `lcd_spi_hw.c`'s own file-header comment already
+explicitly predicted a similar-sounding failure mode at
+`LCD_SPI_BAUDRATE_HZ`'s default 24MHz on this project's breadboard wiring
+("If the image comes back glitchy/noisy/torn... lower this back toward
+2-6MHz first before suspecting anything else") - written during earlier
+single-core LCD bring-up. Lowered to 6MHz, user confirmed the image looked
+clean, and this was reported as fixed (signal integrity, not a software
+bug). **This was wrong, caught by the user**: they pointed out the old
+single-core `spi_tft_change` branch runs at the exact same 24MHz, same
+wiring, same LCD, with no corruption - which directly falsifies "24MHz is
+electrically unreliable on this wiring" as an explanation, since nothing
+about the wiring changed between the two tests. Exactly the mistake
+flagged in this project's own "don't conclude root cause too early"
+practice: the 6MHz test looked conclusive (image got clean) but was never
+checked against the one input that would have falsified it (the known-
+good baseline at the *same* clock).
+
+*Real root cause*: `git diff spi_tft_change full_refactor` on
+`lcd_spi_hw.c`/`spi1_bus.c`/`camera_capture.c` showed no real functional
+differences outside `#ifdef DUALCORE_RTOS`-guarded, purely-additive mutex
+wrapping - the actual new ingredient in the dual-core build is FreeRTOS
+itself. `spi1_bus.h`'s `SPI1_BUS_Lock()`/`Unlock()` (a plain mutex) only
+stops **another task** from touching the shared bus - it does NOT stop
+`configUSE_TIME_SLICING`'s round-robin from preempting the lock HOLDER
+mid-transaction. `CameraLcdTask` and `StorageTask` are equal priority
+(required by the earlier priority-starvation fix), so every SysTick the
+scheduler can legally switch away from `CameraLcdTask` mid-`LCD_SetWindow()`/
+mid-pixel-push (CS still held low, GPIO-driven) to run `StorageTask` (which
+just immediately blocks on the same mutex and switches back) - a real,
+uncontrolled timing gap mid-transaction that the ILI9341-family controller
+apparently doesn't tolerate cleanly, producing exactly this kind of
+diagonal tear/wrong-color corruption. The bare-metal single-core build has
+*zero* preemption on this code path at all (no scheduler), which is why
+the identical code/wiring/24MHz clock works there. Added
+`SPI1_BUS_LockNoPreempt()`/`UnlockNoPreempt()` (`spi1_bus.c`/`.h`) - takes
+the existing mutex, then also calls `vTaskSuspendAll()`/`xTaskResumeAll()`
+(blocks task-level context switches for the duration, but not ISRs, so
+the camera's own SmartDMA completion interrupt is still serviced
+normally) - used in `LCD_Init()`'s panel-init sequence and
+`LCD_DrawImage()` instead of the plain mutex. **Confirmed on real
+hardware: restored `LCD_SPI_BAUDRATE_HZ` to 24MHz (matching the legacy
+baseline exactly) and the image is clean** - proving preemption, not
+signal integrity, was the actual cause. fps back to the full 24MHz-class
+number instead of the 6MHz compromise.
+
+**Process lesson, worth keeping in mind for future sessions**: two
+separate but related lessons from this one entry. First, `black screen`
+and `LCD tearing` were both invisible to every diagnostic previously
+trusted (fps counters, frame-content SWD reads) and only surfaced once
+someone actually looked at the physical output - prefer asking for a
+photo/visual check earlier when a symptom is described in terms a counter
+can't capture. Second, and specifically for the LCD tearing bug: a fix
+that makes a symptom go away is not confirmed correct until checked
+against the *specific* known-good baseline the user can point to - "the
+code's own comment already warned about this" made the 6MHz theory feel
+solid, but a pre-existing comment predicting a plausible-sounding failure
+mode is not the same as evidence it's the *actual* cause here. The user's
+"but the old firmware worked at 24MHz" pushback was the one check that
+actually distinguished the two theories.
+
+### Next steps for a fresh session
+
+1. Stage 4 is now genuinely, fully confirmed end-to-end on real hardware:
+   camera capture, LCD preview (clean image, no tearing, back at the full
+   24MHz), and SD snapshot save all work together under RTOS scheduling.
+   Safe to consider Stage 4 done.
+2. Stage 5 unchanged from the approved plan - see
+   `~/.claude/plans/stateful-churning-flurry.md`.
+3. `SPI1_BUS_LockNoPreempt()` currently suspends the WHOLE scheduler
+   (`vTaskSuspendAll()`) for the full duration of `LCD_DrawImage()` -
+   at 24MHz that's the full ~57ms pixel-push time, every frame (~63% duty
+   cycle at 11fps). Harmless so far (only `CameraLcdTask`/`StorageTask`
+   exist, and `StorageTask` would just block on the mutex anyway during
+   this window), but worth revisiting once Stage 5 adds a core1 IPC-event
+   task - if that task ever needs to react within a few ms of an event
+   (not just "eventually"), a full scheduler suspension across the whole
+   pixel push could be too coarse; narrowing `LockNoPreempt()` to just the
+   short, CPU-polled `LCD_SetWindow()` command sequence (not the
+   DMA-driven bulk pixel push, which shouldn't need CPU/scheduler
+   availability once started) would be the natural next refinement if that
+   turns out to matter.
+
 ## Dual-core RTOS migration Stage 4 - SD snapshot ported to core1, two real concurrency bugs found and fixed on real hardware (priority-starvation, missing shared-bus mutex); SD mount + file creation now confirmed working under RTOS scheduling, but full end-to-end save is NOT yet confirmed - a write failure and repeated "could not create file" after it are more likely a near-full test card (31+ pre-existing 150KB snapshots) than a new bug, but this is not confirmed either way (2026-09-04)
 
 Follow-up to the Stage 3 entry below (same day). Ported `sd_spi_disk.c`/

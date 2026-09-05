@@ -115,6 +115,8 @@ static FRESULT SNAPSHOT_OpenNextFile(FIL *file, char *name)
             }
             if (fr != FR_EXIST)
             {
+                PRINTF("Snapshot: f_open(%s, CREATE_NEW) failed with FRESULT=%d during first-call probing.\r\n", name,
+                       (int)fr);
                 return fr; /* real error (no card, full filesystem, ...) - stop probing. */
             }
         }
@@ -154,6 +156,12 @@ void SNAPSHOT_Init(void)
     else
     {
         PRINTF("Snapshot: SD card ready.\r\n");
+        /* debug_console_lite's PRINTF doesn't reliably support %llu (see
+         * WORKLOG.md) - print MB as a plain uint32_t instead, plenty of
+         * range for comparing against a card's known real capacity. */
+        PRINTF("Snapshot: driver-detected capacity = %u MB - compare against the card's real, known capacity\r\n"
+               "  to rule out a CSD/capacity-detection mismatch.\r\n",
+               (unsigned)(SDCARD_DISK_GetCapacityBytes() / (1024ULL * 1024ULL)));
 
         /* Diagnostic (WORKLOG.md, Stage 4 follow-up): a real write failure
          * ("could not create a new file" / write returning short) has two
@@ -231,9 +239,11 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
 
     FIL file;
     char name[SNAPSHOT_NAME_LEN];
-    if (SNAPSHOT_OpenNextFile(&file, name) != FR_OK)
+    FRESULT openResult = SNAPSHOT_OpenNextFile(&file, name);
+    if (openResult != FR_OK)
     {
-        PRINTF("Snapshot: could not create a new file on the SD card.\r\n");
+        PRINTF("Snapshot: could not create a new file on the SD card (FRESULT=%d, next index tried=%u).\r\n",
+               (int)openResult, (unsigned)s_nextIndex);
         return false;
     }
 

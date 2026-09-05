@@ -39,6 +39,7 @@
 #ifdef DUALCORE_RTOS
 #include "FreeRTOS.h"
 #include "semphr.h"
+#include "task.h"
 
 static SemaphoreHandle_t s_busMutex;
 
@@ -72,6 +73,24 @@ void SPI1_BUS_Lock(void)
 void SPI1_BUS_Unlock(void)
 {
     (void)xSemaphoreGive(s_busMutex);
+}
+
+/* See spi1_bus.h's comment - the plain mutex above only stops another
+ * TASK from touching the bus, not the scheduler from preempting the lock
+ * HOLDER mid-transaction. vTaskSuspendAll()/xTaskResumeAll() block task
+ * switches (not ISRs) for the duration - takes the mutex first, same
+ * ordering the plain Lock() uses, so this composes safely with any other
+ * caller still using the plain Lock()/Unlock() pair. */
+void SPI1_BUS_LockNoPreempt(void)
+{
+    SPI1_BUS_Lock();
+    vTaskSuspendAll();
+}
+
+void SPI1_BUS_UnlockNoPreempt(void)
+{
+    (void)xTaskResumeAll();
+    SPI1_BUS_Unlock();
 }
 #endif
 

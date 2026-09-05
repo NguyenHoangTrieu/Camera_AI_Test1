@@ -247,9 +247,57 @@ if(DUALCORE_RTOS)
         mcux_add_source(
             BASE_PATH ${CMAKE_CURRENT_SOURCE_DIR}
             SOURCES source/main_core0.c
+                    source/ai/model_runner.h
+                    source/ai/model_runner_npu.cpp
         )
         mcux_add_include(
-            INCLUDES source source/shared
+            INCLUDES source source/shared source/ai
+        )
+        # Neutron NPU inference backend, same choice the legacy single-core
+        # build defaults to (AI_MODEL_USE_NPU=ON there - see that option's
+        # comment further down this file for the full backend-choice
+        # story). No build-time OFF switch here (unlike the legacy build) -
+        # Stage 5 (WORKLOG.md) only ever tested the NPU path; the CPU+
+        # CMSIS-NN/Edge-Impulse-SDK path would need its own separate wiring
+        # (ei_sramx_alloc.c/ei_debug_porting.c/model_runner.cpp, the whole
+        # source/ai/edge_impulse/ tree) if ever needed here.
+        set(TFLM_ROOT ${SdkRootDirPath}/middleware/eiq/tensorflow-lite)
+        set(NEUTRON_ROOT ${SdkRootDirPath}/middleware/eiq/neutron)
+        mcux_add_source(
+            BASE_PATH ${TFLM_ROOT}
+            SOURCES tensorflow/lite/micro/kernels/neutron/neutron.cpp
+                    tensorflow/lite/micro/kernels/neutron/neutron.h
+                    tensorflow/lite/micro/micro_time.cpp
+                    tensorflow/lite/micro/debug_log.cpp
+        )
+        # Vendored NXP code, not warning-clean under this toolchain's -Wall -
+        # same exemption the legacy build's own copy of these exact files
+        # needs (see that block further down this file).
+        set_source_files_properties(
+            ${TFLM_ROOT}/tensorflow/lite/micro/kernels/neutron/neutron.cpp
+            ${TFLM_ROOT}/tensorflow/lite/micro/micro_time.cpp
+            ${TFLM_ROOT}/tensorflow/lite/micro/debug_log.cpp
+            PROPERTIES COMPILE_OPTIONS "-Wno-error"
+        )
+        mcux_add_include(
+            BASE_PATH ${SdkRootDirPath}
+            INCLUDES middleware/eiq/tensorflow-lite
+                     middleware/eiq/tensorflow-lite/third_party/flatbuffers/include
+                     middleware/eiq/tensorflow-lite/third_party/gemmlowp
+                     middleware/eiq/tensorflow-lite/third_party/ruy
+                     middleware/eiq/neutron/driver/include
+                     middleware/eiq/neutron/common/include
+        )
+        # Must match the prebuilt libtflm.a's own ABI - same macros the
+        # legacy build's AI_MODEL_USE_NPU branch sets.
+        mcux_add_macro(
+            CC "-DTF_LITE_STATIC_MEMORY -DKERNELS_OPTIMIZED_FOR_SPEED"
+            CX "-DTF_LITE_STATIC_MEMORY -DKERNELS_OPTIMIZED_FOR_SPEED"
+        )
+        target_link_libraries(${MCUX_SDK_PROJECT_NAME} PRIVATE
+            ${TFLM_ROOT}/lib/cm33/armgcc/libtflm.a
+            ${NEUTRON_ROOT}/mcxn/libNeutronDriver.a
+            ${NEUTRON_ROOT}/mcxn/libNeutronFirmware.a
         )
         # Assembler include path so fsl_incbin.S's `.incbin "core1_image.bin"`
         # finds core1's build output - core1 MUST be built first into a

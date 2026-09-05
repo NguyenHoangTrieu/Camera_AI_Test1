@@ -10,11 +10,17 @@
 **     safely do - see WORKLOG.md's "m_data_ext.ld" incident, which is
 **     exactly why this project never widens m_data via a second -T
 **     script). Only the MEMORY block changes from the vendor original:
-**       - m_data shrinks from (0x20000000, 0x4E000) to (0x20000000, 0x24000)
+**       - m_data shrinks from (0x20000000, 0x4E000) to (0x20000000, 0x28000)
 **         to make room for...
-**       - ...a new m_shared region (0x20024000, 0x2A000) - see
+**       - ...a new m_shared region (0x20028000, 0x26000) - see
 **         source/shared/ipc_layout.h, which MUST be kept in sync with the
 **         two numbers above by hand (no automated check).
+**       - Stage 5 (WORKLOG.md): m_data widened by 0x4000 (16KB) at
+**         m_shared's expense, reclaimed from ipc_layout.h's now-removed AI
+**         crop buffer (confirmed dead: AI_MODEL_RunInference() does its
+**         own internal resize/crop, nothing ever read that buffer) - core0
+**         needs the room for the NPU's 120KB static tensor arena, which
+**         did not fit the original 0x24000 (144KB) m_data at all.
 **     m_sramx, m_core1_image, m_text, m_interrupts, m_flash1,
 **     m_flash_config and m_usb_sram are all UNCHANGED from the vendor
 **     script. RPMSG_SHMEM_SIZE/rpmsg_sh_mem are kept only because removing
@@ -42,14 +48,16 @@ MEMORY
   m_core1_image         (RX)  : ORIGIN = 0x000C0000, LENGTH = 0x00040000
   /* Shrunk from the vendor's 0x0004E000 to make room for m_shared below -
    * see source/shared/ipc_layout.h (IPC_SHARED_BASE/IPC_SHARED_SIZE MUST
-   * match m_shared's ORIGIN/LENGTH here exactly). */
-  m_data                (RW)  : ORIGIN = 0x20000000, LENGTH = 0x00024000 - RPMSG_SHMEM_SIZE
-  /* NEW: dual-core shared RAM (camera frame buffer + AI crop buffer +
-   * result struct - see source/shared/ipc_layout.h). Ends exactly at
-   * 0x2004E000, the start of core1's own reserved region - core1 accesses
-   * this range via fixed-address pointers, it does not need its own
-   * linker-level MEMORY entry for it (see ipc_layout.h's header comment). */
-  m_shared              (RW)  : ORIGIN = 0x20024000, LENGTH = 0x0002A000
+   * match m_shared's ORIGIN/LENGTH here exactly). Widened again in Stage 5
+   * (see the file header comment) at m_shared's expense, for the NPU
+   * tensor arena. */
+  m_data                (RW)  : ORIGIN = 0x20000000, LENGTH = 0x00028000 - RPMSG_SHMEM_SIZE
+  /* NEW: dual-core shared RAM (camera frame buffer + result struct - see
+   * source/shared/ipc_layout.h). Ends exactly at 0x2004E000, the start of
+   * core1's own reserved region - core1 accesses this range via
+   * fixed-address pointers, it does not need its own linker-level MEMORY
+   * entry for it (see ipc_layout.h's header comment). */
+  m_shared              (RW)  : ORIGIN = 0x20028000, LENGTH = 0x00026000
   rpmsg_sh_mem          (RW)  : ORIGIN = 0x2004E000 - RPMSG_SHMEM_SIZE, LENGTH = RPMSG_SHMEM_SIZE
   m_flash1              (RX)  : ORIGIN = 0x00100000, LENGTH = 0x00100000
   m_sramx               (RW)  : ORIGIN = 0x04000000, LENGTH = 0x00018000

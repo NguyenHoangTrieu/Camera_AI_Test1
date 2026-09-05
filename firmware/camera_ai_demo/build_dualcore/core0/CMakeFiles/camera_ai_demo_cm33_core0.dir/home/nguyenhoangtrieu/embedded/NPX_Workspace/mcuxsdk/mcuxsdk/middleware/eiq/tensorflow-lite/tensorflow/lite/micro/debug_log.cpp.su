@@ -1,0 +1,2 @@
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/eiq/tensorflow-lite/tensorflow/lite/micro/debug_log.cpp:31:17:void DebugLog(const char*, va_list)	16	static
+/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/eiq/tensorflow-lite/tensorflow/lite/micro/debug_log.cpp:48:16:int DebugVsnprintf(char*, size_t, const char*, va_list)	24	static

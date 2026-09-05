@@ -26,3 +26,13 @@ void IPC_EVENTS_Trigger(mcmgr_core_t targetCore, uint16_t data)
 {
     (void)MCMGR_TriggerEvent(targetCore, kMCMGR_RemoteApplicationEvent, data);
 }
+
+void IPC_SignalFrameReady(uint16_t frameSeq)
+{
+    IPC_EVENTS_Trigger(kMCMGR_Core0, frameSeq);
+}
+
+void IPC_SignalResultReady(uint16_t frameSeq)
+{
+    IPC_EVENTS_Trigger(kMCMGR_Core1, frameSeq);
+}

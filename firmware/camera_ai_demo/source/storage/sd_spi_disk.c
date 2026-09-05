@@ -168,6 +168,11 @@ bool SDCARD_DISK_IsReady(void)
     return s_cardReady;
 }
 
+uint64_t SDCARD_DISK_GetCapacityBytes(void)
+{
+    return (uint64_t)s_card.blockCount * (uint64_t)s_card.blockSize;
+}
+
 DSTATUS disk_initialize(BYTE pdrv)
 {
     if (pdrv != 0U)

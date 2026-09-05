@@ -13,12 +13,21 @@
  * tasks yet - splitting capture and push into separate tasks would
  * reintroduce the exact single-buffer race this project already fixed
  * once, see ARCHITECTURE.md/WORKLOG.md).
- * Stage 4 (this revision): SD card snapshot (source/storage/snapshot.c,
- * sd_spi_disk.c) as a standalone StorageTask, manually triggered every
- * few seconds with a synthesized "face" box (AI isn't wired up until
- * Stage 5) - proves SD/FatFs mechanics work correctly when driven by a
- * FreeRTOS task instead of a bare-metal loop.
- */
+ * Stage 4 (confirmed on real hardware): SD card snapshot (source/storage/
+ * snapshot.c, sd_spi_disk.c) as a standalone StorageTask, manually
+ * triggered every few seconds with a synthesized "face" box (AI wasn't
+ * wired up yet) - proved SD/FatFs mechanics work correctly when driven by
+ * a FreeRTOS task instead of a bare-metal loop.
+ * Stage 5 (this revision): real AI results from core0, over the
+ * frame-ready/result-ready doorbell round trip (source/shared/
+ * ipc_events.h). StorageTask is RETIRED (exactly as its own Stage 4
+ * comments predicted) - SNAPSHOT_Init()/SNAPSHOT_OnFrame() move into
+ * CameraLcdTask's own per-frame loop, replacing the fake periodic trigger
+ * with the real "is there actually a face in THIS frame" signal, same
+ * sequencing the legacy single-core main.c's AI loop always used
+ * (Deinit -> inference -> snapshot -> Reinit) - now with "inference"
+ * meaning "ask core0 and wait for its answer" instead of a local call. */
+#include <string.h>
 #include "fsl_debug_console.h"
 #include "board.h"
 #include "app.h"
@@ -27,8 +36,32 @@
 #include "task.h"
 #include "camera_capture.h"
 #include "lcd_display.h"
+#include "bbox_overlay.h"
 #include "snapshot.h"
 #include "spi1_bus.h"
+#include "ipc_layout.h"
+#include "ipc_events.h"
+
+/* Model's fixed input resolution - AI_MODEL_GetInputWidth/Height()
+ * (model_runner.h) can't be called from core1: their implementation
+ * (model_runner_npu.cpp/model_runner.cpp) only builds into core0's image
+ * (see CMakeLists.txt's DUALCORE_RTOS branch - core1 links model_runner.h
+ * for its TYPES only, same as Stage 4's SNAPSHOT_OnFrame() call already
+ * hardcoded this exact value). Matches the model actually deployed on
+ * core0 (see its own "AI_MODEL_Init: ... (72x72 input...)" boot log) -
+ * would need updating by hand if the model is ever retrained to a
+ * different input size, same as any other cross-core constant in
+ * ipc_layout.h. */
+#define AI_MODEL_INPUT_WIDTH  72U
+#define AI_MODEL_INPUT_HEIGHT 72U
+
+/* Generous vs. the ~3.9ms NPU inference time actually measured (see
+ * WORKLOG.md's NPU bring-up entry) - same "fail loud, don't hang forever"
+ * philosophy as this project's other cross-boundary waits
+ * (SD_SPI_INIT_TIMEOUT_MS, SPI1_BUS_DMA_TIMEOUT_MS). A timeout here means
+ * core0 didn't answer in time (e.g. still starting up) - this frame just
+ * skips the AI overlay/snapshot check, not a hang. */
+#define AI_RESULT_TIMEOUT_MS 100U
 
 /* Fills the whole LCD with one solid color - identical to main.c's
  * DEMO_ClearScreen(), copied rather than shared since main.c stays the
@@ -89,6 +122,27 @@ static void DEMO_LogFrameSignature(const uint16_t *frame)
            (uint16_t)(sum / samples), (minPixel == maxPixel) ? " (flat - dead/no data)" : "");
 }
 
+/* Stage 5: converts the wire-safe ai_ipc_result_t (source/shared/
+ * ipc_layout.h - plain data, no cross-core pointers) read from shared RAM
+ * into the ai_model_result_t shape snapshot.h/bbox drawing already expect.
+ * `out`'s box label pointers point INTO `ipc` - `ipc` must stay in scope
+ * for as long as `out` is used (both are always local, same-scope
+ * variables at every call site below, never returned or stored). */
+static void ConvertIpcResult(const ai_ipc_result_t *ipc, ai_model_result_t *out)
+{
+    out->valid    = ipc->valid;
+    out->boxCount = (ipc->boxCount > AI_MODEL_MAX_BOXES) ? AI_MODEL_MAX_BOXES : ipc->boxCount;
+    for (uint32_t i = 0; i < out->boxCount; i++)
+    {
+        out->boxes[i].label  = ipc->boxes[i].label;
+        out->boxes[i].x      = ipc->boxes[i].x;
+        out->boxes[i].y      = ipc->boxes[i].y;
+        out->boxes[i].width  = ipc->boxes[i].width;
+        out->boxes[i].height = ipc->boxes[i].height;
+        out->boxes[i].score  = ipc->boxes[i].score;
+    }
+}
+
 static void CameraLcdTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -97,10 +151,20 @@ static void CameraLcdTask(void *pvParameters)
     LCD_Init();
     DEMO_ClearScreen(0x0000U);
 
+    /* Moved here from the retired StorageTask (Stage 4) - see this file's
+     * Stage 5 header comment. NOT wrapped in an outer lock - see
+     * sd_spi_disk.c's disk_initialize() comment (WORKLOG.md, Stage 4
+     * follow-up): every attempt to lock this whole call made SD card mount
+     * fail consistently - reverted to the narrow, tight per-diskio-call
+     * locking that's confirmed working for mount instead of guessing
+     * further. */
+    SNAPSHOT_Init();
+
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
     uint32_t fpsFrameCount      = 0U;
     uint32_t fpsWindowStartCycle = DWT->CYCCNT;
+    uint16_t frameSeq            = 0U;
 
     /* Set right after CAMERA_CAPTURE_Reinit(), cleared once the following
      * frame has been consumed - SmartDMA needs one cycle to resync with
@@ -122,9 +186,58 @@ static void CameraLcdTask(void *pvParameters)
             }
 
             /* Stop SmartDMA before reading the frame buffer, restart it
-             * after - tearing fix, see WORKLOG.md. */
+             * after - tearing fix, see WORKLOG.md. Stage 5 extends this
+             * same "buffer only stable while SmartDMA is stopped" window
+             * to cover core0's AI read too - the round trip below must
+             * fully finish before CAMERA_CAPTURE_Reinit() runs. */
             CAMERA_CAPTURE_Deinit();
             uint16_t *frame = CAMERA_CAPTURE_GetFrameBuffer();
+
+            frameSeq++;
+            IPC_SignalFrameReady(frameSeq);
+
+            uint32_t notifiedSeq;
+            bool haveResult = (xTaskNotifyWait(0, 0xFFFFFFFFU, &notifiedSeq, pdMS_TO_TICKS(AI_RESULT_TIMEOUT_MS)) ==
+                               pdTRUE) &&
+                              ((uint16_t)notifiedSeq == frameSeq);
+            if (!haveResult)
+            {
+                PRINTF("AI: no result from core0 for frame seq %u within %ums - skipping AI overlay/snapshot this "
+                       "frame.\r\n",
+                       frameSeq, AI_RESULT_TIMEOUT_MS);
+            }
+
+            ai_model_result_t aiResult = {0};
+            if (haveResult)
+            {
+                ai_ipc_result_t ipcResult;
+                memcpy(&ipcResult, IPC_RESULT_ADDR, sizeof(ipcResult));
+                ConvertIpcResult(&ipcResult, &aiResult);
+
+                if (aiResult.valid)
+                {
+                    float scaleX = (float)DEMO_BUFFER_WIDTH / (float)AI_MODEL_INPUT_WIDTH;
+                    float scaleY = (float)DEMO_BUFFER_HEIGHT / (float)AI_MODEL_INPUT_HEIGHT;
+                    for (uint32_t i = 0; i < aiResult.boxCount; i++)
+                    {
+                        const ai_bbox_t *box = &aiResult.boxes[i];
+                        BBOX_DrawRect(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, (int)((float)box->x * scaleX),
+                                      (int)((float)box->y * scaleY), (int)((float)box->width * scaleX),
+                                      (int)((float)box->height * scaleY), 0x07E0U /* green */);
+                        /* Same format the legacy single-core main.c's AI
+                         * loop used - debug_console_lite may not support
+                         * %f, so print score as a percentage integer. */
+                        PRINTF("AI result: box[%u] label=%s x=%u y=%u w=%u h=%u score=%d%%\r\n", i, box->label,
+                               box->x, box->y, box->width, box->height, (int)(box->score * 100.0f));
+                    }
+                }
+
+                /* Internally rate-limited to at most 1 capture/sec (see
+                 * snapshot.h) - a no-op most frames. */
+                (void)SNAPSHOT_OnFrame(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, &aiResult, AI_MODEL_INPUT_WIDTH,
+                                       AI_MODEL_INPUT_HEIGHT);
+            }
+
             LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, frame);
 
             fpsFrameCount++;
@@ -157,73 +270,6 @@ static void CameraLcdTask(void *pvParameters)
     }
 }
 
-/* Stage 4, standalone test only - AI (Stage 5) supplies the real result.
- * Manual re-trigger every 5s, well clear of snapshot.c's own 1s internal
- * rate limit, so every call is expected to actually save. */
-#define STORAGE_TASK_TEST_PERIOD_MS 5000U
-
-static void StorageTask(void *pvParameters)
-{
-    (void)pvParameters;
-
-    /* Idempotent - CameraLcdTask also enables this; whichever task starts
-     * first wins, harmless either way. SNAPSHOT_OnFrame()'s rate-limit
-     * check needs DWT->CYCCNT running before its first call. */
-    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-
-    /* NOT wrapped in an outer lock - see sd_spi_disk.c's disk_initialize()
-     * comment (WORKLOG.md, Stage 4 follow-up): every attempt to lock this
-     * whole call (plain or recursive mutex, single-level or nested) made
-     * SD card mount fail consistently and reproducibly (survived a real
-     * power cycle, ruling out a stuck card) - root cause not pinned down,
-     * reverted to the narrow, tight per-diskio-call locking that's
-     * confirmed working for mount instead of guessing further. */
-    SNAPSHOT_Init();
-
-    for (;;)
-    {
-        vTaskDelay(pdMS_TO_TICKS(STORAGE_TASK_TEST_PERIOD_MS));
-
-        /* Synthesized "face" box standing in for real AI output (Stage 5)
-         * - coordinates are arbitrary, this is purely a connectivity test
-         * for the SD/FatFs pipeline (rate limit, BMP header, box draw,
-         * write), not a detection-accuracy test. Reads/draws into the
-         * live camera frame buffer with no synchronization against
-         * CameraLcdTask's concurrent SmartDMA/LCD-push use of the same
-         * buffer yet - that's Stage 5's job (explicit buffer-ownership
-         * handoff, see the approved plan); worst case here is a cosmetic
-         * tear in the saved BMP, not a crash, acceptable for this
-         * standalone test. */
-        ai_bbox_t fakeBox = {
-            .label  = "face",
-            .x      = 16U,
-            .y      = 16U,
-            .width  = 40U,
-            .height = 40U,
-            .score  = 0.99f,
-        };
-        ai_model_result_t fakeResult = {
-            .valid    = true,
-            .boxCount = 1U,
-            .boxes    = {fakeBox},
-        };
-        /* NOT wrapped in an outer lock either - see the comment on
-         * SNAPSHOT_Init() above; every whole-sequence locking attempt for
-         * THIS call broke SD mount earlier at boot, before this call is
-         * even reached, so it was never actually tested in isolation
-         * against just the write-failure problem. Left as a known
-         * limitation for this stage (see WORKLOG.md) - each individual
-         * disk_*() call is still protected by its own tight lock
-         * (sd_spi_disk.c), same as the confirmed-working mount path;
-         * Stage 5's real design (explicit buffer-ownership handoff, not
-         * ad-hoc mutex scope experiments) is the right place to solve
-         * this properly. */
-        (void)SNAPSHOT_OnFrame(CAMERA_CAPTURE_GetFrameBuffer(), DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT, &fakeResult,
-                               72U, 72U);
-    }
-}
-
 int main(void)
 {
     MCMGR_Init();
@@ -236,25 +282,29 @@ int main(void)
         status = MCMGR_GetStartupData(kMCMGR_Core0, &startupData);
     } while (status != kStatus_MCMGR_Success);
 
-    PRINTF("\r\nCamera_AI_Test1 - core1 (dual-core Stage 4: camera + LCD preview + SD snapshot test)\r\n");
+    PRINTF("\r\nCamera_AI_Test1 - core1 (dual-core Stage 5: camera + LCD preview + AI overlay + SD snapshot)\r\n");
 
     /* Must exist before either task can touch the shared LPSPI1 bus - see
      * spi1_bus.h's SPI1_BUS_Lock() comment (WORKLOG.md, Stage 4). */
     SPI1_BUS_CreateLock();
 
-    /* Equal priority, NOT CameraLcdTask higher - confirmed the hard way
-     * (WORKLOG.md, Stage 4): CameraLcdTask's loop body is a tight busy-poll
-     * with no vTaskDelay/blocking call in its "no frame yet" branch, so it
-     * is *always* ready and never voluntarily yields. Under strict
-     * priority-based preemption, a lower-priority task that's never
-     * blocked-against by the higher one is starved completely, not just
-     * occasionally preempted - StorageTask never ran at all (not even its
-     * boot-time SNAPSHOT_Init() print showed up) until this was fixed to
-     * equal priority, which lets configUSE_TIME_SLICING's round-robin
-     * give both tasks real CPU time every tick regardless of blocking
-     * behavior. */
-    xTaskCreate(CameraLcdTask, "CameraLcdTask", configMINIMAL_STACK_SIZE + 512, NULL, tskIDLE_PRIORITY + 1, NULL);
-    xTaskCreate(StorageTask, "StorageTask", configMINIMAL_STACK_SIZE + 512, NULL, tskIDLE_PRIORITY + 1, NULL);
+    /* Only one task on core1 touches the shared bus now that StorageTask
+     * is retired (Stage 5, see this file's header comment) - the
+     * equal-vs-higher-priority starvation lesson from Stage 4 no longer
+     * applies to anything on THIS core (still relevant background: see
+     * WORKLOG.md), but is kept at tskIDLE_PRIORITY + 1 regardless, nothing
+     * to contend with it here. */
+    TaskHandle_t cameraLcdTaskHandle;
+    xTaskCreate(CameraLcdTask, "CameraLcdTask", configMINIMAL_STACK_SIZE + 512, NULL, tskIDLE_PRIORITY + 1,
+                &cameraLcdTaskHandle);
+
+    /* Stage 5: core0's AiInferenceTask replies to every IPC_SignalFrameReady()
+     * with IPC_SignalResultReady() carrying the same sequence number as its
+     * notification value - wakes CameraLcdTask's xTaskNotifyWait() call
+     * directly, no extra queue/semaphore needed (same ISR->task pattern
+     * Stage 2 already proved end-to-end). */
+    IPC_EVENTS_RegisterHandler(cameraLcdTaskHandle);
+
     vTaskStartScheduler();
 
     for (;;)

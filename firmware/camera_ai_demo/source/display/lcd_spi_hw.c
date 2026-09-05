@@ -85,6 +85,13 @@
  * connection), lower this back toward 2-6MHz first before suspecting
  * anything else. */
 #ifndef LCD_SPI_BAUDRATE_HZ
+/* TEMP DIAGNOSTIC (see WORKLOG.md's 2026-09-05 follow-up): back to 24MHz -
+ * the SAME clock/wiring the legacy single-core build uses successfully -
+ * to isolate whether the torn/wrong-color image is really signal
+ * integrity (as first, wrongly, concluded) or FreeRTOS task preemption
+ * mid-transaction (see SPI1_BUS_LockNoPreempt(), spi1_bus.h/.c, now used
+ * below instead of the plain mutex). If the image is clean at 24MHz with
+ * this change, preemption was the real cause all along. */
 #define LCD_SPI_BAUDRATE_HZ 24000000U
 #endif
 
@@ -235,15 +242,17 @@ void LCD_Init(void) {
 
   LCD_InitGpioPins();
 #ifdef DUALCORE_RTOS
-  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_Lock() comment
-   * (WORKLOG.md, Stage 4): a boot-time race against a concurrent
-   * SNAPSHOT_Init()/disk_initialize() is possible too, just narrower and
-   * one-shot rather than the repeated per-frame race LCD_DrawImage() has. */
-  SPI1_BUS_Lock();
+  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_LockNoPreempt()
+   * comment (WORKLOG.md, Stage 4 + 2026-09-05 follow-up): a boot-time race
+   * against a concurrent SNAPSHOT_Init()/disk_initialize() is possible
+   * too, and the panel init sequence is exactly the kind of multi-command,
+   * timing-sensitive CS-held-low transaction that a scheduler preemption
+   * mid-sequence can corrupt. */
+  SPI1_BUS_LockNoPreempt();
 #endif
   LCD_InitPanel();
 #ifdef DUALCORE_RTOS
-  SPI1_BUS_Unlock();
+  SPI1_BUS_UnlockNoPreempt();
 #endif
 }
 
@@ -344,16 +353,21 @@ void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height,
                    const uint16_t *pixels) {
 #ifdef DUALCORE_RTOS
-  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_Lock() comment
-   * (WORKLOG.md, Stage 4): this whole SetWindow+Push sequence must be
-   * atomic against StorageTask's concurrent SD transactions on the same
-   * physical bus. */
-  SPI1_BUS_Lock();
+  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_LockNoPreempt()
+   * comment (WORKLOG.md, Stage 4 + 2026-09-05 follow-up). Was the plain
+   * SPI1_BUS_Lock()/Unlock() mutex, which stops StorageTask's own bus
+   * traffic but NOT the scheduler from preempting THIS task mid-sequence
+   * (round-robin time-slicing against StorageTask, equal priority) -
+   * confirmed on real hardware that the identical code/wiring/24MHz clock
+   * that works in the legacy bare-metal build (zero preemption on this
+   * code path there) produced a torn/wrong-color image here; switching to
+   * the stricter no-preempt lock is the direct test of that theory. */
+  SPI1_BUS_LockNoPreempt();
 #endif
   LCD_SetWindow(x0, y0, (uint16_t)(x0 + width - 1U),
                 (uint16_t)(y0 + height - 1U));
   LCD_PushPixels(pixels, (uint32_t)width * height);
 #ifdef DUALCORE_RTOS
-  SPI1_BUS_Unlock();
+  SPI1_BUS_UnlockNoPreempt();
 #endif
 }
