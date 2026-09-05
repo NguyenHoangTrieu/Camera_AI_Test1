@@ -107,6 +107,22 @@ static void LCD_SetResetPin(bool set) {
   GPIO_PinWrite(DEMO_LCD_RST_GPIO, DEMO_LCD_RST_PIN, set ? 1U : 0U);
 }
 
+/* KNOWN UNRESOLVED ISSUE, dual-core (DUALCORE_RTOS) build only - see
+ * WORKLOG.md's Stage 5 FIFTH FOLLOW-UP entry (2026-09-05) for the full
+ * investigation. On real hardware, this pin's PDOR bit never reads back
+ * as set no matter when/how many times GPIO_PinWrite() is called from
+ * core1 - confirmed via a full 32-bit GPIO0 sweep (write all bits, read
+ * back) both at boot and after LCD_InitPanel()'s ~390ms settle window:
+ * 0 of 32 bits ever stuck. Pin mux, GPIO clock, AHBSC per-peripheral
+ * access rules, and address aliasing were all checked live via SWD and
+ * ruled out. Retry-with-verification and per-frame re-assertion were both
+ * tried and did NOT fix it on real hardware - removed again rather than
+ * leave dead/misleading code in place. Planned real fix (not yet done):
+ * wire the panel's BLK line directly to the Arduino header's 3V3 pin
+ * instead of A5 (DEMO_LCD_BLK_PIN) and delete this GPIO path entirely -
+ * the code never needs to turn the backlight off, so a GPIO pin buys
+ * nothing here. Do not "fix" this again with more retry/timing tweaks
+ * without new evidence - both were tried and disproven this session. */
 static void LCD_SetBacklight(bool on) {
   GPIO_PinWrite(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, on ? 1U : 0U);
 }
@@ -187,7 +203,9 @@ static void LCD_InitGpioPins(void) {
   GPIO_PinInit(DEMO_LCD_CS_GPIO, DEMO_LCD_CS_PIN, &idleHighConfig);
   GPIO_PinInit(DEMO_LCD_DC_GPIO, DEMO_LCD_DC_PIN, &outConfig);
 
-  /* Backlight: init as output and turn on immediately. */
+  /* Backlight: init as output and turn on immediately. See
+   * LCD_SetBacklight()'s comment - unreliable on the dual-core build,
+   * see WORKLOG.md. */
   GPIO_PinInit(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, &outConfig);
   LCD_SetBacklight(true);
 }

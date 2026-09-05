@@ -9,6 +9,192 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 5 FIFTH FOLLOW-UP - CONFIRMED on real hardware: single-core baseline is genuinely fine (backlight+image both good), isolating the blackout to the dual-core build specifically; TEMP_SKIP_IPC_ROUNDTRIP was still on (explains "no AI log"), fixed. The backlight GPIO (P0_23/GPIO0) does not reliably reflect software writes issued by core1 - extensively investigated live (pin mux, clock, settling delay, AHBSC per-peripheral access rules, address aliasing, and a full 32-bit simultaneous write/readback sweep tested both before and after the panel's full init sequence, all ruled out or contradicted) but NOT root-caused; two attempted software workarounds did not fix it and were reverted rather than left in as non-functional code. DECISION (with user): stop chasing a GPIO fix and wire the backlight directly to 3V3 instead, since the code never needs to turn it off - real hardware change, not yet done, planned for a fresh session (2026-09-05)
+
+Follow-up to the FOURTH FOLLOW-UP entry below (same day, this session finally
+got working USB/pyOCD access to the physical board - the FOURTH FOLLOW-UP's
+own environment couldn't flash at all).
+
+**Single-core LCD-preview build reflashed and CONFIRMED GOOD on real
+hardware by the user**: backlight on, live camera image visible, clean.
+This is the single most important result of this entry - it definitively
+rules out hardware/wiring/power as the explanation for the dual-core
+blackout (same physical board, same wiring, same LCD, only the firmware
+changed) and matches this project's own "diff against a known-good branch"
+technique (see the dual-core Stage 5 SECOND FOLLOW-UP entry's use of the
+same technique against `spi_tft_change`).
+
+**"No AI log" complaint - real, but a leftover diagnostic flag, not a new
+bug.** `main_core1.c`'s `TEMP_SKIP_IPC_ROUNDTRIP` (added in the THIRD
+FOLLOW-UP entry to isolate whether the IPC round trip itself correlated
+with LCD tearing) was still `1`, so `AiInferenceTask` (core0) was
+permanently parked on `xTaskNotifyWait(portMAX_DELAY)`, never invoked.
+Flipped to `0` - confirmed on real hardware immediately after: real
+`AI_MODEL_RunInference` timing (~3.8-4.0ms, matches every earlier NPU
+measurement in this file) and real detections (`AI result: box[0]
+label=face ... score=97%`) now print every frame, and a live SD-write
+failure on a REAL detection was also caught for the first time
+(`FRESULT=1`, `FR_DISK_ERR`, both header and pixel write) - Stage 4 only
+ever exercised the SD write path with a synthesized fake detection, so
+this is a genuinely new, not-yet-investigated finding, separate from
+everything below.
+
+**The backlight blackout is real, reproducible, and NOT explained by
+anything found in the FOURTH FOLLOW-UP entry** (the `SPI1_BUS_LockNoPreempt()`
+doc/code mismatch fixed there was real but happens well after
+`LCD_InitGpioPins()` already sets the backlight, so it can't be the cause).
+Root-caused as far as live SWD register reads can take it:
+
+- `LCD_Init()` (`lcd_spi_hw.c`) genuinely runs to completion every boot -
+  confirmed via its own boot-time PRINTF lines appearing in the serial log
+  every time.
+- Live SWD read of `GPIO0->PDOR` (`0x40096040`) mid-loop, several seconds
+  into a normal run: `0x00408400` - bit 23 (BLK, `DEMO_LCD_BLK_PIN`) is
+  **0**, i.e. commanded LOW, even though `LCD_SetBacklight(true)` is the
+  only place in the whole codebase that ever touches this pin and
+  unconditionally requests HIGH.
+- **Pin mux ruled out**: `PORT0->PCR[23]` reads `0x00000000` = `kPORT_MuxAlt0`
+  (GPIO, no pull) - identical to `PCR[14]`/`PCR[15]`/`PCR[22]` (DC/RST/CS),
+  which are all configured by the exact same `BOARD_InitArduinoLcdPins()`
+  call. Not a muxing difference.
+- **GPIO0's own clock/peripheral function ruled out at the peripheral
+  level**: other bits on the same physical register (`PDOR` bit 22/CS,
+  bit 15/RST) DO read back correctly matching their last commanded value.
+  The peripheral is not globally broken.
+- **A live, direct SWD test proved the pin and register genuinely CAN hold
+  a forced HIGH state**: `write32 0x40096044 0x800000` (PSOR, the same
+  register/bit `GPIO_PinWrite()` uses) immediately set bit 23 to 1, and it
+  was still 1 on a second, separate read a full second later with nothing
+  else running in between. The electrical path, register, and bit are all
+  real and controllable - just not reliably from CORE1's own code.
+- **An in-firmware readback diagnostic (temporarily added to
+  `LCD_InitGpioPins()`/`LCD_Init()`, since removed) confirmed the write
+  from CORE1's own compiled code does not stick, in-context, removing any
+  SWD-timing/multicore-targeting ambiguity from the point above**: printed
+  `GPIO0->PDOR` immediately after `LCD_SetBacklight(true)` - read back 0,
+  both right after `LCD_InitGpioPins()` and again after
+  `LCD_InitPanel()`'s ~390ms of delays (ruling out a clock/peripheral
+  settling-time explanation - if settling were the issue, the SECOND,
+  much-later attempt should have succeeded).
+- **Not specific to bit 23**: the same in-firmware test repeated against an
+  arbitrary, otherwise-untouched GPIO0 bit (20) showed the identical
+  symptom - write, read back 0; write, delay 10ms, read back 0; write
+  again, delay 10ms, read back 0 - ruling out anything electrically
+  specific to the BLK pin/pad itself.
+- **AHBSC per-peripheral access-control rules ruled out live, not just
+  assumed**: found `AHB_PERIPHERAL0_SLAVE_PORT_P12_SLAVE_RULE0`/`RULE1`
+  (`AHBSC` @ `0x401201D0`/`0x401201D4`) carry a `GPIO0_ALIAS0`/`GPIO0_ALIAS1`
+  2-bit field each, documented as controlling required secure/privilege
+  level per bus master for exactly this peripheral+alias. Read live:
+  both registers are `0x00000000` = `0b00` = "non-secure and
+  non-privilege access allowed" for every peripheral in the group - the
+  LEAST restrictive setting, not a block. This rule set is not the cause.
+- **Address aliasing ruled out**: `GPIO0` compiles to the literal constant
+  `0x40096000` in core1's `.elf` (confirmed via `objdump` disassembly of
+  `LCD_Init()`, matching the address used throughout this investigation);
+  reading both the secure (`0x50096000`) and non-secure (`0x40096000`)
+  aliases of `GPIO0->PDOR` returns identical values every time.
+
+**Two evidence-based workarounds attempted, NEITHER confirmed working on
+real hardware:**
+1. `LCD_SetBacklight()` (`lcd_spi_hw.c`) now retries the write up to 100
+   times with an immediate readback verification after each attempt,
+   instead of writing once. On real hardware this returns without ever
+   printing its own "did not latch" warning (i.e. it always believes it
+   succeeded within the retry budget) - but a live SWD read moments later
+   still shows bit 23 at 0. Either the retry loop's own readback is
+   itself unreliable in the same way as the write (a plausible but
+   unconfirmed compounding theory), or something clears the bit again
+   after the loop returns.
+2. Added `LCD_RefreshBacklight()` (`lcd_spi_hw.h`/`.c`), called once per
+   frame from `CameraLcdTask` (`main_core1.c`) right after
+   `LCD_DrawImage()` - the same "many repeated attempts" treatment that
+   was the leading theory for why CS reliably ends up correct (toggled
+   thousands of times/sec) while a write-once pin does not. Also NOT
+   confirmed on real hardware: bit 23 was still 0 across three separate
+   live reads several seconds apart, after many seconds of continuous
+   per-frame calls.
+3. **This second attempt's own working theory is now suspect too**: DC
+   (`DEMO_LCD_DC_PIN`, bit 14) is toggled with the exact same frequency as
+   CS (every SPI command, via `LCD_WriteCommandOpen()`), yet the same live
+   PDOR read that showed CS(22)/RST(15) correct showed DC(14) at 0 -
+   contradicting "enough repeated attempts eventually stick" as the
+   mechanism, since DC gets just as many attempts as CS but still fails.
+   Neither "write-once vs. write-repeatedly" nor "which specific bit"
+   cleanly explains the CS/RST-succeed vs. DC/BLK/bit20-fail split found
+   so far.
+
+**Both workarounds above were REVERTED after a third, more decisive test
+disproved the theory behind both of them.** Instead of testing one bit at
+a time, wrote `GPIO0->PSOR = 0xFFFFFFFF` (every bit at once) and read
+`PDOR` back - tested at TWO different points: immediately inside
+`LCD_InitGpioPins()` (before any SPI traffic at all), and again at the end
+of `LCD_Init()` (after `LCD_InitPanel()`'s full ~390ms of delays and SPI
+command traffic). **Both reads came back `PDOR=0x00000000` - 0 of 32 bits
+ever stuck, at either point.** This is strictly stronger evidence than
+anything checked earlier in this entry: it rules out "needs more time to
+settle" (the second sweep had every opportunity settling could need) and
+"needs real SPI/bus activity first to unstick" (the second sweep ran
+after a full panel-init sequence's worth of real SPI transactions). Yet
+the SAME session's steady-state reads (see above) still showed CS(22)/
+RST(15) correctly latched moments later during the main loop - a genuine,
+still-unexplained contradiction between "a deliberate, comprehensive
+write attempt at any specific instant always completely fails" and
+"some bits are nonetheless found correct during ordinary, continuous
+operation." Given retry-with-verification and per-frame re-assertion were
+both motivated by an incomplete theory (repetition helps) that this sweep
+result contradicts, and neither was confirmed working on real hardware
+anyway, both were **reverted** (`LCD_SetBacklight()` back to a single
+plain write; `LCD_RefreshBacklight()` and its per-frame call removed
+entirely) rather than leave misleading, non-functional-but-plausible-
+looking code in the tree. `LCD_SetBacklight()` now carries a permanent
+(not TEMP DIAGNOSTIC) comment pointing back to this entry.
+
+**Decision, made with the user in this session, for how to actually fix
+this**: rather than continuing to hunt for a "confirmed good" GPIO0 bit to
+move BLK to (unreliable to verify, per everything above), wire the
+panel's BLK line directly to the Arduino header's 3V3 pin instead of A5 -
+the code has never once needed to turn the backlight off or dim it, so a
+GPIO pin buys nothing here and this sidesteps the whole unresolved
+question. **Not yet done** - needs the user to physically move the jumper
+wire and, once done, the code needs a follow-up change (delete
+`DEMO_LCD_BLK_GPIO`/`PIN`, `LCD_SetBacklight()`, and its two call sites in
+`lcd_spi_hw.c`/`.h` entirely, matching the "no GPIO pin needed" design).
+
+### Next steps for a fresh session
+
+1. **Do the 3V3 rewire first** (Arduino A5 -> 3V3 instead of the MCU pin),
+   confirm the backlight is now simply always on regardless of firmware,
+   then delete the now-dead `LCD_SetBacklight()`/`DEMO_LCD_BLK_GPIO`/`PIN`
+   code path (`lcd_spi_hw.c`/`.h`, `board_port/cm33_core1/app.h`,
+   `board_port/cm33_core0/app.h`'s Arduino-header branch, `pin_mux.c`'s
+   `BOARD_InitArduinoLcdPins()`) and update README.md's pinout table to
+   match (BLK row: "3V3 (direct)" instead of "A5 / P0_23 / manual GPIO").
+2. Only if there's a reason to still want software backlight control
+   later: the underlying mystery (a comprehensive, simultaneous 32-bit
+   GPIO0 write from core1 provably fails 100% of the time, yet isolated
+   bits are nonetheless observed correct later during continuous
+   operation) needs tooling this session didn't have to resolve - a
+   hardware watchpoint on `GPIO0->PDOR`/`PSOR` (break on write, inspect
+   PC/call stack at the exact moment of every access) via a proper
+   interactive pyOCD/GDB session with explicit per-core selection (this
+   session's CLI-scripted `pyocd commander` attempts at a precise core1
+   breakpoint targeted the wrong core, halting core0's boot vector
+   instead), or a logic analyzer directly on the physical P0_14/P0_22/
+   P0_23 pins, would both be more conclusive than anything SWD register
+   reads alone showed here.
+3. The new SD write failure on a REAL detection (`FRESULT=1` on both the
+   BMP header and pixel writes, first real face-triggered save attempt
+   under Stage 5) is a separate, not-yet-investigated bug - don't conflate
+   it with the backlight issue above. Get a fresh capture with a
+   definitely-good SD card and see if it reproduces.
+4. Once the backlight is genuinely fixed, this file's stack of pending
+   confirmations from earlier entries still needs doing: the actual
+   critical-section fix (now for real, see the FOURTH FOLLOW-UP entry) for
+   LCD tearing during active AI operation, and the touch/bus-sharing
+   baud-reclaim logic (still zero real-hardware confirmation - see
+   README.md's Known Limitations).
+
 ## Dual-core RTOS migration Stage 5 FOURTH FOLLOW-UP - user reported a full blackout (no image, backlight never turns on) on the exact build this file's own THIRD FOLLOW-UP entry claimed was fixed; found that entry's own fix was NEVER ACTUALLY APPLIED (comment-only edit, real bug), fixed it for real, added the missing HardFault diagnostic to the dual-core build so a crash-before-LCD_Init() theory can actually be confirmed or ruled out next time - NOT yet confirmed on real hardware, this session had no working USB/pyOCD access to the probe at all (2026-09-05)
 
 Follow-up to the THIRD FOLLOW-UP entry directly below (same day). User

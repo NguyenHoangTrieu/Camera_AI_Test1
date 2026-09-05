@@ -247,12 +247,19 @@ static void CameraLcdTask(void *pvParameters)
 
             frameSeq++;
             /* TEMP DIAGNOSTIC (WORKLOG.md, Stage 5 tearing investigation):
-             * skip the whole core0 IPC round trip to test whether the
-             * cross-core AI exchange itself (by whatever mechanism -
-             * MAILBOX_IRQn was checked and ruled out via a real register
-             * read confirming it's correctly masked) correlates with the
-             * LCD tearing, independent of any specific interrupt theory. */
-#define TEMP_SKIP_IPC_ROUNDTRIP 1
+             * was used to skip the whole core0 IPC round trip, to test
+             * whether the cross-core AI exchange itself (by whatever
+             * mechanism - MAILBOX_IRQn was checked and ruled out via a real
+             * register read confirming it's correctly masked) correlates
+             * with the LCD tearing, independent of any specific interrupt
+             * theory. Re-enabled (2026-09-05, see WORKLOG.md's FOURTH
+             * FOLLOW-UP entry) now that SPI1_BUS_LockNoPreempt()'s real
+             * taskENTER_CRITICAL()/taskEXIT_CRITICAL() fix (spi1_bus.c) is
+             * actually in place to test - leaving this skip on any longer
+             * would just mean AiInferenceTask (main_core0.c) never runs at
+             * all, which is why no "AI_MODEL_RunInference"/"AI result"
+             * lines were ever printed. */
+#define TEMP_SKIP_IPC_ROUNDTRIP 0
 #if !TEMP_SKIP_IPC_ROUNDTRIP
             IPC_SignalFrameReady(frameSeq);
 
