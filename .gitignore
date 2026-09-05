@@ -1,5 +1,6 @@
 # west/CMake build output (any firmware subproject)
 build/
+build_dualcore/
 
 # Editor / IDE
 .vscode/

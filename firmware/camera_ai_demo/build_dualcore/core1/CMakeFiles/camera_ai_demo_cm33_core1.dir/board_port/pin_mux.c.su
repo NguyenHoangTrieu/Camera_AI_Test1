@@ -1,7 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:26:6:BOARD_InitDebugUartPins	0	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:21:6:BOARD_InitBootPins	0	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:61:6:BOARD_InitCameraPins	0	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:115:6:BOARD_InitFlexioPins	0	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:215:6:BOARD_InitArduinoLcdPins	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:248:6:BOARD_InitTouchPins	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/pin_mux.c:298:6:BOARD_InitSdCardPins	0	static

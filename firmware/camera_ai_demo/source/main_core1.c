@@ -143,6 +143,23 @@ static void ConvertIpcResult(const ai_ipc_result_t *ipc, ai_model_result_t *out)
     }
 }
 
+/* Cheap rolling hash over a sparse sample of the frame buffer - same
+ * sampling stride as DEMO_LogFrameSignature() below, reused here to check
+ * whether the buffer is still changing (see CameraLcdTask's settle-check
+ * comment), not to log a human-readable range. */
+static uint32_t QuickBufferSignature(const uint16_t *frame)
+{
+    const uint32_t pixelCount = (uint32_t)DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT;
+    const uint32_t stride     = 97U;
+    uint32_t sig              = 0U;
+
+    for (uint32_t i = 0; i < pixelCount; i += stride)
+    {
+        sig = (sig * 31U) + frame[i];
+    }
+    return sig;
+}
+
 static void CameraLcdTask(void *pvParameters)
 {
     (void)pvParameters;
@@ -173,6 +190,27 @@ static void CameraLcdTask(void *pvParameters)
      * tearing fix entry). */
     bool skipNextFrame = false;
 
+    /* Buffer-content settle check (WORKLOG.md, dual-core Stage 5 follow-up):
+     * some saved snapshots came back with real, torn/garbled frame content
+     * (not a short/truncated SD write - every saved file was confirmed the
+     * correct size) that varied run to run, including a visually distinct
+     * diagonal boundary + fine horizontal banding in several samples -
+     * consistent with the frame buffer still being mid-write at the moment
+     * it's read, not just a stale/skipped frame count (a first attempt at
+     * mitigating this by requiring two consecutive back-to-back
+     * `CAMERA_CAPTURE_GetFrameCount()` values before trusting the buffer
+     * was tried and CONFIRMED NOT SUFFICIENT on real hardware - tearing
+     * persisted identically, so removed in favor of this more direct
+     * check). This checks the actual buffer CONTENT for stability instead
+     * of trusting `CAMERA_CAPTURE_Deinit()` to be an instantaneous, fully
+     * synchronous stop: hash a sparse sample of the buffer, wait a short
+     * settle time, hash it again, and only proceed once two consecutive
+     * hashes agree (bounded retries so a genuinely stuck buffer doesn't
+     * hang the task forever - falls through and uses whatever the last
+     * reading was, same as before this check existed). */
+#define SETTLE_CHECK_DELAY_MS  2U
+#define SETTLE_CHECK_MAX_TRIES 5U
+
     for (;;)
     {
         if (CAMERA_CAPTURE_IsFrameReady())
@@ -192,6 +230,20 @@ static void CameraLcdTask(void *pvParameters)
              * fully finish before CAMERA_CAPTURE_Reinit() runs. */
             CAMERA_CAPTURE_Deinit();
             uint16_t *frame = CAMERA_CAPTURE_GetFrameBuffer();
+
+            uint32_t settleSig = QuickBufferSignature(frame);
+            for (uint32_t settleTry = 0U; settleTry < SETTLE_CHECK_MAX_TRIES; settleTry++)
+            {
+                vTaskDelay(pdMS_TO_TICKS(SETTLE_CHECK_DELAY_MS));
+                uint32_t settleSig2 = QuickBufferSignature(frame);
+                if (settleSig2 == settleSig)
+                {
+                    break;
+                }
+                PRINTF("Camera: buffer signature changed after Deinit() (retry %u): 0x%08X -> 0x%08X\r\n",
+                       (unsigned)settleTry, (unsigned)settleSig, (unsigned)settleSig2);
+                settleSig = settleSig2;
+            }
 
             frameSeq++;
             IPC_SignalFrameReady(frameSeq);

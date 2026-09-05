@@ -195,7 +195,15 @@ DSTATUS disk_initialize(BYTE pdrv)
      * levels) makes SD card mount fail consistently and reproducibly at
      * the card's own ACMD41 handshake - survived a real power cycle, so
      * not a stuck-card issue, but root cause not otherwise pinned down.
-     * This narrow scope is the one confirmed to not break mount. */
+     * MUST be the plain mutex, not SPI1_BUS_LockNoPreempt() - tried that
+     * too in the Stage 5 follow-up (WORKLOG.md) on the theory that it
+     * might also fix a separate SD write-corruption bug, and it broke
+     * mount again (same "SD card init timed out" symptom, confirmed via a
+     * real A/B test: reverting just this one call from LockNoPreempt()
+     * back to Lock() restored mount immediately, nothing else changed).
+     * Root cause of exactly why still not pinned down - same as the
+     * original finding above - but confirmed and reproducible, so left
+     * alone rather than guessed at further. */
     s_initInProgress = true;
 #ifdef DUALCORE_RTOS
     SPI1_BUS_Lock();

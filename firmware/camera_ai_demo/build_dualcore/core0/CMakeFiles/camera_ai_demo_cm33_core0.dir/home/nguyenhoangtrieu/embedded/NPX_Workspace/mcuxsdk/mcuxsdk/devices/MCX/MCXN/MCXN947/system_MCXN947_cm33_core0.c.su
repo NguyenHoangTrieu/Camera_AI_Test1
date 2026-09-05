@@ -1,3 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core0.c:72:29:SystemInit	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core0.c:130:6:SystemCoreClockUpdate	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/system_MCXN947_cm33_core0.c:141:29:SystemInitHook	4	static

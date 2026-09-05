@@ -1,5 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.h:1496:20:CLOCK_EnableClock	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c:43:6:BOARD_SetRegulatorsMidVoltage	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c:58:6:BOARD_SetRegulatorsOverdriveVoltage	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c:146:6:BOARD_InitHardware	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/Camera_AI_Test1/firmware/camera_ai_demo/board_port/cm33_core0/hardware_init.c:276:10:get_core1_image_size	4	static

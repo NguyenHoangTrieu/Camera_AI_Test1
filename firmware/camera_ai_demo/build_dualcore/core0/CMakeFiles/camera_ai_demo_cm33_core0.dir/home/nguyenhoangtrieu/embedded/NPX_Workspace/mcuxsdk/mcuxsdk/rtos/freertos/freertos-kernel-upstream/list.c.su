@@ -1,5 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c:49:6:vListInitialise	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c:89:6:vListInitialiseItem	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c:105:6:vListInsertEnd	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c:139:6:vListInsert	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/rtos/freertos/freertos-kernel-upstream/list.c:217:13:uxListRemove	24	static

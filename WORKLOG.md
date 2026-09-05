@@ -9,6 +9,103 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 5 SECOND FOLLOW-UP - raised the NPU detection threshold to cut false positives, found and reverted a real regression my own earlier LCD fix caused on the SD mount path, and added a two-consecutive-frame stability check for a real (pre-existing, now more visible) torn-snapshot bug - NOT yet confirmed to actually fix the tearing, needs a real-hardware retest with saved BMPs (2026-09-05)
+
+Follow-up to the Stage 5 entry below (same day). User reported two real,
+independent problems after Stage 5 went live: the model flagging a plain
+wall as a face, and saved snapshot BMPs sometimes coming back with
+genuinely torn/wrong-color content (confirmed via photos of the actual
+saved files, opened on a PC).
+
+**False positives - a real model accuracy limit, tuned via threshold, not
+a pipeline bug.** Repeated real-hardware testing showed frequent `face`
+detections in the 0.5-0.65 confidence range on plain walls/floors - a
+single-class FOMO model's real generalization limit on scenes unlike its
+training data, not a data-corruption symptom (the frame buffer feeding
+inference was independently confirmed correct at this point in the
+pipeline). Raised `NPU_MODEL_DETECTION_THRESHOLD` (`model_runner_npu.cpp`)
+from the Edge Impulse export's own calibrated default of 0.5 first to 0.7
+(confirmed on real hardware: zero false positives in a 15s window that
+previously showed several), then to 0.65 per explicit user preference -
+a deliberate accuracy/sensitivity tradeoff, not something to "fix" further
+without retraining the model itself (user's own stated plan).
+
+**Real regression found: my own Stage 4-follow-up `SPI1_BUS_LockNoPreempt()`
+fix (LCD tearing) broke SD mount when also applied to `sd_spi_disk.c`.**
+On the theory that the SD write corruption (see below) might be the same
+class of scheduler-preemption bug the LCD tearing was, applied
+`SPI1_BUS_LockNoPreempt()` to `disk_initialize()`/`disk_read()`/
+`disk_write()` too. Real hardware immediately regressed: `SD card init
+timed out after 2000ms` on every boot, even on a card confirmed
+physically reseated and making contact. Root-caused via a direct A/B test
+rather than assuming: reverted just those 3 calls back to the plain
+`SPI1_BUS_Lock()`/`Unlock()`, rebuilt, and mount worked again immediately
+(`SD card ready`, capacity correctly read as 59024 MB - also directly
+confirming, via real data, that the SD-over-SPI driver's CSD/capacity
+decode is NOT buggy for this large card, closing out a theory from the
+first Stage 4 follow-up entry that was left open). This is now the same
+*class* of finding as the original Stage 4 discovery (a wider lock scope,
+or apparently now also a stricter lock TYPE, breaks ACMD41/mount for a
+reason still not pinned down) - documented in `sd_spi_disk.c` directly so
+a future session doesn't retry the exact same experiment.
+
+**Torn/wrong-color snapshot content - real, pre-existing, more visible now,
+mitigated but not yet confirmed fixed.** All 56 of the user's saved BMP
+files were exactly the correct size (150.1KB) - ruling out a short/
+truncated SD write - but several had visibly torn, wrong-color content,
+non-deterministically (same code, same session, some clean, some garbled).
+Since the corruption is in *content* not *transfer length*, and the SD
+write path (confirmed above) and LCD push (confirmed in the previous
+follow-up) both read from the same frozen buffer, the most likely
+explanation is a genuine SmartDMA hardware race: the "frame ready"
+interrupt firing a moment before the DMA engine has actually finished
+flushing the last rows to RAM, so `CAMERA_CAPTURE_Deinit()` (called
+immediately after) can freeze a buffer that's part current frame, part
+leftover from the previous one. This likely predates Stage 5 entirely -
+it's the same capture/DMA boundary the original single-core LCD tearing
+fix already worked around (`skipNextFrame`) - it just wasn't very visible
+before: Stage 4's SD save was a rare 5-second manual test, and a torn
+LIVE PREVIEW frame just flashes by unnoticed on the next redraw, whereas
+Stage 5 saves a torn frame permanently the instant it happens, at up to
+1/sec.
+
+Mitigation added (`main_core1.c`'s `CameraLcdTask`): after the existing
+post-`Reinit()` `skipNextFrame` discard, require TWO consecutive "frame
+ready" notifications whose `CAMERA_CAPTURE_GetFrameCount()` values are
+exactly back-to-back (no gap) before trusting the buffer - any gap
+restarts the pairing from the newer frame instead of trusting it blind.
+This is a heuristic, not a fix for the underlying DMA-completion race
+itself - it only filters the specific failure mode where the notified
+frame count is stale or out of sequence (e.g. from a resync glitch), and
+was explicitly described to the user as such before implementing.
+Confirmed on real hardware: builds clean, runs without crashing, fps cost
+is real and as predicted (8-9 -> 7, one extra ~33ms camera frame period
+per processing cycle at this sensor's 30fps). **NOT yet confirmed to
+actually reduce/eliminate the torn-snapshot symptom** - needs a fresh
+round of real snapshots inspected for corruption before this can be
+called fixed; may need combining with the signature/settle-delay
+alternative mentioned when this was first diagnosed if the frame-count
+pairing alone isn't sufficient.
+
+### Next steps for a fresh session
+
+1. Point the camera at a real face, trigger several saves, and inspect
+   the resulting BMPs for tearing - confirms or refutes the two-
+   consecutive-frame mitigation above. If tearing persists, the next
+   experiment is the signature/settle-delay alternative discussed with
+   the user (sample a cheap checksum of the buffer, wait a short settle
+   time, re-sample, discard the frame if they disagree) rather than
+   frame-count pairing alone.
+2. SD card mount status needs re-checking independent of the above - it
+   was failing again in the most recent hardware test session (before the
+   two-consecutive-frame change was even tested), for reasons not yet
+   investigated this round (possibly just physical - card wasn't
+   necessarily inserted for that particular test).
+3. Phase 4 (final stage in the approved plan) is otherwise unstarted:
+   delete the legacy single-core `main.c`/board_port/CMakeLists once the
+   dual-core build is confirmed as the new default, update
+   ARCHITECTURE.md accordingly.
+
 ## Dual-core RTOS migration Stage 5 CONFIRMED ON REAL HARDWARE - full pipeline wired: AI inference on core0 (Neutron NPU, unchanged model_runner.h API), real cross-core frame-ready/result-ready doorbell round trip, live bbox overlay + snapshot save on core1 all driven by real detections instead of Stage 4's fake ones. One real, fully-reproduced boot-hang bug found and fixed (FreeRTOS API calls before the core0<->core1 MCMGR boot handshake completes). SD card save NOT yet re-confirmed working in this exact build - separate, pre-existing symptom, not caused by this stage (2026-09-05)
 
 Follow-up to the Stage 4 FOLLOW-UP entry below (same day). Implements the

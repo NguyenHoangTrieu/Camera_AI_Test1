@@ -1,3 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.c:41:6:RESET_SetPeripheralReset	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.c:77:6:RESET_ClearPeripheralReset	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.c:113:6:RESET_PeripheralReset	8	static

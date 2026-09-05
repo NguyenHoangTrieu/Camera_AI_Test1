@@ -251,9 +251,22 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
     uint8_t header[BMP_HEADER_SIZE];
     SNAPSHOT_BuildBmpHeader(header, frameWidth, frameHeight, pixelBytes);
 
-    UINT written;
-    bool ok = (f_write(&file, header, BMP_HEADER_SIZE, &written) == FR_OK) && (written == BMP_HEADER_SIZE) &&
-              (f_write(&file, frame, pixelBytes, &written) == FR_OK) && (written == pixelBytes);
+    UINT headerWritten = 0U;
+    UINT pixelsWritten  = 0U;
+    FRESULT headerResult = f_write(&file, header, BMP_HEADER_SIZE, &headerWritten);
+    FRESULT pixelResult  = FR_OK;
+    if (headerResult == FR_OK && headerWritten == BMP_HEADER_SIZE)
+    {
+        pixelResult = f_write(&file, frame, pixelBytes, &pixelsWritten);
+    }
+    bool ok = (headerResult == FR_OK) && (headerWritten == BMP_HEADER_SIZE) && (pixelResult == FR_OK) &&
+              (pixelsWritten == pixelBytes);
+    if (!ok)
+    {
+        PRINTF("Snapshot: write detail - header FRESULT=%d wrote %u/%u, pixel FRESULT=%d wrote %u/%u.\r\n",
+               (int)headerResult, (unsigned)headerWritten, (unsigned)BMP_HEADER_SIZE, (int)pixelResult,
+               (unsigned)pixelsWritten, (unsigned)pixelBytes);
+    }
     f_close(&file);
 
     uint32_t writeElapsedUs =

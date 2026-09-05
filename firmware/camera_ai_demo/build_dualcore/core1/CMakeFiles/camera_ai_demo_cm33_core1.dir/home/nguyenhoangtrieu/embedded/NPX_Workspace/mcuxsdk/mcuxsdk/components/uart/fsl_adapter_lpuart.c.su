@@ -1,6 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:701:19:HAL_UartInit	56	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:766:19:HAL_UartDeinit	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:787:19:HAL_UartReceiveBlocking	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:802:19:HAL_UartSendBlocking	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:817:19:HAL_UartEnterLowpower	8	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/components/uart/fsl_adapter_lpuart.c:824:19:HAL_UartExitLowpower	0	static

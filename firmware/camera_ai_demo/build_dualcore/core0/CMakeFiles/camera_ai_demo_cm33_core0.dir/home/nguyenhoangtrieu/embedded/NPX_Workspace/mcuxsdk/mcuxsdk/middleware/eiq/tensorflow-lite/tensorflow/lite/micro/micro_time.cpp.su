@@ -1,2 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/eiq/tensorflow-lite/tensorflow/lite/micro/micro_time.cpp:41:10:uint32_t tflite::ticks_per_second()	4	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/middleware/eiq/tensorflow-lite/tensorflow/lite/micro/micro_time.cpp:47:10:uint32_t tflite::GetCurrentTimeTicks()	4	static

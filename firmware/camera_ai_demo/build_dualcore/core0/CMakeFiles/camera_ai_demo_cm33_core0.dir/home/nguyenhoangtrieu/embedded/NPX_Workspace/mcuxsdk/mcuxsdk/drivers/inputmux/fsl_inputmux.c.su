@@ -1,8 +1,0 @@
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.h:1496:20:CLOCK_EnableClock	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_clock.h:1530:20:CLOCK_DisableClock	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/devices/MCX/MCXN/MCXN947/drivers/fsl_reset.h:308:20:RESET_ReleasePeripheralReset	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c:70:17:INPUTMUX_GetInstance	24	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c:98:6:INPUTMUX_Init	16	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c:133:6:INPUTMUX_AttachSignal	32	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c:158:6:INPUTMUX_EnableSignal	40	static
-/home/nguyenhoangtrieu/embedded/NPX_Workspace/mcuxsdk/mcuxsdk/drivers/inputmux/fsl_inputmux.c:202:6:INPUTMUX_Deinit	16	static
