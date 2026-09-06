@@ -34,15 +34,10 @@ static void TOUCH_SetCSPin(bool set) {
   GPIO_PinWrite(DEMO_TOUCH_CS_GPIO, DEMO_TOUCH_CS_PIN, set ? 1U : 0U);
 }
 
-/* Reads one 12-bit ADC channel - see the file-header comment for the
- * command-byte/extraction details. kLPSPI_MasterPcs1 is a "don't care"
- * value (never muxed to a physical pin, same as lcd_spi_hw.c's use of
- * it) - the real chip select is the manual T_CS GPIO toggle here.
- * kLPSPI_MasterPcsContinuous matters anyway - see lcd_spi_hw.c's
- * LCD_WriteByte() comment (WORKLOG.md, 2026-09-04): without it,
- * LPSPI_MasterTransferBlocking() pays a large fixed setup/hold delay
- * between every byte of this 3-byte transfer, real electrical PCS wiring
- * or not. */
+/* Reads one 12-bit ADC channel - see file header for the command-byte/
+ * extraction details. kLPSPI_MasterPcs1 is a "don't care" value (never
+ * muxed to a pin) - the real CS is the manual T_CS GPIO toggle here.
+ * kLPSPI_MasterPcsContinuous still matters though (see lcd_spi_hw.c). */
 static uint16_t TOUCH_ReadChannel(uint8_t command) {
   const uint8_t tx[3] = {command, 0x00U, 0x00U};
   uint8_t rx[3] = {0};

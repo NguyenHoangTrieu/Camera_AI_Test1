@@ -1,38 +1,25 @@
 /*
  * main.c - Camera_AI_Test1
  *
- * Default build: OV7670 capture (via SmartDMA, J9 header, 320x240 RGB565
- * - see app.h/camera_capture.c) -> Edge Impulse FOMO face-detection
- * inference (source/ai/model_runner.cpp or model_runner_npu.cpp,
- * single class `face`) -> LCD shows one text status line ("FACE: 1"/
- * "FACE: 0" for "a face was/wasn't detected this frame" - see
- * DEMO_DrawStatusLine()), no USB. See WORKLOG.md "LCD history" for why
- * Arduino-header bit-bang (not J8/FlexIO) is the active default.
+ * Default build: OV7670 capture (SmartDMA, J9 header, 320x240 RGB565) ->
+ * FOMO face-detection inference (model_runner.cpp or model_runner_npu.cpp)
+ * -> LCD text status line ("FACE: 1"/"0"), no USB. See WORKLOG.md for why
+ * Arduino-header bit-bang is the active default over J8/FlexIO.
  *
- * Earlier revisions of this file tried drawing the live camera frame with
- * bounding boxes on the LCD (source/display/bbox_overlay.c/h) - dropped in
- * favor of this plain text status readout: much less data to push over
- * the bit-bang LCD bus per frame, and the 3 lines are what's actually
- * useful for a drowsiness-alert readout. bbox_overlay.c/h is no longer
- * unused, though - see below.
+ * bbox_overlay.c/h was originally for drawing boxes on the live LCD image;
+ * that was dropped in favor of plain text (too much data over the bit-bang
+ * bus), but the helper is reused by the SD snapshot feature below.
  *
- * SD card snapshot on face detection (source/storage/snapshot.c): when a
- * face is detected, draws a box (bbox_overlay.c/h, reused from the
- * abandoned live-image LCD path above - same helper, different
- * destination) directly into the camera frame buffer and saves it as a
- * BMP to the TFT shield's onboard microSD slot (Arduino D10..D13,
- * hardware LPSPI1 - see source/storage/sd_spi_disk.c), rate-limited to at
- * most 1 capture/sec. Independent of the LCD text status line above -
- * the LCD never shows the box, only the saved file does.
+ * SD card snapshot on face detection (source/storage/snapshot.c): draws a
+ * box into the camera frame buffer and saves it as a BMP to the TFT
+ * shield's onboard microSD slot, rate-limited to 1 capture/sec. The LCD
+ * never shows the box, only the saved file does.
  *
- * USB Video Class (UVC) streaming over USB High-Speed (source/usb/) is
- * ABANDONED - SmartDMA camera capture and the USB HS PHY need mutually
- * exclusive DCDC voltage levels on this chip, and this board's one USB
- * connector is hard-wired to the HS controller only, so there's no
- * software-only fix. Still builds (opt-in via CMakeLists.txt's
- * USB_STREAM_DIAGNOSTIC_DISABLE=OFF); runs time-multiplexed (periodic
- * Mid-voltage recapture / Overdrive-streaming switching) - see the #else
- * branch below and WORKLOG.md.
+ * USB Video Class streaming (source/usb/) is ABANDONED - SmartDMA capture
+ * and the USB HS PHY need mutually exclusive DCDC voltage levels on this
+ * chip, no software fix possible. Still builds (opt-in via
+ * USB_STREAM_DIAGNOSTIC_DISABLE=OFF), runs time-multiplexed - see
+ * WORKLOG.md.
  */
 
 #include <stdbool.h>
@@ -51,13 +38,8 @@
 #include "usb_video_camera.h"
 
 #if !DEMO_LCD_CAMERA_PREVIEW
-/* Text status readout - see the file-level comment above. A single fixed-
- * width label + ": " + a '1'/'0' digit for whether a face was detected
- * this frame, scale=3 -> 15x21px per glyph, comfortably inside the
- * 320x240 panel. lineIndex is kept as a parameter (not hardcoded to 0)
- * in case a second status line is ever added back. Unused (and left out
- * of the build) in the raw camera-preview build - see
- * DEMO_LCD_CAMERA_PREVIEW in main(). */
+/* Fixed-width label + ": " + '1'/'0' for whether a face was detected this
+ * frame. Unused in the raw camera-preview build. */
 #define DEMO_STATUS_TEXT_SCALE 3U
 #define DEMO_STATUS_LINE_X 8U
 #define DEMO_STATUS_LINE_Y0 40U
@@ -81,16 +63,10 @@ static void DEMO_DrawStatusLine(uint16_t lineIndex, const char *paddedLabel, boo
 }
 #endif /* !DEMO_LCD_CAMERA_PREVIEW */
 
-/* Fills the whole LCD with one solid color - called once at startup so
- * old/garbage GRAM content doesn't show around the text lines. Not used
- * per-frame (see DEMO_DrawStatusLine() above, which only repaints its own
- * small line band each frame).
- *
- * Must use LCD_PushPixelsOpen()/LCD_EndWindow(), NOT LCD_PushPixels() in
- * a loop: LCD_PushPixels() closes the transfer (deasserts CS) every time
- * it's called, so a loop of plain LCD_PushPixels() calls only actually
- * writes the FIRST row to the panel - every later call sends its bytes
- * with CS already closed, so the panel ignores them. */
+/* Fills the LCD with one solid color at startup, to clear old GRAM
+ * content. Must use LCD_PushPixelsOpen()/LCD_EndWindow() in a loop, not
+ * repeated LCD_PushPixels() calls - that closes the transfer (CS high)
+ * every time, so only the first row would actually reach the panel. */
 static void DEMO_ClearScreen(uint16_t color) {
   static uint16_t s_clearLine[DEMO_PANEL_WIDTH];
   for (uint16_t i = 0U; i < DEMO_PANEL_WIDTH; i++) {
@@ -104,13 +80,8 @@ static void DEMO_ClearScreen(uint16_t color) {
 }
 
 #if !DEMO_LCD_CAMERA_PREVIEW
-/*
- * Cheap "is the camera actually sending real image data" signature:
- * min/max/average over a strided pixel sample. A dead/disconnected sensor
- * tends to produce a flat buffer (min==max, constant avg); a live one
- * doesn't. Unused in the raw camera-preview build (main() pushes the
- * frame straight to the LCD there, no need for a numeric signature).
- */
+/* Cheap "is the camera sending real data" check: min/max/avg over a
+ * strided sample. A dead/disconnected sensor reads flat (min==max). */
 static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
                                              const uint16_t *frame) {
   const uint32_t pixelCount = (uint32_t)DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT;
@@ -142,27 +113,18 @@ static void CAMERA_CAPTURE_LogFrameSignature(uint32_t frameNumber,
 
 #if !DEMO_USB_STREAM_DISABLE && !DEMO_LCD_CAMERA_PREVIEW
 /* Everything below, down to DEMO_CaptureFramesAtMidVoltage(), only exists
- * for the abandoned USB-streaming path - see the file-level comment above.
- *
- * Camera runs at Mid voltage - capture this many frames before stopping
- * SmartDMA and switching to Overdrive/USB. More than 1 so auto-exposure/
- * auto-gain have a few frames to converge (frame #1 tends to come back
- * flat/underexposed).
- */
+ * for the abandoned USB-streaming path. */
+
+/* Frames to capture at Mid voltage before switching to Overdrive/USB -
+ * more than 1 so auto-exposure/gain can converge. */
 #define DEMO_MID_VOLTAGE_WARMUP_FRAMES 10U
 
-/*
- * PERIODIC REFRESH: how long to stay at Overdrive/streaming before
- * dropping back to Mid to grab a fresh frame. Confirmed stable at 5000 ms
- * on real hardware (see WORKLOG.md). Keep this comfortably longer than
- * DEMO_MID_VOLTAGE_WARMUP_FRAMES takes to capture plus USB enumeration
- * overhead, or USB barely gets a turn.
- */
+/* How long to stay at Overdrive/streaming before dropping back to Mid for
+ * a fresh frame. Confirmed stable at 5000ms on real hardware. */
 #define DEMO_OVERDRIVE_HOLD_MS 5000U
 
-/* Capture (or re-capture) DEMO_MID_VOLTAGE_WARMUP_FRAMES frames at Mid
- * voltage, log the last one, then stop SmartDMA. Caller must already be at
- * DCDC Mid before calling this. */
+/* Capture DEMO_MID_VOLTAGE_WARMUP_FRAMES frames at Mid voltage, log the
+ * last one, then stop SmartDMA. Caller must already be at DCDC Mid. */
 static void DEMO_CaptureFramesAtMidVoltage(void) {
   uint16_t *frame = NULL;
   uint32_t frameNumber = 0U;
@@ -189,38 +151,17 @@ int main(void) {
   PRINTF("Camera: OV7670 on J9 SmartDMA/Camera header\r\n");
 
 #if DEMO_LCD_CAMERA_PREVIEW
-  /* Lens-focus diagnostic build (-DLCD_CAMERA_PREVIEW=ON): no AI, no
-   * status text - just the raw camera feed pushed straight to the LCD as
-   * fast as frames arrive, so the image can be focused by eye. Camera
-   * resolution (app.h) matches the panel 1:1, so no scaling needed.
+  /* Lens-focus diagnostic (-DLCD_CAMERA_PREVIEW=ON): no AI, no status
+   * text - raw camera feed pushed straight to the LCD as fast as frames
+   * arrive, for focusing by eye. Camera resolution matches the panel 1:1.
    *
-   * TEARING FIX (2026-09-04, see WORKLOG.md): this loop used to leave
-   * SmartDMA free-running the whole time (comment here used to say "never
-   * has to stop/restart"), reading `CAMERA_CAPTURE_GetFrameBuffer()`
-   * directly while `LCD_DrawImage()` pushed it out over SPI/eDMA - single
-   * shared frame buffer, no synchronization beyond the one-shot
-   * `s_frameReady` flag. That was fine while the camera was slower than
-   * the ~57ms LCD push (its real rate was ~7.3fps/~137ms before the XCLK
-   * fix), but the camera-clock fix made SmartDMA genuinely deliver
-   * ~30fps/~33ms - FASTER than the LCD push - so it could (and, per a
-   * user-captured video, actually did) overwrite the buffer with a new
-   * frame mid-push, producing a visible horizontal tear where the top of
-   * the screen shows an older frame and the bottom shows a newer one.
-   * Fixed the same way the AI build's loop below already handles the
-   * exact same class of problem (there, a different reason: RAM
-   * collision with SmartDMA's own firmware, see "Bug #3" in WORKLOG.md) -
-   * stop SmartDMA before reading the buffer, restart it after, discard
-   * the first frame after each restart (SmartDMA needs one cycle to
-   * resync with the sensor's HREF/VSYNC/PCLK timing after a fresh
-   * `CAMERA_CAPTURE_Reinit()` - same proven fix as the AI loop's
-   * `skipNextFrame`). Real, two-full-frame-buffer double-buffering was
-   * considered instead - not RAM-feasible here: a second 320x240 RGB565
-   * buffer is 153,600 bytes, more than this build's entire free `m_data`
-   * headroom (137KB) and bigger than `m_sramx` (96KB) on its own, so it
-   * can't be split across the two non-contiguous banks either. This
-   * costs some fps (SmartDMA's re-init has a real cost, and every other
-   * frame is now discarded) in exchange for a tear-free image - measure
-   * the real fps hit below rather than assume it. */
+   * TEARING FIX (see WORKLOG.md): once the camera clock was fixed to run
+   * at its real ~30fps, it became faster than the ~57ms LCD push and
+   * could overwrite the frame buffer mid-push, tearing the image. Fixed
+   * like the AI loop below: stop SmartDMA before reading the buffer,
+   * restart after, discard the first frame post-restart (SmartDMA needs
+   * one cycle to resync with the sensor). Real double-buffering isn't
+   * RAM-feasible here (a second frame buffer doesn't fit in either bank). */
   PRINTF("Display: raw camera preview on LCD, no AI (LCD_CAMERA_PREVIEW=ON) "
          "- for focusing the lens\r\n\r\n");
 
@@ -228,32 +169,19 @@ int main(void) {
   LCD_Init();
   DEMO_ClearScreen(0x0000U);
 
-  /* DWT cycle counter, same technique AI_MODEL_RunInference()/snapshot.c's
-   * write-timing logs already use elsewhere in this project - not enabled
-   * by anything else in this build config (AI_MODEL_Init()/SNAPSHOT_Init()
-   * are both skipped here, see the file-level comment above), so enable it
-   * directly. Reports an actual measured LCD frame rate once/sec, to
-   * quantify the fps-optimization work in source/display/lcd_spi_hw.c
-   * (pixel-push batching, faster shared SPI clock - see WORKLOG.md's
-   * 2026-09-04 entry) instead of eyeballing it. */
+  /* DWT cycle counter for a measured fps readout once/sec. */
   CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
   DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
   uint32_t fpsFrameCount = 0U;
   uint32_t fpsWindowStartCycle = DWT->CYCCNT;
 
-  /* TEMPORARY DIAGNOSTIC (2026-09-04, see WORKLOG.md): after fixing the
-   * eDMA hang, LCD_DrawImage() itself measured ~57ms/frame (near the
-   * ~51ms bit-clock floor) but overall fps stayed at 8 (~125ms/frame) -
-   * meaning ~68ms/frame is being spent OUTSIDE the LCD push, most likely
-   * waiting for CAMERA_CAPTURE_IsFrameReady(). Measuring that wait time
-   * directly instead of guessing. */
+  /* Also tracks time spent waiting for the next frame, to see how much of
+   * the frame period is the LCD push vs. waiting on the camera. */
   uint32_t diagWaitCycles = 0U;
   uint32_t diagWaitStartCycle = DWT->CYCCNT;
 
-  /* Set right after CAMERA_CAPTURE_Reinit() below, cleared once the
-   * following frame has been consumed - same SmartDMA-resync workaround
-   * as the AI loop's own `skipNextFrame` further down this file (see that
-   * one's comment for the full explanation). */
+  /* Set right after CAMERA_CAPTURE_Reinit(), cleared once the next frame
+   * is consumed - see the tearing-fix comment above. */
   bool skipNextFrame = false;
 
   while (1) {
@@ -267,8 +195,8 @@ int main(void) {
         continue;
       }
 
-      /* Stop SmartDMA before reading the frame buffer, restart it after -
-       * see the file-level comment above for why (tearing fix). */
+      /* Stop SmartDMA before reading the frame buffer, restart after -
+       * tearing fix, see above. */
       CAMERA_CAPTURE_Deinit();
       LCD_DrawImage(0U, 0U, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                     CAMERA_CAPTURE_GetFrameBuffer());
@@ -278,8 +206,7 @@ int main(void) {
       fpsFrameCount++;
       diagWaitStartCycle = DWT->CYCCNT;
 
-      /* (int32_t) cast makes this wrap-safe across DWT->CYCCNT rollover,
-       * same idiom sd_spi_disk.c's init deadline check uses. */
+      /* (int32_t) cast makes this wrap-safe across DWT->CYCCNT rollover. */
       if ((int32_t)(DWT->CYCCNT - fpsWindowStartCycle) >= (int32_t)SystemCoreClock) {
         PRINTF("LCD preview: %u fps (wait-for-frame=%uus/frame avg)\r\n",
                fpsFrameCount,
@@ -309,67 +236,29 @@ int main(void) {
 
 #if DEMO_USB_STREAM_DISABLE
   /* Default build: camera + AI loop, continuous, DCDC stays at Mid the
-   * whole time. LCD shows 3 fixed text status lines - see the file-level
+   * whole time. LCD shows fixed text status lines - see file-level
    * comment above. */
   LCD_Init();
   DEMO_ClearScreen(0x0000U);
 
   /* SD card snapshot-on-face-detection - see source/storage/snapshot.c.
-   * Safe to call even with no card present (SNAPSHOT_OnFrame() then just
-   * no-ops every frame instead of retrying). */
+   * Safe to call with no card present (SNAPSHOT_OnFrame() just no-ops). */
   SNAPSHOT_Init();
 
 #if !DEMO_AI_MODEL_USE_NPU
-  /* Dedicated AI scratch pool - overflow area for ei_sramx_alloc.c's
-   * allocator, used once the primary 96KB m_sramx pool is exhausted.
-   * IMPORTANT (learned the hard way, see WORKLOG.md's top entry): the
-   * tensor arena is allocated as ONE single ei_calloc() call, and
-   * ei_sramx_alloc.c's two-tier allocator can only satisfy a single
-   * allocation that fits ENTIRELY within one tier - it cannot split one
-   * allocation across primary (m_sramx) + this overflow pool (m_data),
-   * since those are physically non-contiguous memory banks (0x04000000
-   * vs 0x20000000) that a single C pointer can't span. So this pool
-   * alone, not "primary + this combined", must be >= whatever
-   * EI_CLASSIFIER_TFLITE_LARGEST_ARENA_SIZE is (currently 112,460 bytes,
-   * this project's deploy-version-2 face model, 72x72 input - the
-   * deploy-version-1 96x96 model needed 185,036 bytes here, which
-   * didn't fit *at all* no matter how this pool was sized, since
-   * 185,036 + the 153,600-byte camera frame buffer alone exceeds
-   * m_data's entire 312KB stock capacity - that model had to be
-   * retrained smaller, not worked around in firmware). 120KB leaves
-   * ~10KB of margin over the current model's bare 112,460-byte
-   * requirement for the DSP resize step's small per-page scratch
-   * buffers - if AllocateTensors()/ei_calloc() still fails at runtime
-   * (see EI_SRAMX_GetHighWaterMark() in model_runner.cpp's error path),
-   * there's ~43KB of further headroom free in m_data to grow this
-   * (153,600 + 122,880 = 276,480 of 319,488 bytes stock m_data - see the
-   * comment on kTensorArenaSize in model_runner_npu.cpp for the matching
-   * NPU-side budget math). Only declared for the CPU/CMSIS-NN build -
-   * the NPU build (model_runner_npu.cpp) never calls into
-   * ei_sramx_alloc.c, so this would just be dead weight competing with
-   * that build's own static tensor arena in the same m_data budget. */
+  /* CPU-path scratch pool - overflow area for ei_sramx_alloc.c once the
+   * primary 96KB m_sramx pool is exhausted. Must alone be big enough for
+   * the whole tensor arena (currently 112,460 bytes): a single allocation
+   * can't span m_sramx and m_data, they're non-contiguous banks. Only
+   * used by the CPU/CMSIS-NN build - the NPU build has its own static
+   * arena instead. See model_runner_npu.cpp for the matching NPU budget. */
   static uint8_t s_aiScratchPool[120U * 1024U] __attribute__((aligned(16)));
   EI_SRAMX_SetOverflowPool(s_aiScratchPool, sizeof(s_aiScratchPool));
 #endif /* !DEMO_AI_MODEL_USE_NPU */
 
-  /* Set right after CAMERA_CAPTURE_Reinit() below, cleared once the
-   * following frame has been consumed. DIAGNOSTIC (2026-08-25): every
-   * frame logged by CAMERA_CAPTURE_LogFrameSignature() in this loop was
-   * observed reading back as completely flat (min==max==avg==0x0000)
-   * on real hardware, every time, even confirmed after a genuine power
-   * cycle (not just a probe-triggered reset) - but the exact same
-   * Deinit()/inference/Reinit() cycle at a similarly fast cadence was
-   * confirmed working (real, varying pixel data) with the project's
-   * earlier 3-class model, and camera_capture.c itself is byte-identical
-   * to that working version. Working theory being tested here: SmartDMA
-   * needs the frame immediately following a fresh CAMERA_CAPTURE_Reinit()
-   * to fully (re-)synchronize with the OV7670's HREF/VSYNC/PCLK timing,
-   * and that very first post-reinit frame isn't trustworthy - discard it
-   * and use the *second* frame after each reinit instead. If this fixes
-   * it, the frame rate this loop can consume is effectively halved (two
-   * real camera frames spent per inference cycle instead of one) - if it
-   * does NOT fix it, this diagnostic comment/flag should be removed and
-   * the investigation continued elsewhere (see WORKLOG.md). */
+  /* Set right after CAMERA_CAPTURE_Reinit(), cleared once the next frame
+   * is consumed - SmartDMA needs one cycle to resync with the sensor
+   * after a fresh Reinit(), so the very next frame isn't trustworthy. */
   bool skipNextFrame = false;
 
   while (1) {
@@ -389,27 +278,19 @@ int main(void) {
         CAMERA_CAPTURE_LogFrameSignature(frameNumber, frame);
       }
 
-      /* Stop SmartDMA before inference: SMARTDMA_CAMERA_MEM_ADDR (the
-       * coprocessor's own firmware/working RAM) is 0x04000000 - the same
-       * physical bank as m_sramx, which is where the AI tensor arena
-       * lives (ei_sramx_alloc.c's s_pool). Leaving SmartDMA running while
-       * the arena writes into that bank corrupts its firmware/state; it
-       * doesn't fault, it just silently stops delivering frame-ready
-       * interrupts after a few frames (see WORKLOG.md "Bug #3"). Mirrors
-       * the same capture/deinit/inference/reinit pattern already used by
-       * the USB-streaming build below (DEMO_CaptureFramesAtMidVoltage()) -
-       * capture and heavy compute already can't overlap on this chip. */
+      /* Stop SmartDMA before inference: SmartDMA's own working RAM
+       * (0x04000000) is the same bank as the AI tensor arena - leaving it
+       * running while the arena is used corrupts SmartDMA's state (see
+       * WORKLOG.md). */
       CAMERA_CAPTURE_Deinit();
 
       ai_model_result_t aiResult;
       AI_MODEL_RunInference(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                             &aiResult);
 
-      /* Still before CAMERA_CAPTURE_Reinit(): draws into + reads `frame`
-       * directly (no extra copy, see snapshot.h), so it must run while
-       * SmartDMA is stopped and the buffer is guaranteed stable, same
-       * reasoning as AI_MODEL_RunInference() just above. Internally rate-
-       * limited to at most 1 capture/sec - a no-op most frames. */
+      /* Still before Reinit(): draws into/reads `frame` directly, so must
+       * run while the buffer is stable. Internally rate-limited to at
+       * most 1 capture/sec - a no-op most frames. */
       SNAPSHOT_OnFrame(frame, DEMO_BUFFER_WIDTH, DEMO_BUFFER_HEIGHT,
                        &aiResult, AI_MODEL_GetInputWidth(), AI_MODEL_GetInputHeight());
 
@@ -431,23 +312,18 @@ int main(void) {
         }
       }
 
-      /* Text draw doesn't touch the camera frame buffer at all, so unlike
-       * the earlier live-image display it has no ordering dependency on
-       * CAMERA_CAPTURE_Deinit()/Reinit() above. */
       DEMO_DrawStatusLine(0U, "FACE      ", sawFace);
 
-      /* On-screen "a snapshot was just saved" notice - stays lit for the
-       * same ~1s window SNAPSHOT_OnFrame() enforces between captures (see
-       * snapshot.h), so it clears itself right as a new capture becomes
-       * possible again rather than needing its own timer here. */
+      /* Stays lit for the same window SNAPSHOT_OnFrame() rate-limits
+       * captures to, so it clears itself as a new capture becomes
+       * possible again. */
       DEMO_DrawStatusLine(1U, "CAPTURE   ", SNAPSHOT_IsNoticeActive());
     }
   }
 #else
-  /* USB streaming build: time-multiplexed (see the file-level comment
-   * above). Mid-voltage capture phase first - wait for a few settled
-   * frames, then stop SmartDMA (capture and USB HS can't run at the same
-   * time on this chip). */
+  /* USB streaming build: time-multiplexed. Mid-voltage capture first -
+   * wait for settled frames, then stop SmartDMA (capture and USB HS can't
+   * run at the same time on this chip). */
   DEMO_CaptureFramesAtMidVoltage();
   PRINTF("Camera: switching to Overdrive for USB.\r\n");
 
@@ -465,16 +341,15 @@ int main(void) {
     }
   }
 
-  /* USB_DeviceClockInit() (full PHY/PLL bring-up + enumeration) runs
-   * exactly ONCE here. The periodic refresh loop below only calls the
-   * lighter regulator-level helpers afterwards - see hardware_init.c. */
+  /* Full PHY/PLL bring-up + enumeration runs exactly ONCE here - the
+   * periodic refresh loop below only calls the lighter regulator helpers. */
   USB_DeviceClockInit();
   USB_VideoCamera_Init();
 
   while (1) {
     USB_VideoCamera_Task();
 
-    /* PERIODIC REFRESH - see the DEMO_OVERDRIVE_HOLD_MS comment above. */
+    /* PERIODIC REFRESH - see DEMO_OVERDRIVE_HOLD_MS above. */
     SDK_DelayAtLeastUs(DEMO_OVERDRIVE_HOLD_MS * 1000U,
                        SDK_DEVICE_MAXIMUM_CPU_CLOCK_FREQUENCY);
 

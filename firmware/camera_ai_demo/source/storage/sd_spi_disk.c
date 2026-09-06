@@ -4,47 +4,25 @@
  * Two things live in this one file, same as the SDK's own (DSPI-based,
  * unusable on this chip - see sd_spi_disk.h) reference glue:
  *  1. An sdspi_host_t implementation (SDCARD_SPI_*) driving LPSPI1 in
- *     hardware - init/setFrequency/exchange/csActivePolarity, the 4
- *     callbacks middleware/sdmmc/sdspi/fsl_sdspi.c needs to talk SD-over-
- *     SPI without knowing which SPI peripheral is underneath.
- *  2. The 5 diskio.h functions (disk_initialize/status/read/write/ioctl)
- *     ff.c calls directly - single hardcoded physical drive 0 (this
- *     project only ever has the one card, see ffconf.h's FF_VOLUMES=1),
- *     no multi-backend dispatch needed.
+ *     hardware - the 4 callbacks fsl_sdspi.c needs to talk SD-over-SPI
+ *     without knowing which SPI peripheral is underneath.
+ *  2. The 5 diskio.h functions ff.c calls directly - single hardcoded
+ *     physical drive 0 (this project only ever has one card).
  *
- * LPSPI1 is now a SHARED bus (see ../spi1_bus.h): the LCD
- * (source/display/lcd_spi_hw.c) and touch controller
- * (source/display/touch_xpt2046.c) ride the same SCK/MOSI/MISO pins with
- * their own manual GPIO chip-selects. The SD card is the only device that
- * still uses the peripheral's real hardware PCS0 (P0_27/D10) - SDSPI_Init()
- * needs to flip its active-polarity at runtime via
- * SDCARD_SPI_CsActivePolarity() (temporarily active-high) to emit the SD
- * card's power-up sequence with CS deasserted, then every real command
- * uses kLPSPI_MasterPcsContinuous so CS stays asserted across the whole
- * multi-exchange() command/response/data sequence, not just one exchange()
- * call - exactly the same pattern NXP's own DSPI reference glue uses; that
- * runtime-polarity trick only works through real PCS hardware, which is
- * why the SD card (unlike the LCD/touch) couldn't move to a plain GPIO CS.
- * Because the bus is shared, disk_read()/disk_write() below explicitly
- * reclaim the SD card's operating baud rate before every FatFs-triggered
- * transfer - the LCD or touch driver may have left the bus at a different
- * rate since the last SD access. SDSPI_Init() itself doesn't need this: it
- * already re-asserts the 400kHz identification speed unconditionally at
- * its own start (middleware/sdmmc/sdspi/fsl_sdspi.c), regardless of
- * whatever the bus was left at.
+ * LPSPI1 is a shared bus (see ../spi1_bus.h) - the SD card is the only
+ * device still using the peripheral's real hardware PCS0 (D10), since
+ * SDSPI_Init() needs to flip CS polarity at runtime for the card's
+ * power-up sequence, which only works through real PCS hardware (the
+ * LCD/touch use plain GPIO CS instead). disk_read()/disk_write() reclaim
+ * the SD card's baud rate before every transfer since the LCD/touch
+ * driver may have left the bus at a different rate.
  *
- * CONFIRMED on real hardware (2026-08-25, live SWD register inspection -
- * see WORKLOG.md): if the card/wiring is bad in a way that makes every SPI
- * response byte come back wrong (not a genuine "card busy" response),
- * SDSPI_Init() can take a *practically* unbounded amount of time even
- * though every individual wait inside middleware/sdmmc/sdspi/fsl_sdspi.c
- * is technically bounded (SDSPI_TRANSFER_RETRY_TIMES=20000, hardcoded,
- * not overridable via macro) - those bounded waits are nested up to 2-3
- * levels deep in some SDSPI_Init() call paths, so worst case multiplies
- * out to minutes-to-hours, not seconds. SDCARD_SPI_Exchange() below
- * enforces its own short wall-clock deadline across the whole init
- * attempt (not per-transfer) so a bad card fails fast regardless of what
- * fsl_sdspi.c's own retry math would otherwise allow.
+ * Confirmed on real hardware: if the card/wiring is bad enough that every
+ * SPI response byte comes back wrong, SDSPI_Init()'s own nested retry
+ * loops can multiply out to minutes, even though each one is individually
+ * bounded. SDCARD_SPI_Exchange() below enforces its own short wall-clock
+ * deadline across the whole init attempt so a bad card fails fast
+ * regardless (see WORKLOG.md).
  */
 
 #include "sd_spi_disk.h"
@@ -56,29 +34,22 @@
 #include "fsl_sdspi.h"
 #include "spi1_bus.h"
 
-/* Only needed directly in this file for SDCARD_SPI_CsActivePolarity()'s
+/* Only needed here for SDCARD_SPI_CsActivePolarity()'s
  * LPSPI_SetAllPcsPolarity() call - everything else routes through
- * spi1_bus.h now (init/baud-rate/transfers), since those are shared with
- * the LCD/touch controller. Polarity is SD-only (real hardware PCS0), so
- * it isn't part of the shared-bus wrapper. */
+ * spi1_bus.h, shared with the LCD/touch controller. */
 #define SD_SPI_BASEADDR LPSPI1
 
-/* Operating-speed cap for host->busBaudRate below, NOT the mandatory
- * 400kHz card-identification speed (SDMMC_CLOCK_400KHZ, set separately
- * inside SDSPI_Init() itself before this ever applies). fsl_sdspi.c's
- * SDSPI_Init() speeds up to min(SD_CLOCK_25MHZ, host->busBaudRate) right
- * after reading the card's CSD register - CONFIRMED on real hardware
- * (2026-08-25, see WORKLOG.md) that leaving busBaudRate at 400000 (a
- * copy-paste leftover from the identification-phase value) pins every
- * later transfer at 400kHz forever: a 150KB snapshot BMP measured
- * ~3.3 SECONDS to write. 8MHz is a conservative middle ground given this
- * exact card/shield/wiring combination needed a pull-up fix to work at
- * all (see BOARD_InitSdCardPins() in pin_mux.c) - not pushed to the
- * driver's 25MHz ceiling without first confirming that's stable here too. */
+/* Operating-speed cap, not the mandatory 400kHz identification speed
+ * (set separately inside SDSPI_Init() itself). Confirmed on real
+ * hardware that leaving this at the identification-phase value pins
+ * every transfer at 400kHz forever (a 150KB BMP took ~3.3s to write).
+ * 8MHz is a conservative middle ground given this card/shield needed a
+ * pull-up fix to work at all - not pushed to the driver's 25MHz ceiling
+ * without confirming that's stable too. */
 #define SD_SPI_OPERATING_BAUDRATE 8000000U
 
-/* Real SD-over-SPI init normally completes in well under 1 second even on
- * slow cards - 2 seconds is generous headroom, not a tight budget. */
+/* Real SD-over-SPI init normally completes in well under 1 second - 2
+ * seconds is generous headroom, not a tight budget. */
 #define SD_SPI_INIT_TIMEOUT_MS 2000U
 
 static sdspi_host_t s_host;
@@ -96,18 +67,14 @@ static bool s_initInProgress;
 
 static void SDCARD_SPI_Init(void)
 {
-    /* Brings up LPSPI1 once (idempotent - a no-op if the LCD or touch
-     * driver already did this, whichever runs first). Baseline config
-     * (8 bits/frame, mode 0, MSB first) already matches what SD-over-SPI
-     * needs; SDSPI_Init() immediately calls setFrequency() anyway, so the
-     * shared module's own baseline baud rate doesn't matter here. */
+    /* Idempotent - a no-op if the LCD or touch driver already brought up
+     * the bus. SDSPI_Init() immediately calls setFrequency() anyway, so
+     * the shared module's own baseline baud rate doesn't matter here. */
     SPI1_BUS_Init();
 
-    /* DWT is already enabled by AI_MODEL_Init() (see model_runner*.cpp),
-     * which always runs before SNAPSHOT_Init() in main.c - but enable it
-     * defensively here too so this file doesn't silently depend on that
-     * ordering. Doesn't reset DWT->CYCCNT (that would disturb the AI
-     * timing code's own measurements), just makes sure it's running. */
+    /* DWT is already enabled elsewhere (AI_MODEL_Init()), but enable it
+     * defensively here too so this file doesn't depend on that ordering -
+     * doesn't reset CYCCNT, just ensures it's running. */
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
 
@@ -122,23 +89,14 @@ static status_t SDCARD_SPI_SetFrequency(uint32_t frequency)
 
 static status_t SDCARD_SPI_Exchange(uint8_t *in, uint8_t *out, uint32_t size)
 {
-    /* See the file-level comment: fsl_sdspi.c calls exchange() many times
-     * per SDSPI_Init() attempt, and every one of its own retry loops
-     * bails out immediately the moment exchange() itself reports failure
-     * (never mind why) - so failing fast here, once, is what actually
-     * bounds the whole init attempt to SD_SPI_INIT_TIMEOUT_MS, regardless
-     * of how deep or how large fsl_sdspi.c's own internal retry counts
-     * are. (int32_t) cast makes the comparison wrap-safe the same way the
-     * DWT-based rate limit in snapshot.c is.
-     *
-     * BUG FOUND on real hardware (2026-08-25, see WORKLOG.md): this check
-     * used to run unconditionally, not just gated by s_initInProgress -
-     * exchange() is also called later by SDSPI_ReadBlocks()/WriteBlocks()
-     * during normal file I/O, long after the boot-time init's deadline
-     * had already passed, so the very first real read/write after boot
-     * always failed instantly ("no valid response") even on a perfectly
-     * healthy, already-mounted card. Gating on s_initInProgress confines
-     * this deadline to disk_initialize()'s own SDSPI_Init() call only. */
+    /* fsl_sdspi.c's own retry loops bail out the moment exchange() itself
+     * reports failure, so failing fast here once bounds the whole init
+     * attempt to SD_SPI_INIT_TIMEOUT_MS regardless of how deep its
+     * internal retries are. Gated on s_initInProgress - this check used
+     * to run unconditionally, which made the very first real read/write
+     * after boot fail instantly even on a healthy card, since exchange()
+     * is also called during normal file I/O long after the init deadline
+     * had passed (confirmed on real hardware - see WORKLOG.md). */
     if (s_initInProgress &&
         (s_initTimedOut || ((int32_t)(DWT->CYCCNT - s_initDeadlineCycle) >= 0)))
     {
@@ -187,23 +145,14 @@ DSTATUS disk_initialize(BYTE pdrv)
     s_host.csActivePolarity = SDCARD_SPI_CsActivePolarity;
     s_card.host             = &s_host;
 
-    /* Dual-core RTOS build only - tight lock around just this one call,
-     * NOT the whole SNAPSHOT_Init()/SNAPSHOT_OnFrame() sequence (see
-     * spi1_bus.h's SPI1_BUS_Lock() comment, WORKLOG.md Stage 4 follow-up):
-     * confirmed on real hardware that wrapping a wider scope (either from
-     * the caller, or via a recursive mutex allowing nested locks at both
-     * levels) makes SD card mount fail consistently and reproducibly at
-     * the card's own ACMD41 handshake - survived a real power cycle, so
-     * not a stuck-card issue, but root cause not otherwise pinned down.
-     * MUST be the plain mutex, not SPI1_BUS_LockNoPreempt() - tried that
-     * too in the Stage 5 follow-up (WORKLOG.md) on the theory that it
-     * might also fix a separate SD write-corruption bug, and it broke
-     * mount again (same "SD card init timed out" symptom, confirmed via a
-     * real A/B test: reverting just this one call from LockNoPreempt()
-     * back to Lock() restored mount immediately, nothing else changed).
-     * Root cause of exactly why still not pinned down - same as the
-     * original finding above - but confirmed and reproducible, so left
-     * alone rather than guessed at further. */
+    /* Dual-core build only - tight lock around just this one call, not
+     * the whole SNAPSHOT_Init()/OnFrame() sequence, and must be the plain
+     * mutex, not SPI1_BUS_LockNoPreempt(): both a wider lock scope and
+     * the no-preempt variant were each confirmed on real hardware to
+     * break SD mount (ACMD41 handshake failure) for reasons not fully
+     * pinned down - reverting to this exact narrow scope reliably fixes
+     * it (see WORKLOG.md). Don't retry either alternative without new
+     * evidence. */
     s_initInProgress = true;
 #ifdef DUALCORE_RTOS
     SPI1_BUS_Lock();
@@ -231,11 +180,10 @@ DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count)
     {
         return RES_PARERR;
     }
-    /* Reclaim the SD card's operating baud rate before this file-I/O
-     * transfer - the LCD or touch driver may have used (and left at a
-     * different rate) the shared bus since the last SD access. Unlike
-     * disk_initialize()'s SDSPI_Init(), plain reads/writes never call
-     * setFrequency() again on their own - see the file-header comment. */
+    /* Reclaim the SD card's baud rate - the LCD/touch driver may have
+     * left the shared bus at a different rate since the last SD access;
+     * unlike disk_initialize(), plain reads/writes don't call
+     * setFrequency() again on their own. */
 #ifdef DUALCORE_RTOS
     SPI1_BUS_Lock(); /* See disk_initialize()'s comment above. */
 #endif

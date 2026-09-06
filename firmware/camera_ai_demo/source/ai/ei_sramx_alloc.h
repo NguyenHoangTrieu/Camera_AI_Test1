@@ -16,16 +16,12 @@ void EI_SRAMX_PoolReset(void);
 
 /*!
  * @brief Lend a second, temporarily-idle buffer to the allocator as
- * overflow space once the m_sramx pool (96KB, see board_port/ei_sramx.ld)
- * is exhausted.
+ * overflow space once the m_sramx pool (96KB) is exhausted.
  *
- * main.c uses this to lend s_lcdSnapshot's memory (153,600 bytes) during
- * the AI_MODEL_RunInference() call - safe ONLY because main.c copies the
- * live camera frame into s_lcdSnapshot *after* inference finishes, not
- * before, so nothing depends on that buffer's contents while inference
- * (and thus this allocator) is running. Do not reorder that copy back to
- * before AI_MODEL_RunInference() without also removing this call, or
- * ei_run_classifier() will corrupt whatever the overflow buffer holds.
+ * main.c lends s_lcdSnapshot's memory during AI_MODEL_RunInference() -
+ * safe only because that buffer is filled *after* inference finishes, not
+ * before. Don't reorder that copy earlier without removing this call, or
+ * ei_run_classifier() will corrupt it.
  *
  * @param ptr  Start of the buffer to lend.
  * @param size Size of the buffer, in bytes.

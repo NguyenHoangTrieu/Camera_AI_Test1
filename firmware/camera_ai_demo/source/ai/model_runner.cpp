@@ -1,56 +1,31 @@
 /*
  * model_runner.cpp - Edge Impulse integration.
  *
- * Wraps the exported "Face_Detection_NXP" impulse (FOMO, 96x96 input,
- * single class `face`) behind the plain-C API in model_runner.h so
- * main.c doesn't need to touch the Edge Impulse SDK directly. Every
- * dimension/label below comes from EI_CLASSIFIER_* macros in
- * edge_impulse/model-parameters/model_metadata.h, generated from
- * whichever impulse was last exported into source/ai/edge_impulse/ - this
- * file itself is model-agnostic and needed no changes when the model
- * changed (was the 3-class "Test_Drowsy_NXP" FOMO, 64x64 input).
+ * Wraps the exported FOMO impulse behind the plain-C API in
+ * model_runner.h so main.c doesn't touch the Edge Impulse SDK directly.
+ * Dimensions/labels come from EI_CLASSIFIER_* macros in
+ * edge_impulse/model-parameters/model_metadata.h - this file is
+ * model-agnostic.
  *
- * signal.total_length MUST be the MODEL's input pixel count
- * (EI_CLASSIFIER_INPUT_WIDTH*HEIGHT, 9216 for this model) - NOT the
- * camera's raw frame size (320x240=76800, what an earlier version of this
- * file wrongly used).
- * extract_image_features()/_quantized() (edge-impulse-sdk/classifier/
- * ei_run_dsp.h) do NOT resize - they read exactly signal->total_length
- * elements via get_data() and write that many pixels straight into
- * output_matrix, which the caller sized for EI_CLASSIFIER_INPUT_WIDTH*
- * HEIGHT. Passing the camera's raw length there made that loop write
- * ~230KB (76800*3 channels) into a ~12KB buffer - a massive overflow that
- * silently marched through m_sramx and hit a HardFault only once it
- * finally reached the end of that memory region, which is what took so
- * long to track down (RAM-capacity fixes never helped, because the actual
- * bug was here, in the write volume being wrong by ~19x - not the
- * available space).
- *
- * The resize itself (squash - 320x240 -> 64x64, independent per axis,
- * matching EI_CLASSIFIER_RESIZE_MODE) is therefore this callback's job:
- * for each requested target pixel index, map it back to the nearest
- * source camera pixel. Returned bounding box coordinates are in the
- * model's 64x64 input space, not the camera's - see model_runner.h.
+ * signal.total_length must be the MODEL's input pixel count
+ * (EI_CLASSIFIER_INPUT_WIDTH*HEIGHT), not the camera's raw frame size -
+ * extract_image_features() doesn't resize, it reads exactly that many
+ * elements via get_data(). Passing the wrong (larger) length here once
+ * caused a real buffer overflow that only HardFaulted once it reached the
+ * end of m_sramx (see WORKLOG.md). The resize itself (squash, independent
+ * per axis) is this callback's job: map each target pixel back to the
+ * nearest source camera pixel.
  */
 #include "model_runner.h"
 #include "fsl_debug_console.h"
 #include "fsl_common.h"
 
-/* NOT including ei_run_classifier.h or ei_run_classifier_c.h here - both
- * (transitively, for the latter) pull in dozens of non-inline function
- * bodies defined directly in headers (ei_run_classifier.h, tflite_eon.h,
- * ei_postprocessing*.h, tflite_helper.h, ei_print_results.h...), which are
- * only meant to be included from exactly one translation unit -
- * edge-impulse-sdk/classifier/ei_run_classifier_c.cpp (part of the SDK
- * itself). Including either header here too caused ODR "multiple
- * definition" link errors against that file. ei_classifier_types.h is the
- * lightweight one (just structs/macros, pulls in model_metadata.h +
- * numpy_types.h, no function bodies) - enough for ei::signal_t/
- * ei_impulse_result_t/EI_CLASSIFIER_INPUT_WIDTH etc. The actual
- * ei_run_classifier() entry point is forward-declared by hand below,
- * matching ei_run_classifier_c.h's extern "C" declaration exactly, so it
- * links against the real symbol from ei_run_classifier_c.cpp without
- * re-including its implementation. */
+/* NOT including ei_run_classifier.h/ei_run_classifier_c.h - both pull in
+ * function bodies meant for exactly one translation unit
+ * (ei_run_classifier_c.cpp), causing ODR link errors if included here
+ * too. ei_classifier_types.h is the lightweight, header-only one.
+ * ei_run_classifier() is forward-declared by hand below instead, to link
+ * against the real symbol without re-including its implementation. */
 #include "edge_impulse/edge-impulse-sdk/classifier/ei_classifier_types.h"
 #include "edge_impulse/edge-impulse-sdk/dsp/returntypes.h"
 
@@ -89,13 +64,9 @@ static int get_signal_data(size_t offset, size_t length, float *out_ptr)
     return 0;
 }
 
-/* This SDK's clib porting layer (edge-impulse-sdk/porting/clib/
- * ei_classifier_porting.cpp) hard-codes ei_read_timer_us() to `return 0`
- * (not a weak symbol, so it can't be overridden the way ei_malloc/
- * ei_printf are) - ei_result.timing is therefore always zero on this
- * platform. Timing the whole ei_run_classifier() call by hand instead,
- * using the Cortex-M33's DWT cycle counter (always available, no extra
- * peripheral setup needed beyond enabling trace + the counter itself). */
+/* This SDK's clib porting layer hard-codes ei_read_timer_us() to return
+ * 0 (not overridable), so ei_result.timing is always zero here. Timing
+ * the whole call by hand instead via the DWT cycle counter. */
 static void AI_MODEL_InitTiming(void)
 {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;

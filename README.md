@@ -6,20 +6,14 @@ model per frame, and shows the result as a text status line on a TFT panel.
 On detection, saves a snapshot (with a box drawn around the face) to the
 TFT panel's onboard microSD card, rate-limited to 1 photo/sec.
 
-**Status:** camera + AI + SD snapshot pipeline confirmed working on real
-hardware, last verified `2026-08-25` — but that was against the earlier
-8-bit-parallel LCD shield. The Arduino-header display was since swapped to
-a 2.4" SPI TFT module (`source/display/lcd_spi_hw.c`), sharing one
-hardware SPI bus with the module's onboard microSD slot and XPT2046 touch
-controller (`source/spi1_bus.c`, `source/display/touch_xpt2046.c`).
-**The LCD itself is now confirmed working on real hardware** (`2026-09-04`,
-camera-preview build: correctly oriented image, no visible bus-sharing
-corruption). fps was measured and improved on real hardware — **2fps →
-5fps → 7fps** across two confirmed bug fixes (see Known Limitations /
-WORKLOG.md) — but the ~24fps target is not yet reached, and the next step
-up is meaningfully riskier, so work is paused there pending user input.
-The bus-sharing baud-reclaim logic and touch are still **build-verified
-only, not yet exercised on real hardware** (see Known Limitations).
+**Status:** camera + AI + SD snapshot confirmed working on real hardware
+(single-core build). The display moved from an 8-bit-parallel shield to a
+2.4" SPI TFT module sharing one bus with its microSD slot and XPT2046
+touch controller — confirmed working, currently at **7fps** (target
+~24fps, next step paused pending further work; see Known Limitations).
+Bus-sharing and touch are build-verified only, not yet tested on hardware.
+The dual-core RTOS build (see below) is further along — now showing a
+live image on real hardware too.
 
 ## Overview
 
@@ -102,19 +96,15 @@ which only works through actual PCS hardware. The LCD and touch each use a
 plain GPIO pin for CS instead, toggled manually around every transfer.
 
 **MADCTL (`0x36`) in `lcd_spi_hw.c`'s `LCD_InitPanel()`**: `MV=1`
-(rotation) confirmed correct on real hardware (`2026-09-04`). `BGR` was
-carried over from the previous (parallel) panel and confirmed WRONG on
-this one — showed as a strong blue/cyan color cast over the whole image;
-fixed by clearing the bit (`0x28` → `0x20`). If colors still look off
-after that fix, or the image is mirrored, keep adjusting the `MV`/`MX`/
-`MY`/`BGR` bits there against real hardware (see Known Limitations).
+(rotation) confirmed correct on real hardware. `BGR` was wrong for this
+panel (carried over from the old one) — caused a blue/cyan color cast,
+fixed by clearing it (`0x28` → `0x20`). If colors or orientation still
+look off, adjust `MV`/`MX`/`MY`/`BGR` there.
 
-**Touch (XPT2046) is wired up but not read from anywhere in `main.c`** —
-this face-detection pipeline has no touch UI. `source/display/
-touch_xpt2046.c` provides `TOUCH_Init()`/`TOUCH_IsPressed()`/
-`TOUCH_ReadRaw()` (raw, uncalibrated 12-bit ADC counts) for a future
-feature to build on; X/Y channel mapping is a common-convention guess
-(0x90/0xD0 command bytes), unverified against this specific panel.
+**Touch (XPT2046) is wired up but unused** — no touch UI in this
+pipeline. `touch_xpt2046.c` provides raw, uncalibrated read functions for
+a future feature; X/Y channel mapping is a common-convention guess,
+unverified on this panel.
 
 ## Getting Started
 
@@ -145,7 +135,7 @@ this board, unrelated to firmware correctness — see
 [ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes) for the
 working recipe (`nxpdebugmbox` + specific pyOCD flags).
 
-### Dual-core RTOS build (in progress — see WORKLOG.md)
+### Dual-core RTOS build (see WORKLOG.md)
 
 A separate, opt-in build (`-DDUALCORE_RTOS=ON`, default `OFF`) boots core1
 and splits the app across both cores: core1 runs camera capture + LCD push
@@ -188,30 +178,19 @@ Notes specific to this build:
   `CameraLcdTask` always runs one fixed loop (camera preview + AI overlay
   + rate-limited snapshot together); there is currently no dual-core
   equivalent of the AI-off, preview-only diagnostic build.
-- **Status: Stage 5 of the plan in WORKLOG.md — CONFIRMED SHOWING A LIVE
-  IMAGE on real hardware as of 2026-09-06**, the first time in this
-  project's history the dual-core build has displayed anything. Camera
-  capture, LCD push, the core0 AI round-trip, SD snapshot, and now the
-  actual on-screen image have each been confirmed on real hardware.
-  Still open: LCD tearing under the cross-core IPC interrupt has never
-  been re-checked now that the image is actually visible (every earlier
-  "confirmation" could only check fps/build success), and SD write
-  reliability degrades after the first few snapshots in a session (see
-  WORKLOG.md). Read WORKLOG.md's most recent entries before assuming this
-  build is fully stable, but it is no longer blocked on "nothing shows up
-  at all."
-- **If you ever add a new GPIO pin for core1 to drive (a new sensor CS
-  line, an LED, anything), read this first.** core1 on this chip (MCXN947)
-  has no SAU, so it is permanently Armv8-M Non-Secure — GPIO blocks
-  Non-Secure pin access by default (`PCNS` register, one enable bit per
-  pin, defaults to all-zero/Secure-only after reset). A pin core1 tries to
-  drive without this grant doesn't error or crash — it just silently does
-  nothing, forever, no matter how "correct" the code looks. Grant it from
-  **core0** (the only core with a SAU), before `MCMGR_StartCore()` releases
-  core1 — see `main_core0.c`'s `GPIO0->PCNS`/`GPIO1->PCNS` lines for the
-  pattern, and WORKLOG.md's EIGHTH FOLLOW-UP entry for the full story
-  (months of this project's history were lost chasing this as a "core1
-  hardware reliability" mystery before finding the real cause).
+- **Status: Stage 5, CONFIRMED SHOWING A LIVE IMAGE on real hardware
+  (2026-09-06)** — camera, LCD push, the core0 AI round-trip, SD
+  snapshot, and the on-screen image are all confirmed working. Still
+  open: LCD tearing under the cross-core IPC interrupt hasn't been
+  re-checked now that the image is visible, and SD write reliability
+  degrades after the first few snapshots in a session. See WORKLOG.md's
+  latest entries before assuming full stability.
+- **Adding a new GPIO pin for core1 to drive? Read this first.** core1
+  has no SAU, so it's permanently Non-Secure — GPIO blocks Non-Secure pin
+  access per-pin by default (`PCNS` register). An ungranted pin doesn't
+  error, it just silently does nothing. Grant it from **core0** before
+  `MCMGR_StartCore()` — see `main_core0.c`'s `GPIO0->PCNS`/`GPIO1->PCNS`
+  lines, WORKLOG.md's EIGHTH FOLLOW-UP entry, and KNOWLEDGE.md §9.
 
 ### Expected output on success
 
@@ -266,13 +245,10 @@ combination.
 ./firmware/camera_ai_demo/build.sh build -DAI_MODEL_USE_NPU=OFF -DLCD_CAMERA_PREVIEW=ON
 ```
 
-`build` builds without flashing; `all` (or bare `./build.sh` with no
-arguments) builds then flashes; `rebuild` cleans `build/` first - useful
-when switching flags that change which source files get compiled (e.g.
-`LCD_ARDUINO_HEADER_BITBANG`), since CMake doesn't always notice a
-source-file-list change from a stale cache. Flags stick in `build/`'s
-CMake cache once set, so a later plain `./build.sh build` reuses whatever
-flags were last passed - pass the flags again (or `rebuild`) to be sure.
+`build` builds without flashing; `all` (or bare `./build.sh`) builds then
+flashes; `rebuild` cleans `build/` first - needed when switching flags
+that change which files compile, since flags otherwise stick in the CMake
+cache.
 
 ## AI Model
 
@@ -297,49 +273,33 @@ the NPU conversion and integration actually work.
 
 ## Snapshot on Face Detection
 
-When a face is detected, `source/storage/snapshot.c` draws a green box
-around it (reusing `source/display/bbox_overlay.c`, originally built for
-the abandoned live-image LCD path — see "Abandoned Features") directly
-into the camera frame buffer and saves it as an uncompressed 16-bit BMP
-(`FACE0001.BMP`, `FACE0002.BMP`, ...) to the microSD card — **at most 1
-capture/sec** (`SNAPSHOT_RATE_LIMIT_MS`), enforced via the DWT cycle
-counter, never a second capture within the same one-second window.
-Filenames never overwrite a previous session's snapshots (probes for the
-first free name once per boot).
+On face detection, `snapshot.c` draws a green box (via `bbox_overlay.c`)
+into the frame buffer and saves it as an uncompressed 16-bit BMP
+(`FACE0001.BMP`, ...) to the SD card, rate-limited to 1 capture/sec.
+Filenames never overwrite a previous session's snapshots.
 
-The box drawn in the saved file is the model's raw grid-cell box,
-unscaled/unpadded — small relative to a real face, since FOMO doesn't
-regress an actual bounding box size (see
-[ARCHITECTURE.md §2](ARCHITECTURE.md#2-components)); a 2.5x cosmetic
-expansion was tried and reverted (kept the raw box on purpose).
+The box is the model's raw grid-cell box (small relative to a real face,
+since FOMO doesn't regress an actual box size) - a cosmetic expansion was
+tried and reverted on purpose. See
+[ARCHITECTURE.md §2](ARCHITECTURE.md#2-components).
 
-The LCD gets a second status line, `CAPTURE: 1`/`CAPTURE: 0`, lit for 4s
-after a save (`SNAPSHOT_NOTICE_DURATION_MS`, independent of the 1s rate
-limit — 1s wasn't enough time for a person to notice and react, confirmed
-on real hardware) — the box itself is never drawn on the LCD, only in
-the saved file. No SD card present → logged once at boot, snapshot
-capture silently no-ops every frame after that (rest of the pipeline runs
-normally).
+The LCD shows a `CAPTURE: 1` status line for 4s after each save (the box
+itself is only in the saved file, never drawn on the LCD). No SD card →
+logged once at boot, then snapshot capture silently no-ops every frame
+after.
 
 Every save logs how long the actual SD card write took (DWT cycle
 counter, same technique `AI_MODEL_RunInference` uses):
 ```
 Snapshot: saved FACE0030.BMP (write took 187342us, 187ms)
 ```
-Confirmed on real hardware (2026-08-25) this was originally **~3.3
-seconds/save** — `s_host.busBaudRate` (`source/storage/sd_spi_disk.c`)
-was stuck at the mandatory 400kHz card-identification speed forever,
-never switched up to a real operating speed. Fixed (`SD_SPI_OPERATING_BAUDRATE`,
-now 8MHz) — see [WORKLOG.md](WORKLOG.md) for the full measurement and
-root cause.
+Originally ~3.3s/save - the SD bus was stuck at the 400kHz identification
+speed instead of switching up. Fixed (`SD_SPI_OPERATING_BAUDRATE`, now
+8MHz); see [WORKLOG.md](WORKLOG.md).
 
-Implementation notes: writes the frame buffer to the file directly with a
-single `f_write()` call (top-down BMP row order matches the buffer's own
-layout, RGB565 needs no pixel conversion) — no second full-frame buffer,
-the single biggest lever for keeping this feature's RAM cost low given
-`m_data` is already >90% used (see below). See
-[ARCHITECTURE.md §2](ARCHITECTURE.md#2-components) for the LPSPI1/FatFs
-integration details.
+Writes the frame buffer directly to the file with one `f_write()` call -
+no second full-frame buffer needed, which matters since `m_data` is
+already >90% used. See [ARCHITECTURE.md §2](ARCHITECTURE.md#2-components).
 
 ## Project Structure
 
@@ -380,69 +340,28 @@ Camera_AI_Test1/
   resize → inference → decode) confirmed working end-to-end with real
   non-flat camera data, but detection accuracy is only backed by Edge
   Impulse Studio's validation/test-set metrics so far (see WORKLOG.md).
-- The Arduino-header panel was swapped from an 8-bit-parallel shield to a
-  2.4" SPI TFT module sharing one hardware SPI bus with its onboard
-  microSD slot and XPT2046 touch controller (`source/spi1_bus.c`,
-  `source/display/lcd_spi_hw.c`, `source/display/touch_xpt2046.c`).
-  **The LCD path itself is now confirmed on real hardware** (`2026-09-04`,
-  camera-preview build): correct orientation, no visible corruption. One
-  real bug was found this way and fixed — MADCTL's `BGR` bit (carried over
-  from the previous panel) was wrong, causing a blue/cyan color cast;
-  cleared to `0x20`, not yet re-confirmed after the fix (no hardware
-  access at the time). Two things are still genuinely untested, not just
-  build-verified: the bus-sharing baud-reclaim logic (`source/spi1_bus.h`;
-  the camera-preview test above never touched the SD card, so this is
-  unexercised) and touch (`TOUCH_ReadRaw()`, zero real-hardware
-  verification at all). If SD snapshots stop working or come back
-  corrupted (they worked before this panel swap, see below), suspect the
-  baud-reclaim logic first (`disk_read()`/`disk_write()` in
-  `sd_spi_disk.c`, `LCD_BeginTransaction()` in `lcd_spi_hw.c`).
-- **fps target (~24fps) not reached — CONFIRMED at 7fps as of
-  `2026-09-04`, up from 2fps, via two confirmed real-hardware bug fixes,
-  self-debugged over live SWD (see WORKLOG.md for the full trail).**
-  Summary: (1) `lcd_spi_hw.c`/`touch_xpt2046.c` were missing
-  `kLPSPI_MasterPcsContinuous`, causing the LPSPI peripheral to insert a
-  full chip-select setup/hold delay between every single byte regardless
-  of whether the (intentionally unrouted) PCS pin was physically wired to
-  anything — fixed, took fps from 2→5. (2) `SPI1_BUS_SetBaudRate()` only
-  updated the SCK divider, never the PCS-to-SCK/last-SCK-to-PCS/between-
-  transfer delay registers, which stayed calibrated to `spi1_bus.c`'s
-  throwaway 400kHz init baseline and applied a stale ~1.25µs delay to
-  every byte regardless of chunk size — CONFIRMED via a self-directed
-  `pyocd commander` SWD register read (not just serial timing), fixed by
-  recomputing those delays every time any device on the shared bus
-  changes rate — took fps 5→7. Both fixes benefit every device on the
-  shared bus (SD/LCD/touch), not just the LCD.
-  **eDMA was then attempted and ABANDONED** — the remaining bottleneck
-  (`fsl_lpspi.c`'s blocking transfer pushing 153,600 individual FIFO-
-  register accesses per 320x240 frame) looked like a natural fit for
-  DMA-driven transfers, but two independent eDMA variants (16-bit SPI
-  frames, then 8-bit matching mcuxsdk's own tested reference example)
-  both hung on real hardware — CONFIRMED via live SWD register reads that
-  the TX eDMA channel completes but the RX eDMA channel (whose completion
-  the SDK's LPSPI+eDMA driver waits on even for TX-only transfers) never
-  signals done, root cause not found despite ruling out clock config,
-  DMA channel-mux IDs, and NVIC auto-enable. Reverted to the CPU-polled
-  7fps path rather than risk a non-functional display — `spi1_bus.c`'s
-  eDMA code (`SPI1_BUS_TransferBytesDMA()`) is left in place, compiled
-  but unused, for a future session. If the image comes back glitchy/
-  torn/noisy at the current 24MHz SPI clock, lower `LCD_SPI_BAUDRATE_HZ`
-  (`lcd_spi_hw.c`) toward 2-6MHz first.
-- SD card mount/init is **confirmed working on real hardware**
-  (`Snapshot: SD card ready.`) as of 2026-08-25, after fixing 5 separate
-  bugs found via live SWD debugging and real-hardware testing - a boot
-  hang (SDK Kconfig gap + a retry-loop-nesting issue), a floating
-  SD_DO/MISO line that needed this chip's internal pull-up enabled (the
-  shield's own SD slot doesn't provide one), a false "timed out" error on
-  every real file write (a deadline check that was meant for boot-time
-  init only, but ran on every SPI transaction forever after), and 3
-  missing LCD font glyphs (`CAP   E` instead of `CAPTURE`). Full incident
-  writeup: [WORKLOG.md](WORKLOG.md),
-  [ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes). Still
-  not separately confirmed: an actual face-triggered capture
-  (`Snapshot: saved FACE0001.BMP`) succeeding end-to-end - no face
-  stayed in frame during the testing session, only the mount/init step
-  and the fix for the false-timeout bug have been verified so far.
+- The Arduino-header panel is a 2.4" SPI TFT module sharing one bus with
+  its onboard microSD slot and XPT2046 touch controller. **LCD path
+  confirmed on real hardware** (correct orientation, no corruption; one
+  bug found and fixed - `BGR` was wrong, causing a blue/cyan cast).
+  Bus-sharing baud-reclaim logic and touch are still build-verified only,
+  not tested on hardware - suspect them first if SD snapshots ever come
+  back corrupted (`sd_spi_disk.c`, `lcd_spi_hw.c`).
+- **fps target (~24fps) not reached - confirmed at 7fps**, up from 2fps
+  via two real-hardware bug fixes (missing `kLPSPI_MasterPcsContinuous`
+  flag; `SPI1_BUS_SetBaudRate()` not recomputing per-transfer delay
+  registers) - see WORKLOG.md for the full trail. **eDMA was attempted
+  and abandoned** - hung on real hardware (RX eDMA channel never signals
+  done), root cause not found; reverted to the working CPU-polled path.
+  If the image looks glitchy/torn at 24MHz, lower `LCD_SPI_BAUDRATE_HZ`
+  toward 2-6MHz first.
+- SD card mount/init **confirmed working on real hardware**, after fixing
+  5 separate bugs (boot hang, a floating MISO line needing an internal
+  pull-up, a false timeout on every write, missing font glyphs) - see
+  [WORKLOG.md](WORKLOG.md) /
+  [ARCHITECTURE.md §5](ARCHITECTURE.md#5-debugging--tooling-notes). Not
+  yet separately confirmed: an actual face-triggered capture succeeding
+  end-to-end.
 
 ## Abandoned Features
 
@@ -457,16 +376,11 @@ most cases) for reference. Full trail in [WORKLOG.md](WORKLOG.md).
 
 ## History
 
-Started on the Arduino-header TFT design (per `requirement.md`), briefly
-explored the J8 FlexIO header and USB Video Class streaming as
-alternatives, then reverted to the original Arduino-header design once
-both alternatives hit the issues in the table above. Camera+LCD bring-up
-was completed first, then AI integration (a HardFault initially misread as
-a CMSIS-NN alignment bug, actually a stack overflow; then a SmartDMA/AI RAM
-bank collision — see [ARCHITECTURE.md §3](ARCHITECTURE.md#3-key-design-decisions)),
-then the Neutron NPU backend was added as a speed upgrade once the CPU
-path was proven correct. The model itself started as a 3-class drowsy-eye
-detector and was later swapped for the current single-class `face`
-detector without touching camera/LCD/NPU integration code. Full dated
-trail: [WORKLOG.md](WORKLOG.md).
+Started on the Arduino-header TFT design, briefly tried J8 FlexIO and USB
+Video Class as alternatives (both abandoned - see table above), then
+camera+LCD bring-up, AI integration (see
+[ARCHITECTURE.md §3](ARCHITECTURE.md#3-key-design-decisions)), and the
+Neutron NPU backend as a speed upgrade. The model itself started as a
+3-class drowsy-eye detector, later swapped for the current single-class
+`face` detector. Full dated trail: [WORKLOG.md](WORKLOG.md).
 </content>

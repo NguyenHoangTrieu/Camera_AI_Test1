@@ -1,37 +1,20 @@
 /*
  * ei_sramx_alloc.c - overrides Edge Impulse SDK's weak ei_malloc/ei_calloc/
- * ei_free (see edge_impulse/edge-impulse-sdk/porting/clib/
- * ei_classifier_porting.cpp) to allocate from a static pool placed in
- * m_sramx instead of the default heap.
+ * ei_free to allocate from a static pool in m_sramx instead of the
+ * default heap - m_data is ~99% full with nowhere near enough room for
+ * the tensor arena + DSP scratch buffers.
  *
- * m_data (main SRAM) is ~99% full (camera + LCD framebuffers + stack) with
- * essentially no free room - nowhere near what the tensor arena + DSP
- * scratch buffers actually need. m_sramx is a separate, otherwise-unused
- * 96KB SRAM bank (see board_port/ei_sramx.ld for how it's wired in).
+ * Two-tier: the primary pool (m_sramx) is tried first; once exhausted, an
+ * optional overflow pool (lent in via EI_SRAMX_SetOverflowPool()) is used.
  *
- * Two-tier allocator: the primary pool (m_sramx) is tried first; once
- * exhausted, an optional "overflow" pool - lent in via
- * EI_SRAMX_SetOverflowPool(), see ei_sramx_alloc.h - is used instead.
- * main.c lends it s_lcdSnapshot's memory (150KB, otherwise idle exactly
- * during the AI_MODEL_RunInference() call - see the ordering note in
- * ei_sramx_alloc.h).
- *
- * This is a bump allocator with a small LIFO free-record stack, not a
- * general-purpose one. The tensor arena itself is allocated once and kept
- * for the whole inference call, but the DSP image-resize step
- * (extract_image_features_quantized(), ei_run_dsp.h) allocates and frees a
- * scratch buffer (matrix_t) once per ~1024-pixel page it reads - for a
- * 320x240 frame that's ~75 alloc/free cycles in *one* AI_MODEL_RunInference()
- * call. An earlier version of this file made ei_free() a no-op on the
- * (wrong) assumption of "allocate once, free once" - that leaked every one
- * of those ~75 page buffers instead of reusing the space, blew through
- * both pools well before the DSP step finished, and crashed with a
- * precise bus fault at the exact byte past the end of m_sramx once the
- * SDK's own bounds-unchecked arithmetic ran off the end of a NULL/short
- * allocation. Tracking each allocation's pool + prior offset and rewinding
- * on a matching free() (strict LIFO - matches this SDK's actual usage
- * pattern of nested alloc/use/free, not free-in-any-order) fixes this
- * without needing a real heap.
+ * Bump allocator with a small LIFO free-record stack, not general-purpose.
+ * The DSP resize step allocates/frees a scratch buffer once per ~1024-
+ * pixel page (~75 cycles per inference call) - an earlier version made
+ * ei_free() a no-op on the wrong assumption of "allocate once, free once",
+ * which leaked every one of those buffers and eventually bus-faulted past
+ * the end of m_sramx (see WORKLOG.md). Tracking each allocation's prior
+ * offset and rewinding on a matching free() (strict LIFO, matching this
+ * SDK's actual alloc/use/free pattern) fixes it without a real heap.
  */
 #include <stdint.h>
 #include <string.h>

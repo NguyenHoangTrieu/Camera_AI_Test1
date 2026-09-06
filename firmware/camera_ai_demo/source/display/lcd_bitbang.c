@@ -1,23 +1,12 @@
 /*
  * lcd_bitbang.c - see lcd_bitbang.h
  *
- * Generic GPIO bit-bang 8080 8-bit LCD driver, pin-agnostic (all signal
- * names come from app.h's DEMO_LCD_* macros) - drives the J8 header's
- * parallel-bus panel (bit-bang diagnostic variant, see CMakeLists.txt's
- * LCD_BITBANG_DIAGNOSTIC). The Arduino header now has its own SPI panel
- * (lcd_spi_bitbang.c) - the `#if DEMO_LCD_ARDUINO_HEADER` branches below
- * are dead code in every build this file is actually compiled into
- * (DEMO_LCD_ARDUINO_HEADER is always 0 here), kept only because this file
- * still doubles as the reference 8080 bit-bang implementation.
- *
- * RD is held high (inactive) for this driver's whole lifetime - it never
- * reads from the panel, and a floating RD line during writes caused bugs
- * on the FlexIO path (see WORKLOG.md), so RD is always a plain GPIO output
- * pinned high.
- *
- * Deliberately unoptimized (no bus timing beyond LCD_BITBANG_DELAY_US) to
- * maximize odds of working on a slow/cheap panel - a full 320x240 frame
- * push takes on the order of half a second, low fps by design.
+ * Generic GPIO bit-bang 8080 8-bit LCD driver, pin-agnostic - drives the
+ * abandoned J8 header's parallel-bus panel (LCD_BITBANG_DIAGNOSTIC). RD
+ * is held high for this driver's whole lifetime (never reads from the
+ * panel; a floating RD line caused bugs on the FlexIO path - see
+ * WORKLOG.md). Deliberately unoptimized for reliability over speed - a
+ * full frame push takes about half a second.
  */
 
 #include "lcd_bitbang.h"

@@ -197,20 +197,11 @@ void BOARD_InitFlexioPins(void)
 /* 4. Arduino header - LCD control pins (CS/DC/RST/BLK), current default   */
 /* ---------------------------------------------------------------------- */
 
-/* Guarded by DEMO_LCD_ARDUINO_HEADER (app.h) - this panel's macros
- * (DEMO_LCD_DC_*) have no equivalent in app.h's J8 (#else) branch, so this
- * can't be compiled unconditionally the way BOARD_InitFlexioPins() and
- * this function's 8080-bus predecessor both could when every app.h branch
- * defined the same D0..D7/RS/RD/WR names. hardware_init.c only ever calls
- * this under the same DEMO_LCD_ARDUINO_HEADER guard, so nothing is lost by
- * not defining it at all in the J8 build.
- *
- * SCK/SDI/SDO are NOT here - the LCD now shares hardware LPSPI1 with the
- * microSD slot and touch controller (see BOARD_InitSdCardPins() below,
- * which brings up those 3 shared-bus pins, and spi1_bus.h for how the
- * sharing works). Only the LCD's own control pins - CS/DC/RST/BLK,
- * directly on Arduino A2..A5, unchanged from the earlier bit-bang design -
- * are plain GPIO here. */
+/* Only the LCD's own control pins (CS/DC/RST/BLK, Arduino A2..A5) are
+ * here as plain GPIO - SCK/SDI/SDO ride shared hardware LPSPI1 instead,
+ * see BOARD_InitSdCardPins() below and spi1_bus.h. Guarded by
+ * DEMO_LCD_ARDUINO_HEADER since the J8 build's app.h has no equivalent
+ * DEMO_LCD_DC_* macros. */
 #if DEMO_LCD_ARDUINO_HEADER
 void BOARD_InitArduinoLcdPins(void)
 {
@@ -218,14 +209,10 @@ void BOARD_InitArduinoLcdPins(void)
     const gpio_pin_config_t idleHighConfig = {.pinDirection = kGPIO_DigitalOutput, .outputLogic = 1U};
 
     CLOCK_EnableClock(kCLOCK_Port0);
-    /* Only actually needed by the dual-core build now that DC moved to
-     * GPIO1/PORT1 (WORKLOG.md) - harmless no-op extra clock gate for the
-     * legacy single-core build, where DEMO_LCD_DC_PORT is still PORT0. */
-    CLOCK_EnableClock(kCLOCK_Port1);
+    CLOCK_EnableClock(kCLOCK_Port1); /* only DC (dual-core build) uses PORT1, see app.h */
 
-    /* DC/CS/RST - plugged in directly (Arduino A2/A3/A4, except DC which
-     * the dual-core build moved to D3 - see DEMO_LCD_DC_PORT/GPIO/PIN in
-     * app.h). */
+    /* DC/CS/RST - plugged in directly (Arduino A2/A3/A4, except DC on the
+     * dual-core build - see app.h). */
     PORT_SetPinMux(DEMO_LCD_DC_PORT, DEMO_LCD_DC_PIN, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT0, DEMO_LCD_CS_PIN, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT0, DEMO_LCD_RST_PIN, kPORT_MuxAlt0);
@@ -242,15 +229,9 @@ void BOARD_InitArduinoLcdPins(void)
 /* 4b. Arduino header - touch controller (XPT2046) control pins            */
 /* ---------------------------------------------------------------------- */
 
-/* T_CLK/T_DIN/T_DO ride the same shared LPSPI1 bus as the LCD/microSD slot
- * (BOARD_InitSdCardPins() below) - only T_CS/T_IRQ need dedicated pins.
- * T_IRQ gets this chip's internal pull-up: it's an open-drain-style
- * active-low signal from the XPT2046 (idles high, pulled low on touch),
- * and this project already learned the hard way (see the microSD DO/MISO
- * pull-up fix in BOARD_InitSdCardPins() below, and WORKLOG.md) that this
- * class of cheap panel doesn't reliably provide its own pull-ups - safe
- * defensive default here even though not confirmed necessary yet (no
- * touch hardware tested in this session, see WORKLOG.md). */
+/* T_CLK/T_DIN/T_DO ride the shared LPSPI1 bus - only T_CS/T_IRQ need
+ * dedicated pins. T_IRQ gets an internal pull-up (open-drain, active-low)
+ * since this class of cheap panel often doesn't provide its own. */
 void BOARD_InitTouchPins(void)
 {
     const gpio_pin_config_t idleHighConfig = {.pinDirection = kGPIO_DigitalOutput, .outputLogic = 1U};
@@ -278,28 +259,13 @@ void BOARD_InitTouchPins(void)
 /* ---------------------------------------------------------------------- */
 
 /*
- * Per NXP's UM12018 (FRDM-MCXN947 board user manual) Arduino header pin
- * table, D10..D13 are wired to LP_FLEXCOMM1 configured for SPI (mux Alt2),
- * not plain GPIO - a real hardware SPI peripheral (LPSPI1). D11/D12/D13
- * (SDO/SDI/SCK) are now a SHARED bus, not SD-only: the LCD
- * (source/display/lcd_spi_hw.c) and touch controller
- * (source/display/touch_xpt2046.c) ride the same 3 pins, each with its own
- * manual GPIO chip-select instead of hardware PCS - see spi1_bus.h for the
- * full sharing contract (this function's name is legacy from when it only
- * served the SD card; it now brings up the bus every SPI device on this
- * header uses).
- *   D10 = P0_27 = FC1_P3 = SPI PCS0 (chip select)  -> panel's SD_CS (SD-only, real hardware CS)
- *   D11 = P0_24 = FC1_P0 = SPI SDO (MCU out)        -> panel's SD_MOSI (shared: also LCD SDI, touch T_DIN)
- *   D12 = P0_26 = FC1_P2 = SPI SDI (MCU in)         -> panel's SD_MISO (shared: also LCD SDO, touch T_DO)
- *   D13 = P0_25 = FC1_P1 = SPI SCK                  -> panel's SD_SCK (shared: also LCD SCK, touch T_CLK)
- * Only D10/PCS0 is muxed as hardware chip-select - SDSPI_Init() (see
- * source/storage/sd_spi_disk.c) needs to flip the PCS active-polarity at
- * runtime (LPSPI_SetAllPcsPolarity()) to emit the SD card's required
- * power-up dummy clocks with CS deasserted, which only works cleanly
- * through the peripheral's own CS logic, not a plain GPIO toggle - the
- * LCD's and touch's CS lines are plain GPIO instead (DEMO_LCD_CS_*,
- * DEMO_TOUCH_CS_* in app.h), since they don't need that runtime-polarity
- * trick.
+ * D10..D13 are LP_FLEXCOMM1/LPSPI1 (mux Alt2), a real hardware SPI
+ * peripheral shared by the LCD, touch, and SD card (see spi1_bus.h) -
+ * this function's name is legacy from when it only served the SD card.
+ * Only D10/PCS0 is muxed as hardware chip-select: SDSPI_Init() needs to
+ * flip PCS polarity at runtime for the SD card's power-up dummy clocks,
+ * which only works through real PCS hardware. LCD/touch use plain GPIO
+ * chip-selects instead (app.h), since they don't need that trick.
  */
 void BOARD_InitSdCardPins(void)
 {
@@ -309,17 +275,11 @@ void BOARD_InitSdCardPins(void)
     PORT_SetPinMux(PORT0, 25U, kPORT_MuxAlt2); /* P0_25 = FC1_P1 = LPSPI1 SCK (D13/SD_CK) */
     PORT_SetPinMux(PORT0, 27U, kPORT_MuxAlt2); /* P0_27 = FC1_P3 = LPSPI1 PCS0 (D10/SD_SS) */
 
-    /* P0_26 = FC1_P2 = LPSPI1 SDI (D12/SD_MISO) - REQUIRED pull-up on the
-     * previous parallel-bus shield, not optional. CONFIRMED on real
-     * hardware (2026-08-25, see WORKLOG.md): without this, the MCU reads a
-     * constant 0x00 on this line regardless of what's happening on the bus
-     * - never the SD-over-SPI idle-high 0xFF - meaning SDSPI_Init() always
-     * times out (source/storage/sd_spi_disk.c). That shield's SD slot
-     * apparently had no pull-up of its own on DO (common on cheap shields,
-     * which often assume the host MCU provides one) - this chip's own weak
-     * internal pull-up was enough to fix it. Left enabled here for the new
-     * SPI panel too - harmless if its SD slot already has its own pull-up,
-     * and re-verify against real hardware if SD init fails again. */
+    /* P0_26 = FC1_P2 = LPSPI1 SDI (D12/SD_MISO) - required pull-up. This
+     * shield's SD slot has none of its own (common on cheap shields);
+     * without it the line floats and reads a constant 0x00 instead of the
+     * SD-over-SPI idle-high 0xFF, so SDSPI_Init() always times out
+     * (confirmed on real hardware - see WORKLOG.md). */
     const port_pin_config_t sdiPullUpConfig = {
         .pullSelect   = kPORT_PullUp,
         .mux          = kPORT_MuxAlt2,

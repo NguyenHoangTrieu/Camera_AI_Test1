@@ -2,32 +2,16 @@
  * FreeRTOSConfig.h - Camera_AI_Test1 dual-core RTOS migration (see
  * WORKLOG.md), shared by both cores.
  *
- * Hand-written, not generated from Kconfig - deliberately pulling FreeRTOS
- * in directly via CMakeLists.txt's DUALCORE_RTOS branch (mcux_add_source,
- * same "pull directly, not via Kconfig" pattern this project already uses
- * for fsl_sdspi.c/ff.c/fsl_incbin.S) instead of enabling
- * CONFIG_MCUX_COMPONENT_middleware.freertos-kernel via prj.conf. Reasoning:
- * prj.conf is a file SHARED with the legacy single-core bare-metal build
- * (board_port/cm33_core0/prj.conf has no DUALCORE_RTOS-conditional Kconfig
- * mechanism) - enabling FreeRTOS there would also compile FreeRTOS's
- * port.c into the legacy build, which #defines vPortSVCHandler/
- * vPortPendSVHandler/vPortSysTickHandler to the literal CMSIS handler names
- * (SVC_Handler/PendSV_Handler/SysTick_Handler, see below), silently
- * overriding the SDK's default bare-metal handlers even though the legacy
- * build never calls vTaskStartScheduler() - a real, if probably-latent,
- * regression risk not worth taking. Scoping FreeRTOS entirely inside the
- * DUALCORE_RTOS CMake branch avoids this category of risk outright.
+ * Hand-written, not generated from Kconfig - pulled in directly via
+ * CMakeLists.txt's DUALCORE_RTOS branch instead of enabling FreeRTOS via
+ * prj.conf, which is shared with the legacy single-core build and would
+ * silently install FreeRTOS's SVC/PendSV/SysTick handlers there too, even
+ * though that build never starts a scheduler.
  *
- * Values below match the SDK's own Kconfig-generated defaults
- * (FreeRTOSConfig_Gen.h, seen while building the reference freertos_hello
- * example for this board) plus this board's own interrupt-priority scheme
- * (examples/_boards/frdmmcxn947/FreeRTOSConfigBoard.h) - not invented from
- * scratch. configMAX_SYSCALL_INTERRUPT_PRIORITY=2 (library scale, see
- * below) is confirmed compatible with MCMGR's MAILBOX_IRQn priorities
- * (level 5 on core0, level 2 on core1, set in
- * mcmgr_internal_core_api_mcxnx4x.c) - both are numerically >= this
- * threshold, so mcmgr's ISR-context event callbacks (source/shared/
- * ipc_events.c) can safely call xTaskNotifyFromISR().
+ * Values match the SDK's own Kconfig-generated defaults for this board.
+ * configMAX_SYSCALL_INTERRUPT_PRIORITY=2 is confirmed compatible with
+ * MCMGR's MAILBOX_IRQn priorities (5 on core0, 2 on core1), so its
+ * ISR-context event callbacks can safely call xTaskNotifyFromISR().
  */
 #ifndef FREERTOS_CONFIG_H
 #define FREERTOS_CONFIG_H
@@ -97,19 +81,10 @@ extern uint32_t SystemCoreClock;
 #endif
 #define configENABLE_MPU       0
 #define configENABLE_TRUSTZONE 0
-/* REQUIRED by port.c's own #if checks - undefined evaluates to 0 in the
- * preprocessor, which is the WRONG combination for this "NTZ" (No
- * TrustZone) port: port.c's own header comment lists
- * "configRUN_FREERTOS_SECURE_ONLY=1 and configENABLE_TRUSTZONE=0" as the
- * valid no-TrustZone combo, not both-0. Confirmed the hard way on real
- * hardware: leaving this undefined (=0 by default) produced a genuine
- * UsageFault (INVSTATE, CFSR=0x00040000) escalated to HardFault (HFSR
- * FORCED bit set, since configCHECK_HANDLER_INSTALLATION-related UsageFault
- * enable wasn't set either) during vTaskStartScheduler()'s first SVC-based
- * task start - SVCALLACT was set in SHCSR at fault time, confirming the
- * fault happened while starting the very first task, consistent with the
- * initial fake exception stack frame's xPSR having the wrong execution-
- * state assumption baked in for this SECURE_ONLY/TRUSTZONE combination. */
+/* Required for this "NTZ" (No TrustZone) port: the valid no-TrustZone
+ * combo is configRUN_FREERTOS_SECURE_ONLY=1 with configENABLE_TRUSTZONE=0,
+ * not both 0. Leaving this undefined caused a real UsageFault->HardFault
+ * during vTaskStartScheduler()'s first task start on real hardware. */
 #define configRUN_FREERTOS_SECURE_ONLY 1
 
 #ifdef __NVIC_PRIO_BITS
@@ -123,16 +98,11 @@ extern uint32_t SystemCoreClock;
 #define configKERNEL_INTERRUPT_PRIORITY             (configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 #define configMAX_SYSCALL_INTERRUPT_PRIORITY        (configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))
 
-/* Names confirmed against this exact port version's real function names by
- * diffing against the SDK's own Kconfig-generated FreeRTOSConfig_Gen.h
- * (built from the reference freertos_hello example for this board) -
- * FIRST attempt used vPortPendSVHandler/vPortSysTickHandler (an older
- * FreeRTOS naming convention) which silently renamed nothing (no matching
- * symbol in this port's port.c), leaving the SDK's non-functional default
- * PendSV_Handler/SysTick_Handler installed - confirmed on real hardware:
- * core0 printed "starting scheduler..." and then hung completely, no
- * crash, no further output, because vTaskStartScheduler()'s SysTick/PendSV
- * setup silently had no real handler wired to either vector. */
+/* xPortPendSVHandler/xPortSysTickHandler, not the older
+ * vPortPendSVHandler/vPortSysTickHandler naming - the old names don't
+ * match this port's real symbols and silently rename nothing, leaving
+ * the SDK's non-functional default handlers installed (confirmed on real
+ * hardware: scheduler start hung completely, no crash, no output). */
 #define vPortSVCHandler     SVC_Handler
 #define xPortPendSVHandler  PendSV_Handler
 #define xPortSysTickHandler SysTick_Handler

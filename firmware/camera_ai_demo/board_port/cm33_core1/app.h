@@ -1,12 +1,7 @@
 /*
  * app.h - core1 (Camera_AI_Test1 dual-core RTOS migration - see
- * WORKLOG.md).
- *
- * Stage 3: camera capture + LCD preview move here. These camera/LCD
- * macros are copied from the legacy board_port/cm33_core0/app.h (Arduino-
- * header default only - J8/FlexIO and touch are not carried into the
- * dual-core build, see CMakeLists.txt's DUALCORE_RTOS branch), since
- * core1 is now the permanent home for this hardware, not core0.
+ * WORKLOG.md). Camera/LCD macros, copied from the legacy core0/app.h
+ * (Arduino header only - J8/FlexIO not carried into the dual-core build).
  */
 #ifndef _APP_CORE1_H_
 #define _APP_CORE1_H_
@@ -43,22 +38,13 @@
  * with the microSD slot (Stage 4) - see source/spi1_bus.h. Only LCD_DC/
  * CS/RST/BLK are plain GPIO, on the Arduino header (A2..A5).
  ******************************************************************************/
-/* DC moved off GPIO0 onto a different peripheral instance entirely
- * (WORKLOG.md, dual-core Stage 5 SEVENTH FOLLOW-UP): live SWD reads
- * (trusted core0-AP path) confirmed GPIO0 bit14/DC reliably reads back
- * LOW no matter what core1's firmware commands, while CS/RST/BLK (same
- * GPIO0 peripheral, different bits) read back correctly - so the fault is
- * bit/pin-specific, not "GPIO0 is broken." Moved to Arduino D3 (GPIO1,
- * P1_23) to rule out any GPIO0-specific cause entirely rather than gamble
- * on a different GPIO0 bit. Needs BOARD_InitArduinoLcdPins() (pin_mux.c)
- * to mux PORT1 instead of PORT0 for this one pin, and core1's
- * hardware_init.c to enable GPIO1's clock (not needed before - only
- * GPIO0 was ever used from this core). */
+/* DC lives on GPIO1 (Arduino D3) instead of GPIO0 here - see WORKLOG.md/
+ * KNOWLEDGE.md §9 (core1 needs an explicit PCNS grant per pin; this move
+ * predates finding that and turned out not to be the actual fix, but is
+ * confirmed working, so left as-is). */
 #define DEMO_LCD_DC_GPIO GPIO1
 #define DEMO_LCD_DC_PIN  23U /* Arduino D3 */
-#define DEMO_LCD_DC_PORT PORT1 /* pin_mux.c's BOARD_InitArduinoLcdPins() is shared with the legacy
-                                 * single-core build (core0/app.h keeps DC on PORT0/GPIO0), so the
-                                 * port to mux can't be hardcoded there - it needs this macro. */
+#define DEMO_LCD_DC_PORT PORT1 /* pin_mux.c is shared with the legacy build, which keeps DC on PORT0 */
 #define DEMO_LCD_CS_GPIO GPIO0
 #define DEMO_LCD_CS_PIN  22U /* Arduino A3 */
 #define DEMO_LCD_RST_GPIO GPIO0
@@ -68,12 +54,9 @@
 #define DEMO_LCD_BLK_PIN  23U /* Arduino A5 - panel's LED pin, safe default even if unconnected */
 
 /*******************************************************************************
- * Touch controller (XPT2046) pins - needed because board_port/pin_mux.c
- * (SHARED between both cores) unconditionally defines
- * BOARD_InitTouchPins(), which references these macros regardless of
- * whether anything actually calls that function. Touch itself is not
- * wired into any core1 task yet (same "present but unused" status as the
- * legacy single-core build - see README.md).
+ * Touch controller (XPT2046) pins - needed because pin_mux.c's shared
+ * BOARD_InitTouchPins() references these macros. Not wired into any core1
+ * task yet, same as the legacy build - see README.md.
  ******************************************************************************/
 #define DEMO_TOUCH_CS_GPIO GPIO0
 #define DEMO_TOUCH_CS_PIN  10U /* Arduino D9 */

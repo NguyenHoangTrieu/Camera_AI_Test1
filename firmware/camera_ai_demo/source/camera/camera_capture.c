@@ -50,36 +50,20 @@ static volatile bool s_frameReady = false;
 static volatile uint32_t s_frameCount = 0;
 
 #ifdef DUALCORE_RTOS
-/* Dual-core RTOS build (see WORKLOG.md): a 320x240 RGB565 frame
- * (153,600 bytes) does not fit inside core1's own ~43KB RAM region at
- * all - confirmed the hard way, a real link-time overflow, not a margin
- * concern. Lives in the shared RAM region (source/shared/ipc_layout.h)
- * instead, which core0's linker script (board_port/cm33_core0/
- * MCXN947_cm33_core0_dualcore.ld) carves out of its own much larger
- * m_data specifically for this. core1 (this file) just points at the
- * fixed address directly - see ipc_layout.h's header comment for why
- * core1 doesn't need its own linker-level awareness of this region. */
+/* A 320x240 RGB565 frame (153,600 bytes) doesn't fit in core1's own
+ * ~43KB RAM region at all - lives in the shared RAM region instead
+ * (ipc_layout.h), carved out of core0's much larger m_data. core1 just
+ * points at the fixed address directly. */
 #include "ipc_layout.h"
 #define s_frameBuffer ((uint16_t *)IPC_FRAME_BUFFER_ADDR)
 #else
 static uint16_t s_frameBuffer[DEMO_BUFFER_WIDTH * DEMO_BUFFER_HEIGHT];
 #endif
 
-/* BUG FOUND AND FIXED (2026-09-04, see WORKLOG.md): this was 32 bytes -
- * HALF of what fsl_smartdma_fw.h's own smartdma_camera_param_t comment
- * documents as the real requirement ("Stack used by SMARTDMA, shall be
- * at least 64 bytes"). Harmless for a long time because SmartDMA was
- * only ever booted once, at startup (CAMERA_CAPTURE_Init()) - but as
- * soon as main.c's camera-preview loop started calling
- * CAMERA_CAPTURE_Deinit()/Reinit() every displayed frame (to fix a
- * separate tearing bug), SmartDMA started rebooting far more often, and
- * a real stack overflow started scribbling into whatever static happened
- * to sit right after this array in RAM - confirmed via `nm`: this buffer
- * and lcd_spi_hw.c's diagnostic counters landed only 0x30 bytes apart,
- * and those counters started reading back nonsense (billions of
- * "frames", garbled window durations) the moment the reboot frequency
- * went up. Sized to 128 bytes (double the documented minimum) for real
- * margin, not just the bare minimum. */
+/* Must be >= 64 bytes per fsl_smartdma_fw.h's own documented minimum -
+ * this was once only 32, which caused a real stack overflow once
+ * SmartDMA started rebooting every frame (see WORKLOG.md). Sized to 128
+ * for real margin, not the bare minimum. */
 static uint8_t s_smartdmaStack[128];
 
 static void CAMERA_CAPTURE_CompleteCallback(void *param) {

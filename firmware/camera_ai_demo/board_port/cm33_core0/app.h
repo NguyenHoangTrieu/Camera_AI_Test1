@@ -28,16 +28,9 @@
 #endif
 
 /*******************************************************************************
- * Camera / frame buffer
- *
- * A 384x384 grayscale mode (kSMARTDMA_CameraDiv16Frame384_384, ~92% more
- * pixels for about the same RAM) was tried here and reverted - real
- * hardware hit a HardFault inside the stripe-reassembly memcpy
- * (CAMERA_CAPTURE_CompleteCallback(), camera_capture.c), most likely
- * because that mode's actual per-stripe byte layout isn't 1 byte/pixel as
- * assumed (no NXP documentation confirmed it) - see WORKLOG.md if
- * revisiting this. Back to the original, confirmed-working whole-frame
- * QVGA RGB565 capture below.
+ * Camera / frame buffer. A 384x384 grayscale mode was tried and reverted
+ * (HardFault in stripe reassembly - see WORKLOG.md); this whole-frame QVGA
+ * RGB565 capture is the confirmed-working default.
  ******************************************************************************/
 #define DEMO_CAMERA_RESOLUTION kVIDEO_ResolutionQVGA /* 320*240 */
 #define DEMO_BUFFER_WIDTH      320U
@@ -78,21 +71,14 @@
 
 #if DEMO_LCD_ARDUINO_HEADER
 /*******************************************************************************
- * Arduino header (current default). Panel is a 2.4" SPI TFT module
- * (ILI9341-family: VCC/GND/CS/RESET/DC/SDI(MOSI)/SCK/LED/SDO(MISO)) with an
- * onboard microSD slot and an XPT2046 touch controller - see README.md.
- * SCK/SDI/SDO ride the hardware LPSPI1 bus, SHARED with the microSD slot
- * and touch controller (D10..D13, muxed in pin_mux.c's
- * BOARD_InitSdCardPins() - see spi1_bus.h for how the sharing works). Only
- * LCD_DC/CS/RST/BLK are plain GPIO here, all still directly on the Arduino
- * header (A2..A5, unchanged from the earlier bit-bang design). See
- * README.md for the full pinout table and physical wiring notes.
+ * Arduino header (current default) - 2.4" SPI TFT with onboard microSD +
+ * XPT2046 touch. SCK/SDI/SDO ride shared hardware LPSPI1 (see spi1_bus.h);
+ * only DC/CS/RST/BLK are plain GPIO, on A2..A5. See README.md for the full
+ * pinout table.
  ******************************************************************************/
 #define DEMO_LCD_DC_GPIO GPIO0
 #define DEMO_LCD_DC_PIN  14U /* Arduino A2 */
-#define DEMO_LCD_DC_PORT PORT0 /* core1/app.h moves DC to GPIO1/PORT1 for the dual-core build only
-                                 * (WORKLOG.md) - this core's copy (the legacy single-core build)
-                                 * keeps the original, still-working A2/GPIO0 wiring/pin unchanged. */
+#define DEMO_LCD_DC_PORT PORT0 /* dual-core build moves DC to GPIO1/PORT1 instead - see core1/app.h */
 #define DEMO_LCD_CS_GPIO GPIO0
 #define DEMO_LCD_CS_PIN  22U /* Arduino A3 */
 #define DEMO_LCD_RST_GPIO GPIO0
@@ -155,15 +141,11 @@
 #endif /* DEMO_LCD_ARDUINO_HEADER */
 
 /*******************************************************************************
- * Dual-core RTOS migration (see WORKLOG.md) - only relevant when built with
- * -DDUALCORE_RTOS=ON. CORE1_BOOT_ADDRESS is where core0 copies core1's
- * incbin'd image (see source/main_core0.c) before releasing it from reset
- * via MCMGR_StartCore(); it must match board_port/cm33_core1/
- * MCXN947_cm33_core1_dualcore.ld's m_interrupts ORIGIN exactly. Pattern
- * (core1_image_start/end/size symbols from components/misc_utilities/
- * fsl_incbin.S's `.incbin` embed) copied from NXP's own multicore
- * hello_world example for this board - see WORKLOG.md for how the whole
- * two-step build (core1 built first, core0 embeds its raw .bin) works.
+ * Dual-core RTOS build only (-DDUALCORE_RTOS=ON). CORE1_BOOT_ADDRESS is
+ * where core0 copies core1's incbin'd image before releasing it via
+ * MCMGR_StartCore() - must match cm33_core1's linker script ORIGIN
+ * exactly. See WORKLOG.md for the two-step build (core1 built first, core0
+ * embeds its .bin).
  ******************************************************************************/
 #define CORE1_BOOT_ADDRESS 0x2004E000
 

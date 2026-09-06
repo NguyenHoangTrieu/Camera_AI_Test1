@@ -46,18 +46,15 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
                       uint16_t aiInputWidth, uint16_t aiInputHeight);
 
 /*!
- * @brief True for SNAPSHOT_NOTICE_DURATION_MS (snapshot.c) following the
- * most recent successful capture - main.c polls this every frame to
- * show/clear an on-screen "CAPTURE" notification line, independent of
- * whatever SNAPSHOT_OnFrame() returned this particular call.
+ * @brief True for SNAPSHOT_NOTICE_DURATION_MS following the most recent
+ * successful capture - main.c polls this every frame to show/clear an
+ * on-screen "CAPTURE" notification line.
  *
- * Deliberately a *longer* window than the internal capture rate-limit
- * (SNAPSHOT_RATE_LIMIT_MS, 1 second, unaffected by this) - CONFIRMED on
- * real hardware (2026-08-25) that 1 second isn't enough time for a person
- * to notice a capture happened and react before it's already gone. A new
- * capture can become possible again while this notice is still showing;
- * that's fine, this is a human-facing indicator, not a machine-readable
- * "capture in progress" flag.
+ * Deliberately longer than the internal 1-second capture rate-limit -
+ * confirmed on real hardware that 1 second isn't enough time for a
+ * person to notice and react. A new capture can become possible again
+ * while this notice is still showing; that's fine, it's a human-facing
+ * indicator, not a "capture in progress" flag.
  */
 bool SNAPSHOT_IsNoticeActive(void);
 

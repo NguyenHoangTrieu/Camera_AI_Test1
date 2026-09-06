@@ -434,4 +434,118 @@ required for this shield on this board.
 - NXP UM12018 (FRDM-MCXN947 board user manual), §2.3 — USB connector wiring
 - `neutron_converter` / `eiq_neutron_sdk` — NXP package index
 - `spsdk` / `nxpdebugmbox` — NXP Debug Mailbox tooling
+
+## 7. Dual-Core Task Architecture (RTOS build)
+
+Everything in §1-§6 above describes the **legacy single-core build**
+(core1 never boots). The dual-core build (`-DDUALCORE_RTOS=ON`, see
+README.md) splits the same pipeline across both cores under FreeRTOS:
+**core1** owns camera + LCD + SD (one task, `CameraLcdTask`), **core0**
+owns AI inference only (one task, `AiInferenceTask`). They talk over
+MCMGR mailbox-interrupt doorbells and a fixed shared-RAM region — no
+RPMsg-Lite, no OS-level IPC framework.
+
+### 7.1 Boot sequence
+
+core1 has no SAU on this chip (always Non-Secure — see KNOWLEDGE.md §9),
+so core0 must grant it GPIO access *before* releasing it, and must finish
+the whole MCMGR handshake *before* touching any FreeRTOS API (both are
+real bugs this project hit — see WORKLOG.md):
+
+```mermaid
+sequenceDiagram
+    participant C0 as core0 (main_core0.c)
+    participant GPIO as GPIO0 / GPIO1 (PCNS)
+    participant C1 as core1 (main_core1.c)
+
+    C0->>C0: MCMGR_Init(), BOARD_InitHardware()
+    C0->>GPIO: Grant PCNS (Non-Secure access) for core1's LCD pins
+    C0->>C1: copy core1's image into RAM
+    C0->>C1: MCMGR_StartCore() - release core1
+    activate C1
+    C1->>C0: MCMGR_GetStartupData() - wait for core0's handshake
+    C1->>C1: BOARD_InitHardware(), SPI1_BUS_CreateLock()
+    C1->>C1: xTaskCreate(CameraLcdTask); vTaskStartScheduler()
+    deactivate C1
+    C0->>C0: xTaskCreate(AiInferenceTask); vTaskStartScheduler()
+```
+
+### 7.2 Per-core task flow
+
+```mermaid
+flowchart TD
+    subgraph core1["core1 - CameraLcdTask"]
+        A1[Init camera + LCD] --> A2{Frame ready?}
+        A2 -- no --> A2
+        A2 -- yes --> A3[Stop camera DMA - freeze frame buffer]
+        A3 --> A4[Signal frame-ready to core0]
+        A4 --> A5{Result within 100ms?}
+        A5 -- yes --> A6[Draw box overlay + save snapshot]
+        A5 -- no --> A7[Skip overlay/snapshot this frame]
+        A6 --> A8[Push frame to LCD]
+        A7 --> A8
+        A8 --> A9[Resume camera DMA]
+        A9 --> A2
+    end
+
+    subgraph core0["core0 - AiInferenceTask"]
+        B1[Init AI model] --> B2[Block until doorbell]
+        B2 --> B3[Read shared frame buffer]
+        B3 --> B4[Run inference - ~4ms on the NPU]
+        B4 --> B5[Write result to shared RAM]
+        B5 --> B6[Signal result-ready to core1]
+        B6 --> B2
+    end
+
+    A4 -.MCMGR doorbell.-> B2
+    B6 -.MCMGR doorbell.-> A5
+```
+
+### 7.3 One frame, end to end
+
+```mermaid
+sequenceDiagram
+    participant Cam as Camera (SmartDMA)
+    participant C1 as core1: CameraLcdTask
+    participant Shared as Shared RAM
+    participant C0 as core0: AiInferenceTask
+    participant LCD
+    participant SD as SD card
+
+    Cam-->>C1: frame-ready interrupt
+    C1->>Cam: CAMERA_CAPTURE_Deinit() - stop DMA, freeze buffer
+    C1->>C0: IPC_SignalFrameReady(seq)
+    C0->>Shared: read frame buffer (safe - frozen)
+    C0->>C0: AI_MODEL_RunInference()
+    C0->>Shared: write ai_ipc_result_t
+    C0->>C1: IPC_SignalResultReady(seq)
+    alt face detected
+        C1->>LCD: draw bounding box
+        C1->>SD: save BMP snapshot (rate-limited, 1/sec)
+    end
+    C1->>LCD: push full frame
+    C1->>Cam: CAMERA_CAPTURE_Reinit() - resume DMA
+```
+
+### 7.4 How data actually moves
+
+Both cores physically share one fixed RAM region
+(`source/shared/ipc_layout.h`, carved out of core0's `m_data` since a
+153,600-byte QVGA frame doesn't fit in core1's own 104KB region at all).
+Nothing is copied across cores — both sides read/write the exact same
+physical bytes through fixed addresses; only a 16-bit sequence number
+actually travels through the doorbell interrupt itself.
+
+| Data | Written by | Read by | Only safe when |
+|---|---|---|---|
+| Camera frame buffer (`IPC_FRAME_BUFFER_ADDR`, 153,600B) | SmartDMA, via core1 | core0 (inference), core1 (LCD push) | Between core1's `CAMERA_CAPTURE_Deinit()` and `Reinit()` - DMA is stopped, buffer is frozen |
+| AI result (`IPC_RESULT_ADDR`, `ai_ipc_result_t`) | core0, after inference | core1, after `IPC_SignalResultReady()` | Any time after the doorbell for that frame's sequence number |
+| Sequence number | Both (via the doorbell payload) | Both | Used to detect a stale/late reply, not to move real data |
+
+The AI result uses its **own** plain-data struct (`ai_ipc_result_t`), not
+`model_runner.h`'s `ai_model_result_t` — that struct's label field is a
+`const char *` into core0's own flash, meaningless as a value copied into
+shared RAM for core1 to dereference. `ai_ipc_result_t` inlines the label
+as a fixed byte array instead, so the whole struct is safe to read/write
+as plain bytes from either core.
 </content>

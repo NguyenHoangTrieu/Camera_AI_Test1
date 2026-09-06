@@ -1,48 +1,16 @@
 /*
  * lcd_spi_hw.c - see lcd_spi_hw.h
  *
- * Hardware LPSPI1 SPI (mode 0: CPOL=0/CPHA=0, MSB first) LCD driver for
- * the Arduino header's 2.4" SPI TFT module (ILI9341-family), sharing the
- * bus with the onboard microSD slot (source/storage/sd_spi_disk.c) and
- * touch controller (source/display/touch_xpt2046.c) - see spi1_bus.h for
- * the sharing contract. CS/DC/RST/BLK are plain GPIO; SCK/SDI/SDO ride the
- * LPSPI1 peripheral (muxed in pin_mux.c's BOARD_InitSdCardPins(), which
- * now brings up the whole shared bus, not just the SD card's own PCS0/D10
- * pin - see that function's comment).
+ * Hardware LPSPI1 SPI (mode 0, MSB first) LCD driver for the Arduino
+ * header's 2.4" SPI TFT module (ILI9341-family), sharing the bus with the
+ * onboard microSD slot and touch controller - see spi1_bus.h for the
+ * sharing contract. CS/DC/RST/BLK are plain GPIO; SCK/SDI/SDO ride LPSPI1.
  *
- * Same MIPI-DCS command set as the earlier bit-banged 8080-parallel and
- * SPI drivers - only the byte-transfer mechanism changes.
- *
- * CONFIRMED on real hardware (2026-09-04, see WORKLOG.md): boots, shows a
- * correctly oriented (no MV/rotation fix needed) camera-preview image with
- * no bus-sharing corruption from the microSD slot. BGR bit in MADCTL
- * needed flipping vs. the earlier parallel panel - see LCD_InitPanel()'s
- * comment below.
- *
- * fps history (full trail in WORKLOG.md's 2026-09-04 entries): measured
- * 2fps at 24MHz SPI against a ~19-20fps best-case math prediction -
- * fixed a missing kLPSPI_MasterPcsContinuous flag (see LCD_WriteByte()'s
- * comment) for 2->5fps, then a stale delay-register bug in
- * spi1_bus.c's SPI1_BUS_SetBaudRate() for 5->7fps - both real,
- * individually confirmed on real hardware (the second via a
- * self-directed SWD register read, not just serial timing). **7fps is
- * this file's current CONFIRMED-working state.** A chunk-size experiment
- * proved neither of those two fixes was the full remaining story: 153,600
- * individual byte-wise TX FIFO register pokes per frame (fsl_lpspi.c's
- * blocking-transfer design) is the remaining dominant cost, and an eDMA
- * rewrite (LCD_PushPixelsOpen() using spi1_bus.c's
- * SPI1_BUS_TransferBytesDMA() instead of SPI1_BUS_TransferBlocking()) was
- * ATTEMPTED to remove it, in two variants (16-bit SPI frames, then 8-bit
- * matching mcuxsdk's own tested lpspi/edma_b2b_transfer reference
- * example) - both hung on real hardware (CONFIRMED via live SWD register
- * reads: the TX eDMA channel completes, but the RX eDMA channel - whose
- * completion the SDK's LPSPI+eDMA driver waits on even for a TX-only
- * transfer - never signals done, root cause not found despite verifying
- * clock config/channel-mux IDs/NVIC enable were all correct). Reverted to
- * the CPU-polled path below rather than risk a non-functional display -
- * spi1_bus.c's SPI1_BUS_TransferBytesDMA() is left in place, unused, for
- * a future session to pick back up; see WORKLOG.md for the full
- * investigation and what's already been ruled out.
+ * Confirmed on real hardware: correct orientation, no bus-sharing
+ * corruption, 7fps at 24MHz SPI (see WORKLOG.md for the fps-tuning trail
+ * and the eDMA rewrite that was attempted and abandoned - hung on real
+ * hardware, root cause not found - spi1_bus.c's SPI1_BUS_TransferBytesDMA()
+ * is left in place, unused, for a future session).
  */
 
 #include "lcd_spi_hw.h"
@@ -55,43 +23,13 @@
 #include "spi1_bus.h"
 #include <stdbool.h>
 
-/* fps math (see WORKLOG.md's 2026-09-04 entries for the full derivation
- * and history): one 320x240 RGB565 frame is 153,600 bytes = 1,228,800
- * bits of raw pixel data - at ANY given SPI clock, the wire time alone is
- * 1,228,800 / clock_Hz seconds, a hard floor no amount of software
- * optimization can beat. A ~24fps target needs that under ~40ms, i.e.
- * >=~31Mbps just for the wire, which needs a >=~35-40MHz-class SPI clock
- * to leave any real headroom - not reachable at all from this bus's
- * original 12MHz source (6MHz max baud). Requesting 24MHz here
- * (hardware_init.c switched LPSPI1's source to FRO_HF/48MHz specifically
- * for this) raises the wire-time floor to a best-case ~51ms/frame
- * (~19-20fps) - but the CPU-polled path this file currently uses (see the
- * file-header comment's fps history - an eDMA rewrite meant to close that
- * gap was attempted and reverted after hanging on real hardware) still
- * has real per-byte software overhead on top of that floor, so actual
- * measured fps (7, confirmed) is well short of the 19-20fps best case.
- * Getting past ~24fps would need both that eDMA gap closed AND an even
- * higher SPI clock (e.g. routing LPSPI1 from PLL0/150MHz instead of
- * FRO_HF/48MHz) - deliberately NOT attempted here: this project's own
- * history has an abandoned LCD bus (J8 FlexIO, also PLL0-derived) that
- * hit unresolved signal-integrity noise on this same class of breadboard
- * wiring at a considerably LOWER effective rate than a 35-40MHz SPI clock
- * would need to be. 24MHz was judged the more defensible next step.
- * SPI1_BUS_SetBaudRate() doesn't fail if 24MHz isn't exactly achievable -
- * LPSPI_MasterSetBaudRate() just clamps to the nearest achievable
- * divisor and returns that. If the image comes back glitchy/noisy/torn
- * (this project's wiring is currently breadboard-based - see WORKLOG.md -
- * worse for signal integrity at higher SPI rates than a direct/soldered
- * connection), lower this back toward 2-6MHz first before suspecting
- * anything else. */
+/* One 320x240 RGB565 frame is 153,600 bytes = 1,228,800 bits - at 24MHz
+ * that's a ~51ms wire-time floor (~19-20fps best case) no amount of
+ * software can beat. Actual measured fps (7) is short of that because the
+ * CPU-polled transfer path still has real per-byte overhead on top - see
+ * WORKLOG.md. If the image comes back glitchy/torn (this project's wiring
+ * is breadboard-based), lower this toward 2-6MHz first. */
 #ifndef LCD_SPI_BAUDRATE_HZ
-/* TEMP DIAGNOSTIC (see WORKLOG.md's 2026-09-05 follow-up): back to 24MHz -
- * the SAME clock/wiring the legacy single-core build uses successfully -
- * to isolate whether the torn/wrong-color image is really signal
- * integrity (as first, wrongly, concluded) or FreeRTOS task preemption
- * mid-transaction (see SPI1_BUS_LockNoPreempt(), spi1_bus.h/.c, now used
- * below instead of the plain mutex). If the image is clean at 24MHz with
- * this change, preemption was the real cause all along. */
 #define LCD_SPI_BAUDRATE_HZ 24000000U
 #endif
 
@@ -107,63 +45,31 @@ static void LCD_SetResetPin(bool set) {
   GPIO_PinWrite(DEMO_LCD_RST_GPIO, DEMO_LCD_RST_PIN, set ? 1U : 0U);
 }
 
-/* KNOWN UNRESOLVED ISSUE, dual-core (DUALCORE_RTOS) build only - see
- * WORKLOG.md's Stage 5 FIFTH FOLLOW-UP entry (2026-09-05) for the full
- * investigation. On real hardware, this pin's PDOR bit never reads back
- * as set no matter when/how many times GPIO_PinWrite() is called from
- * core1 - confirmed via a full 32-bit GPIO0 sweep (write all bits, read
- * back) both at boot and after LCD_InitPanel()'s ~390ms settle window:
- * 0 of 32 bits ever stuck. Pin mux, GPIO clock, AHBSC per-peripheral
- * access rules, and address aliasing were all checked live via SWD and
- * ruled out. Retry-with-verification and per-frame re-assertion were both
- * tried and did NOT fix it on real hardware - removed again rather than
- * leave dead/misleading code in place. Planned real fix (not yet done):
- * wire the panel's BLK line directly to the Arduino header's 3V3 pin
- * instead of A5 (DEMO_LCD_BLK_PIN) and delete this GPIO path entirely -
- * the code never needs to turn the backlight off, so a GPIO pin buys
- * nothing here. Do not "fix" this again with more retry/timing tweaks
- * without new evidence - both were tried and disproven this session. */
 static void LCD_SetBacklight(bool on) {
   GPIO_PinWrite(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, on ? 1U : 0U);
 }
 
-/* kLPSPI_MasterPcs1 is never muxed to a physical pin on this board (see
- * spi1_bus.h) - toggling it internally has no external effect, it's just
- * the "don't care" PCS value the transfer API requires. The real chip
- * select is DEMO_LCD_CS_GPIO/PIN, a plain GPIO bracketing every
- * transaction below.
- *
- * kLPSPI_MasterPcsContinuous matters here even though PCS1 is unrouted:
- * CONFIRMED on real hardware (2026-09-04, see WORKLOG.md) that without it,
- * fsl_lpspi.c's LPSPI_MasterTransferBlocking() treats every 8-bit frame as
- * its own PCS burst and pays the full PCS-to-SCK/SCK-to-PCS setup/hold
- * delay BETWEEN EVERY SINGLE BYTE, purely as part of the peripheral's
- * internal timing generator - independent of whether anything is
- * physically wired to the PCS pin. Measured: ~2fps for a 320x240 frame at
- * 24MHz SPI - the delay-per-byte overhead this flag removes (~2.5us/byte,
- * still calibrated to spi1_bus.c's throwaway 400kHz init baseline, since
- * SPI1_BUS_SetBaudRate() only updates the SCK divider, not those delay
- * fields) was completely swamping the actual bit-clock time
- * (~333ns/byte at 24MHz). sd_spi_disk.c's SDCARD_SPI_Exchange() already
- * passed this flag correctly for the real hardware PCS0 case - missed
- * here when this file was first written, since it seemed irrelevant for
- * an unrouted "don't care" PCS channel. It is NOT irrelevant: it still
- * controls the internal per-frame delay-insertion behavior. */
+/* kLPSPI_MasterPcs1 is never muxed to a physical pin here - it's just the
+ * "don't care" PCS value the transfer API requires; the real chip select
+ * is DEMO_LCD_CS_GPIO/PIN, plain GPIO. kLPSPI_MasterPcsContinuous still
+ * matters despite that: without it, fsl_lpspi.c inserts a full PCS
+ * setup/hold delay between every single byte regardless of physical
+ * wiring, which dominated fps until fixed (confirmed on real hardware -
+ * see WORKLOG.md). */
 static void LCD_WriteByte(uint8_t value) {
   (void)SPI1_BUS_TransferBlocking(&value, NULL, 1U, kLPSPI_MasterPcs1 | kLPSPI_MasterPcsContinuous);
 }
 
 /* Reclaim the shared bus at the LCD's own rate, then assert CS - the bus
- * may have been left at a different rate (or PCS) by the microSD slot or
- * touch controller since this driver last used it. See spi1_bus.h. */
+ * may have been left at a different rate/PCS by another device. */
 static void LCD_BeginTransaction(void) {
   (void)SPI1_BUS_SetBaudRate(LCD_SPI_BAUDRATE_HZ);
   LCD_SetCSPin(false);
 }
 
-/* Command/data helpers below assume CS is already asserted (low) by the
- * caller, so LCD_SetWindow() can keep CS asserted across multiple commands
- * and LCD_PushPixels() closes it. */
+/* Command/data helpers below assume CS is already asserted by the caller,
+ * so LCD_SetWindow() can keep CS asserted across multiple commands and
+ * LCD_PushPixels() closes it. */
 static void LCD_WriteCommandOpen(uint8_t command) {
   LCD_SetDCPin(false); /* DC low = command */
   LCD_WriteByte(command);
@@ -203,9 +109,6 @@ static void LCD_InitGpioPins(void) {
   GPIO_PinInit(DEMO_LCD_CS_GPIO, DEMO_LCD_CS_PIN, &idleHighConfig);
   GPIO_PinInit(DEMO_LCD_DC_GPIO, DEMO_LCD_DC_PIN, &outConfig);
 
-  /* Backlight: init as output and turn on immediately. See
-   * LCD_SetBacklight()'s comment - unreliable on the dual-core build,
-   * see WORKLOG.md. */
   GPIO_PinInit(DEMO_LCD_BLK_GPIO, DEMO_LCD_BLK_PIN, &outConfig);
   LCD_SetBacklight(true);
 }
@@ -224,15 +127,10 @@ static void LCD_InitPanel(void) {
   LCD_WriteCommand(0x11U); /* Sleep out */
   SDK_DelayAtLeastUs(150000, SystemCoreClock);
 
-  /* MADCTL: memory access control. MV=1 (row/column exchange) matches this
-   * panel's native 240x320 GRAM to the camera's 320x240 landscape buffer.
-   * BGR=1 (0x28) was confirmed correct on the earlier PARALLEL panel, but
-   * CONFIRMED WRONG on this SPI panel on real hardware (2026-09-04): image
-   * came out with a strong blue/cyan cast over the whole picture - the
-   * classic symptom of the panel decoding incoming RGB565 pixel data in
-   * the opposite channel order it's actually sent in. BGR=0 (0x20) fixes
-   * it - this SPI panel's controller apparently wants RGB order, unlike
-   * the old parallel one. See WORKLOG.md. */
+  /* MADCTL: MV=1 (row/column exchange) matches this panel's native
+   * 240x320 GRAM to the camera's 320x240 landscape buffer. BGR=0 (0x20) -
+   * confirmed on real hardware that BGR=1 (correct on the earlier
+   * parallel panel) gives a blue/cyan cast on this SPI panel. */
   LCD_WriteCommandData(0x36U, (const uint8_t[]){0x20U}, 1U);
 
   LCD_WriteCommandData(0x3AU, (const uint8_t[]){0x55U},
@@ -246,13 +144,9 @@ void LCD_Init(void) {
   PRINTF("LCD: hardware SPI (LPSPI1, shared bus) on the Arduino header\r\n");
   SPI1_BUS_Init();
 
-  /* DIAGNOSTIC (2026-09-04, see WORKLOG.md): fps stayed far below the
-   * ~19-20fps math predicted for 24MHz even after fixing the missing
-   * kLPSPI_MasterPcsContinuous flag (2fps -> 5fps, not the expected jump).
-   * Printing the actual achieved baud rate directly, instead of trusting
-   * LCD_SPI_BAUDRATE_HZ was really reached - if this doesn't read close to
-   * 24000000, the clock-source change in hardware_init.c isn't taking
-   * effect the way its comment assumes. */
+  /* Prints the actually-achieved baud rate, not just the requested one -
+   * confirms the clock-source setup in hardware_init.c is really taking
+   * effect. */
   uint32_t srcClockHz = SPI1_BUS_GetSourceClockFreq();
   uint32_t achievedHz = SPI1_BUS_SetBaudRate(LCD_SPI_BAUDRATE_HZ);
   PRINTF("LCD: SPI1 source clock = %u Hz, requested %u Hz, achieved %u Hz\r\n",
@@ -260,12 +154,9 @@ void LCD_Init(void) {
 
   LCD_InitGpioPins();
 #ifdef DUALCORE_RTOS
-  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_LockNoPreempt()
-   * comment (WORKLOG.md, Stage 4 + 2026-09-05 follow-up): a boot-time race
-   * against a concurrent SNAPSHOT_Init()/disk_initialize() is possible
-   * too, and the panel init sequence is exactly the kind of multi-command,
-   * timing-sensitive CS-held-low transaction that a scheduler preemption
-   * mid-sequence can corrupt. */
+  /* Dual-core build only: protects the panel init sequence (a multi-
+   * command, CS-held-low transaction) from scheduler preemption and a
+   * boot-time race against SNAPSHOT_Init() - see spi1_bus.h. */
   SPI1_BUS_LockNoPreempt();
 #endif
   LCD_InitPanel();
@@ -289,39 +180,11 @@ void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
   /* CS stays asserted - LCD_PushPixels() closes it. */
 }
 
-/* eDMA (SPI1_BUS_TransferBytesDMA(), spi1_bus.c) was ATTEMPTED here
- * (2026-09-04, see WORKLOG.md's "DMA" entries), hung on real hardware, and
- * was reverted to the CPU-polled path below as a stopgap - then, in a
- * later session the same day, ROOT-CAUSED AND FIXED: a live register trace
- * (SPI1_BUS_RunDmaDiagnostic(), spi1_bus.c) showed the RX eDMA channel
- * waiting forever because TCR.RXMSK was stuck at 1 (RX data masked/
- * discarded, never stored to the RX FIFO) - left over from THIS FILE's own
- * LCD_WriteByte()/command calls, which always pass rxData=NULL to
- * SPI1_BUS_TransferBlocking(), and fsl_lpspi.c's LPSPI_MasterTransferBlocking()
- * sets TCR.RXMSK=1 whenever rxData is NULL. LPSPI_MasterTransferPrepareEDMALite()
- * never clears that bit (only touches CONT/CONTC/BYSW/PCS), so the eDMA
- * pixel-push always inherited it, and the RX FIFO could never reach its
- * DMA watermark. Fixed in SPI1_BUS_TransferBytesDMA() (spi1_bus.c) -
- * confirmed via the same live register trace that the eDMA transfer now
- * completes normally. Back on eDMA here as a result. The panel wants
- * MSB-first bytes per pixel, but the RGB565 source buffer is native
- * (little-endian) uint16_t order, so the bytes are swapped into this
- * small static scratch buffer before each chunk's SPI call (unchanged from
- * the CPU-polled version - 8-bit frames still need this, matching
- * mcuxsdk's own tested lpspi/edma_b2b_transfer reference example).
- *
- * fps follow-up (2026-09-04, see WORKLOG.md): the first working version of
- * this function called SPI1_BUS_PrepareDMA()'s underlying setup on EVERY
- * chunk (19x/frame at this chunk size) and only measured 7fps -> 8fps -
- * far short of the ~19-20fps bit-clock ceiling. Measured per-chunk time
- * (~23.7ms) vs. the theoretical bit-clock time for one chunk (~2.7ms at
- * 24MHz) pointed at Prepare()'s own per-call cost (module disable/FIFO-
- * flush/re-enable) as the new dominant cost, the same *class* of problem
- * the CPU-polled path had earlier in this file. mcuxsdk's own reference
- * example (examples/_boards/frdmmcxn947/driver_examples/lpspi/edma_b2b_transfer)
- * calls its Prepare-equivalent ONCE and transfers repeatedly - moved to
- * that pattern here: SPI1_BUS_PrepareDMA() now runs once per
- * LCD_PushPixelsOpen() call, not once per chunk. */
+/* eDMA pixel push. The panel wants MSB-first bytes per pixel, but the
+ * source buffer is native (little-endian) uint16_t, so bytes are swapped
+ * into this scratch buffer before each chunk. SPI1_BUS_PrepareDMA() runs
+ * once per call, not once per chunk - the per-call setup cost otherwise
+ * dominated fps (see WORKLOG.md). */
 #define LCD_SPI_CHUNK_PIXELS 4096U
 static uint8_t s_pixelSwapBuf[LCD_SPI_CHUNK_PIXELS * 2U];
 
@@ -349,37 +212,16 @@ void LCD_PushPixels(const uint16_t *pixels, uint32_t count) {
   LCD_EndWindow();
 }
 
-/* Per-frame LCD push time was measured and confirmed stable at ~56.9ms
- * (near the ~51ms bit-clock floor for a 320x240 push at 24MHz) across
- * multiple earlier sessions - see WORKLOG.md. The DWT-based diagnostic
- * that used to live here (function-static counters, printed once/sec)
- * was REMOVED (2026-09-04, see WORKLOG.md's tearing-fix entry): once
- * main.c's camera-preview loop started calling
- * CAMERA_CAPTURE_Deinit()/Reinit() every frame (to fix a real tearing
- * bug), those specific static counters started reading back garbage
- * (billions of "frames", nonsense window durations) - narrowed down to
- * their memory landing directly adjacent to camera_capture.c's SmartDMA
- * parameter/stack statics (confirmed via `nm`), but the exact write that
- * corrupts them was NOT fully root-caused (doubling the SmartDMA stack
- * size didn't fix it either - see WORKLOG.md for what was ruled out).
- * Removed rather than ship a diagnostic that prints nonsense - the LCD
- * push mechanism itself is unchanged by the tearing fix, so the
- * previously-measured ~56.9ms/frame number is still the right one to
- * cite. main.c's own fps/wait-for-frame counters (plain stack locals, not
- * statics living in this danger zone) remained reliable throughout and
+/* Per-frame push time measured stable at ~56.9ms (near the ~51ms
+ * bit-clock floor at 24MHz) - see WORKLOG.md. main.c's own fps counters
  * are the diagnostic to trust if this needs re-measuring. */
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height,
                    const uint16_t *pixels) {
 #ifdef DUALCORE_RTOS
-  /* Dual-core RTOS build only - see spi1_bus.h's SPI1_BUS_LockNoPreempt()
-   * comment (WORKLOG.md, Stage 4 + 2026-09-05 follow-up). Was the plain
-   * SPI1_BUS_Lock()/Unlock() mutex, which stops StorageTask's own bus
-   * traffic but NOT the scheduler from preempting THIS task mid-sequence
-   * (round-robin time-slicing against StorageTask, equal priority) -
-   * confirmed on real hardware that the identical code/wiring/24MHz clock
-   * that works in the legacy bare-metal build (zero preemption on this
-   * code path there) produced a torn/wrong-color image here; switching to
-   * the stricter no-preempt lock is the direct test of that theory. */
+  /* Dual-core build only: a plain mutex stops other tasks' bus traffic
+   * but not the scheduler from preempting THIS task mid-transaction,
+   * which produced a torn/wrong-color image on real hardware - the
+   * no-preempt lock fixed it (see spi1_bus.h/WORKLOG.md). */
   SPI1_BUS_LockNoPreempt();
 #endif
   LCD_SetWindow(x0, y0, (uint16_t)(x0 + width - 1U),

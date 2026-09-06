@@ -1,14 +1,8 @@
 /*
  * hardware_init.c - core1 (Camera_AI_Test1 dual-core RTOS migration - see
- * WORKLOG.md).
- *
- * Stage 3: camera + LCD clock/pin bring-up moved here from the legacy
- * board_port/cm33_core0/hardware_init.c - copied verbatim (same clock
- * sources, same real-hardware-confirmed fixes: FRO_HF-sourced camera XCLK,
- * FRO_HF-sourced shared LPSPI1 clock - see that file's comments/WORKLOG.md
- * for the full history of each). USB-HS/regulator-Overdrive code is NOT
- * carried over - USB streaming is abandoned and out of scope for the
- * dual-core build (see ARCHITECTURE.md Sec.4).
+ * WORKLOG.md). Camera + LCD clock/pin bring-up, same sources as the
+ * legacy core0 hardware_init.c (see that file for the fix history).
+ * No USB-HS/Overdrive code - USB streaming is out of scope here.
  */
 
 #include "pin_mux.h"
@@ -19,13 +13,9 @@
 #include "fsl_inputmux.h"
 #include "fsl_spc.h"
 
-/*
- * CONFIRMED (see WORKLOG.md): SmartDMA camera capture only runs reliably
- * with DCDC_VDD_LVL at Mid (1.0V) - any other level stops it after ~2
- * frames, silently. core1 never needs Overdrive (no USB here), so unlike
- * the legacy core0 hardware_init.c this is a one-shot boot-time set, not a
- * pair of helpers callers flip between.
- */
+/* SmartDMA camera capture only runs reliably at DCDC Mid voltage (1.0V) -
+ * see WORKLOG.md. core1 never needs Overdrive (no USB here), so this is a
+ * one-shot boot-time set, not a pair of helpers to flip between. */
 static void BOARD_SetRegulatorsMidVoltage(void)
 {
     spc_active_mode_core_ldo_option_t ldoOpt = {
@@ -61,13 +51,7 @@ void BOARD_InitHardware(void)
     CLOCK_AttachClk(kFRO_HF_to_CLKOUT);
     CLOCK_SetClkDiv(kCLOCK_DivClkOut, 2U);
 
-    /* GPIO module clocks for the LCD pins (GPIO0, Arduino header). GPIO1
-     * added for LCD_DC specifically (WORKLOG.md, dual-core Stage 5 SEVENTH
-     * FOLLOW-UP) - moved off GPIO0 (Arduino D3/P1_23 instead of A2/P0_14)
-     * after live SWD reads confirmed core1 can't reliably write that one
-     * GPIO0 bit, while CS/RST/BLK (same peripheral, different bits) work
-     * fine. Not needed by core0's hardware_init.c - core0 never touches
-     * these pins in the dual-core build. */
+    /* GPIO0 for most LCD pins, GPIO1 for DC (Arduino D3 - see app.h). */
     CLOCK_EnableClock(kCLOCK_Gpio0);
     CLOCK_EnableClock(kCLOCK_Gpio1);
 

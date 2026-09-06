@@ -1,24 +1,13 @@
 /*
  * main_core0.c - Camera_AI_Test1 dual-core RTOS migration (see WORKLOG.md).
  *
- * Stage 1 (confirmed on real hardware): boot core1 via MCMGR, copy-to-RAM
- * path - see app.h's comment for the whole embed mechanism.
- * Stage 2 (confirmed on real hardware): FreeRTOS scheduler on core0 + one
- * MCMGR event round-trip - proved the ISR-safe IPC design end-to-end
- * (source/shared/ipc_events.c). That demo task is retired now that Stage 5
- * (this revision) gives this core its real job.
- * Stage 3-4: core0 had no work yet (camera/LCD/SD all live on core1) - just
- * booted core1 and idled.
- * Stage 5 (this revision): AI inference. AiInferenceTask blocks on core1's
- * IPC_SignalFrameReady() doorbell (source/shared/ipc_events.h), reads the
- * shared frame buffer (source/shared/ipc_layout.h - only safe to read
- * between core1's CAMERA_CAPTURE_Deinit()/Reinit() calls, which is exactly
- * the window core1 blocks in waiting for this task's reply), runs
- * inference via the same model_runner.h API the legacy single-core build
- * uses unmodified, writes the result into the shared region as a plain-
- * data ai_ipc_result_t (not the pointer-carrying ai_model_result_t - see
- * ipc_layout.h's comment for why), and replies with
- * IPC_SignalResultReady() carrying the same frame sequence number.
+ * This core boots core1 via MCMGR, then just runs AI inference:
+ * AiInferenceTask blocks on core1's frame-ready doorbell, reads the
+ * shared frame buffer (only safe between core1's Deinit()/Reinit() calls -
+ * see ipc_events.h), runs inference via the same model_runner.h API the
+ * legacy single-core build uses, writes the result to shared RAM as a
+ * plain-data struct (ipc_layout.h - not the pointer-carrying
+ * ai_model_result_t), and replies with IPC_SignalResultReady().
  */
 #include <string.h>
 #include "fsl_debug_console.h"
@@ -85,19 +74,10 @@ int main(void)
 
     PRINTF("\r\nCamera_AI_Test1 - core0 (dual-core Stage 5: AI inference)\r\n");
 
-    /* Grant core1 permission to drive the LCD control pins it owns
-     * (WORKLOG.md, dual-core Stage 5 SEVENTH FOLLOW-UP) - months of "core1's
-     * GPIO write doesn't stick" investigation turned out to match a known
-     * MCXN947 issue (NXP Community: "MCXN947 failed to control GPIO in
-     * slave core (CPU1)"): core1 has no SAU, so it's always Non-Secure, and
-     * GPIO gates Non-Secure access per pin via its own PCNS register -
-     * every pin reads back Secure-only (PCNS=0) after reset. Must happen on
-     * core0 (the only core with a SAU, so the only one that can act Secure)
-     * BEFORE MCMGR_StartCore() below releases core1, same boot-ordering
-     * reason as everything else in this function - PCNS is a plain
-     * register, not a FreeRTOS API, so this is safe here. Pin numbers
-     * hardcoded to match core1's own app.h (DEMO_LCD_*_GPIO/PIN) - core0
-     * can't include core1's board_port headers. */
+    /* core1 has no SAU (always Non-Secure) - grant it GPIO access to its
+     * own LCD pins before releasing it below, or its writes silently do
+     * nothing (see WORKLOG.md, KNOWLEDGE.md §9). Pin numbers must match
+     * core1/app.h - can't include that header from here. */
     GPIO0->PCNS |= GPIO_PCNS_NSE15_MASK  /* LCD RST, P0_15 */
                  | GPIO_PCNS_NSE22_MASK  /* LCD CS,  P0_22 */
                  | GPIO_PCNS_NSE23_MASK; /* LCD BLK, P0_23 */
@@ -110,23 +90,10 @@ int main(void)
     memcpy((void *)(uintptr_t)CORE1_BOOT_ADDRESS, CORE1_IMAGE_START, core1_image_size);
 #endif
 
-    /* CONFIRMED on real hardware (WORKLOG.md, Stage 5 bring-up): calling
-     * ANY FreeRTOS API (xTaskCreate() - and, separately, just
-     * IPC_EVENTS_RegisterHandler(), tested independently) BEFORE
-     * MCMGR_StartCore() hangs the boot handshake completely - core0 stuck
-     * forever in MCMGR_StartCore()'s busy-wait, core1 stuck forever in its
-     * own MCMGR_GetStartupData() call (confirmed via SWD halt on both
-     * cores: core1's PC was static across a 200ms resume/re-halt, i.e.
-     * truly stuck, not just sampled mid-poll). Exact mechanism not fully
-     * root-caused (plausibly an interrupt-priority/BASEPRI side effect of
-     * FreeRTOS critical-section macros running before the scheduler has
-     * initialized anything, interfering with the mailbox IRQ the boot
-     * handshake depends on - not confirmed to that level of detail).
-     * MCMGR_StartCore() itself is plain C, not a FreeRTOS API - safe to
-     * call from this fully bare-metal, pre-scheduler context, which is
-     * exactly why boot ordering matters here: finish ALL of core0<->core1's
-     * MCMGR-level handshaking FIRST, only touch FreeRTOS (xTaskCreate(),
-     * IPC_EVENTS_RegisterHandler()) after. */
+    /* Calling any FreeRTOS API before MCMGR_StartCore() hangs the boot
+     * handshake completely (confirmed on real hardware - see WORKLOG.md).
+     * MCMGR_StartCore() itself is plain C, safe to call pre-scheduler -
+     * finish the whole MCMGR handshake first, only touch FreeRTOS after. */
     PRINTF("core0: starting core1...\r\n");
     MCMGR_StartCore(kMCMGR_Core1, (void *)(uintptr_t)CORE1_BOOT_ADDRESS, 0, kMCMGR_Start_Synchronous);
     PRINTF("core0: core1 started.\r\n");

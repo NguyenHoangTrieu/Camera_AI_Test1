@@ -29,13 +29,10 @@
 #define SNAPSHOT_RATE_LIMIT_MS 1000U
 
 /* How long the LCD's CAPTURE notice line stays lit after a save -
- * DELIBERATELY LONGER than SNAPSHOT_RATE_LIMIT_MS (was the same value
- * originally; CONFIRMED on real hardware 2026-08-25 that 1 second is too
- * short for a person to notice a capture happened and react in time to
- * look at/photograph the LCD - see WORKLOG.md). A new capture can become
- * possible again before this notice clears; that's fine, it's a
- * human-facing indicator, not a machine-readable capture-in-progress
- * flag. */
+ * deliberately longer than SNAPSHOT_RATE_LIMIT_MS (1s was confirmed too
+ * short for a person to notice and react - see WORKLOG.md). A new capture
+ * can become possible again before this notice clears; that's fine, it's
+ * a human-facing indicator, not a capture-in-progress flag. */
 #define SNAPSHOT_NOTICE_DURATION_MS 4000U
 
 static bool s_sdReady        = false;
@@ -163,12 +160,8 @@ void SNAPSHOT_Init(void)
                "  to rule out a CSD/capacity-detection mismatch.\r\n",
                (unsigned)(SDCARD_DISK_GetCapacityBytes() / (1024ULL * 1024ULL)));
 
-        /* Diagnostic (WORKLOG.md, Stage 4 follow-up): a real write failure
-         * ("could not create a new file" / write returning short) has two
-         * live theories - a near-full card (this card already has 30+
-         * full-size 150KB snapshots from earlier sessions) or a residual
-         * concurrency gap. Printing free space directly settles which one
-         * it is instead of guessing from log timing alone. */
+        /* Prints free space directly so a future write failure can be
+         * checked against "card is just full" instead of guessed at. */
         DWORD freeClusters;
         FATFS *fs;
         if (f_getfree("", &freeClusters, &fs) == FR_OK)
@@ -227,14 +220,9 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
                       (int)((float)box->width * scaleX), (int)((float)box->height * scaleY), 0x07E0U /* green */);
     }
 
-    /* Timed the same way AI_MODEL_RunInference() times itself
-     * (model_runner.cpp/model_runner_npu.cpp) - DWT cycle counter ->
-     * microseconds via SystemCoreClock - covers file-create through
-     * f_close(), i.e. everything that actually touches the SD card for
-     * this capture. Added 2026-08-25 because the pipeline visibly pauses
-     * during a save and the SD card's actual real-world write speed
-     * (SDSC/SDHC, card quality, FAT overhead...) was otherwise a total
-     * unknown - see WORKLOG.md for the first measurements taken with it. */
+    /* Timed the same way AI_MODEL_RunInference() times itself (DWT cycle
+     * counter) - covers file-create through f_close(), since the actual
+     * SD write speed was otherwise a total unknown (see WORKLOG.md). */
     uint32_t writeCycStart = DWT->CYCCNT;
 
     FIL file;
