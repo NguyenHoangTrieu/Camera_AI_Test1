@@ -1,17 +1,23 @@
 /*
- * lcd_bitbang.h - GPIO bit-bang LCD driver (8080 8-bit bus).
+ * lcd_spi_hw.h - hardware LPSPI1 LCD driver (4-wire SPI, mode 0), shared
+ * bus.
  *
- * Same public API as lcd_flexio_mculcd.h and lcd_spi_bitbang.h (the
- * Arduino header's SPI panel driver). Pin set comes from app.h's
- * DEMO_LCD_* macros - J8 header only (see CMakeLists.txt's
- * LCD_BITBANG_DIAGNOSTIC).
+ * Drives the Arduino-header 2.4" SPI TFT module (ILI9341-family: CS/RESET/
+ * DC/SDI(MOSI)/SCK/LED) over the same physical LPSPI1 bus as the onboard
+ * microSD slot and touch controller - see spi1_bus.h for how the sharing
+ * works. Same public API as lcd_bitbang.h (the earlier 8-bit-parallel/8080
+ * driver, still used for the abandoned J8 header path) and
+ * lcd_flexio_mculcd.h, so main.c/text_overlay.c/bbox_overlay.c don't
+ * change no matter which backend is active. Pin set comes from app.h's
+ * DEMO_LCD_* macros.
  */
-#ifndef _LCD_BITBANG_H_
-#define _LCD_BITBANG_H_
+#ifndef _LCD_SPI_HW_H_
+#define _LCD_SPI_HW_H_
 
 #include <stdint.h>
 
-/*! @brief Init the bit-banged GPIO bus and reset/configure the panel. */
+/*! @brief Init the shared SPI bus (if not already done) and reset/
+ *  configure the panel. */
 void LCD_Init(void);
 
 /*! @brief Set the active drawing window (inclusive pixel coordinates) and push pixels. */
@@ -37,4 +43,4 @@ void LCD_EndWindow(void);
 /*! @brief Convenience: set window then push a full width*height block. */
 void LCD_DrawImage(uint16_t x0, uint16_t y0, uint16_t width, uint16_t height, const uint16_t *pixels);
 
-#endif /* _LCD_BITBANG_H_ */
+#endif /* _LCD_SPI_HW_H_ */

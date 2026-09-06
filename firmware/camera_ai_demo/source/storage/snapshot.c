@@ -115,6 +115,8 @@ static FRESULT SNAPSHOT_OpenNextFile(FIL *file, char *name)
             }
             if (fr != FR_EXIST)
             {
+                PRINTF("Snapshot: f_open(%s, CREATE_NEW) failed with FRESULT=%d during first-call probing.\r\n", name,
+                       (int)fr);
                 return fr; /* real error (no card, full filesystem, ...) - stop probing. */
             }
         }
@@ -154,6 +156,27 @@ void SNAPSHOT_Init(void)
     else
     {
         PRINTF("Snapshot: SD card ready.\r\n");
+        /* debug_console_lite's PRINTF doesn't reliably support %llu (see
+         * WORKLOG.md) - print MB as a plain uint32_t instead, plenty of
+         * range for comparing against a card's known real capacity. */
+        PRINTF("Snapshot: driver-detected capacity = %u MB - compare against the card's real, known capacity\r\n"
+               "  to rule out a CSD/capacity-detection mismatch.\r\n",
+               (unsigned)(SDCARD_DISK_GetCapacityBytes() / (1024ULL * 1024ULL)));
+
+        /* Diagnostic (WORKLOG.md, Stage 4 follow-up): a real write failure
+         * ("could not create a new file" / write returning short) has two
+         * live theories - a near-full card (this card already has 30+
+         * full-size 150KB snapshots from earlier sessions) or a residual
+         * concurrency gap. Printing free space directly settles which one
+         * it is instead of guessing from log timing alone. */
+        DWORD freeClusters;
+        FATFS *fs;
+        if (f_getfree("", &freeClusters, &fs) == FR_OK)
+        {
+            uint32_t freeBytes = (uint32_t)freeClusters * fs->csize * 512U;
+            PRINTF("Snapshot: %u bytes free (%u KB) on the SD card.\r\n", (unsigned)freeBytes,
+                   (unsigned)(freeBytes / 1024U));
+        }
     }
 }
 
@@ -216,9 +239,11 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
 
     FIL file;
     char name[SNAPSHOT_NAME_LEN];
-    if (SNAPSHOT_OpenNextFile(&file, name) != FR_OK)
+    FRESULT openResult = SNAPSHOT_OpenNextFile(&file, name);
+    if (openResult != FR_OK)
     {
-        PRINTF("Snapshot: could not create a new file on the SD card.\r\n");
+        PRINTF("Snapshot: could not create a new file on the SD card (FRESULT=%d, next index tried=%u).\r\n",
+               (int)openResult, (unsigned)s_nextIndex);
         return false;
     }
 
@@ -226,9 +251,22 @@ bool SNAPSHOT_OnFrame(uint16_t *frame, uint16_t frameWidth, uint16_t frameHeight
     uint8_t header[BMP_HEADER_SIZE];
     SNAPSHOT_BuildBmpHeader(header, frameWidth, frameHeight, pixelBytes);
 
-    UINT written;
-    bool ok = (f_write(&file, header, BMP_HEADER_SIZE, &written) == FR_OK) && (written == BMP_HEADER_SIZE) &&
-              (f_write(&file, frame, pixelBytes, &written) == FR_OK) && (written == pixelBytes);
+    UINT headerWritten = 0U;
+    UINT pixelsWritten  = 0U;
+    FRESULT headerResult = f_write(&file, header, BMP_HEADER_SIZE, &headerWritten);
+    FRESULT pixelResult  = FR_OK;
+    if (headerResult == FR_OK && headerWritten == BMP_HEADER_SIZE)
+    {
+        pixelResult = f_write(&file, frame, pixelBytes, &pixelsWritten);
+    }
+    bool ok = (headerResult == FR_OK) && (headerWritten == BMP_HEADER_SIZE) && (pixelResult == FR_OK) &&
+              (pixelsWritten == pixelBytes);
+    if (!ok)
+    {
+        PRINTF("Snapshot: write detail - header FRESULT=%d wrote %u/%u, pixel FRESULT=%d wrote %u/%u.\r\n",
+               (int)headerResult, (unsigned)headerWritten, (unsigned)BMP_HEADER_SIZE, (int)pixelResult,
+               (unsigned)pixelsWritten, (unsigned)pixelBytes);
+    }
     f_close(&file);
 
     uint32_t writeElapsedUs =

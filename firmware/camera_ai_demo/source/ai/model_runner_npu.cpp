@@ -74,7 +74,19 @@
 #define NPU_MODEL_GRID_WIDTH 9U
 #define NPU_MODEL_GRID_HEIGHT 9U
 #define NPU_MODEL_CLASS_COUNT 1U /* +1 implicit background channel in the raw tensor */
-#define NPU_MODEL_DETECTION_THRESHOLD 0.5f /* matches model_variables.h's .threshold */
+/* Raised from 0.5 (WORKLOG.md, dual-core Stage 5 follow-up) - real hardware
+ * testing showed frequent false "face" detections in the 0.5-0.65 range on
+ * plain walls/floors (a real accuracy limit of this single-class model on
+ * scenes unlike its training data, not a pipeline bug - the frame buffer
+ * feeding inference was independently confirmed to hold real, correct
+ * pixel data at this point). This is now a DELIBERATE deviation from the
+ * Edge Impulse export's own calibrated default (model_variables.h's
+ * `.threshold = 0.5`) - a user tradeoff choice (fewer false positives,
+ * accepting some risk of missing weaker real detections), not a bug fix.
+ * First tried 0.7 (confirmed zero false positives in a 15s test that
+ * previously showed several); user asked to settle at 0.65 instead -
+ * still comfortably above the 0.5-0.65 false-positive band observed. */
+#define NPU_MODEL_DETECTION_THRESHOLD 0.65f
 
 static const char *const s_labels[NPU_MODEL_CLASS_COUNT] = {"face"};
 

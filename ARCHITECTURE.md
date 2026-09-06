@@ -87,24 +87,53 @@ model's convolution-heavy layers without CPU involvement.
   (scale ≈ 1/255, zero_point = -128) — no runtime division/multiplication
   needed, convenient on an MCU without a FPU-heavy quantization path.
 
-### Display — `source/display/lcd_bitbang.c` (default) / `lcd_flexio_mculcd.c` (abandoned)
+### Display — `source/display/lcd_spi_hw.c` (default) / `lcd_bitbang.c`, `lcd_flexio_mculcd.c` (abandoned J8 path)
 
 - **Responsibility:** draw fixed text status lines (`FACE: 1`/`0`,
-  `CAPTURE: 1`/`0`) via GPIO bit-bang 8080 bus on the Arduino header.
+  `CAPTURE: 1`/`0`) via hardware LPSPI1 on the Arduino header (previously
+  bit-banged 8080 parallel, then bit-banged SPI, before settling on
+  hardware SPI shared with the microSD/touch bus - see WORKLOG.md).
 - **Key APIs:** `LCD_Init()`, `LCD_InitPanel()` (generic MIPI-DCS init
   sequence, works across ILI9481/ILI9486/HX8357/ST7796-family panels),
   `DEMO_DrawStatusLine()` in `main.c`.
+
+### Shared SPI bus — `source/spi1_bus.c` (LCD + microSD + touch)
+
+- **Responsibility:** own the single hardware LPSPI1 peripheral all three
+  Arduino-header SPI devices ride (see `source/spi1_bus.h`'s file
+  comment for the full sharing contract). Only the microSD slot uses the
+  peripheral's real hardware chip-select (PCS0/D10 - `SDSPI_Init()` needs
+  runtime PCS-polarity flipping that only works through real PCS
+  hardware); the LCD and touch controller each use a plain GPIO pin for
+  CS instead, transferring via `kLPSPI_MasterPcs1` (a PCS channel never
+  muxed to a physical pin on this board, so it's a "don't care" value).
+- **Key APIs:** `SPI1_BUS_Init()` (idempotent - safe to call from every
+  device driver's own init), `SPI1_BUS_SetBaudRate()` (must be called
+  right before every transaction, not just once - see below),
+  `SPI1_BUS_TransferBlocking()`.
+- **Why per-transaction baud-rate reclaiming is required:** the three
+  devices need different SPI speeds (SD: 400kHz during card
+  identification, then up to `SD_SPI_OPERATING_BAUDRATE`; LCD/touch: their
+  own conservative starting baud rates), and `main.c`'s loop interleaves
+  LCD draws with SD snapshot writes every frame. `sd_spi_disk.c`'s
+  `disk_read()`/`disk_write()` and `lcd_spi_hw.c`'s
+  `LCD_BeginTransaction()`/`touch_xpt2046.c`'s `TOUCH_ReadChannel()` each
+  call `SPI1_BUS_SetBaudRate()` immediately before their own transfer, so
+  whichever rate the bus was left at by the last device to use it doesn't
+  matter. `SDSPI_Init()` itself is the one exception that doesn't need
+  this: `middleware/sdmmc/sdspi/fsl_sdspi.c` already re-asserts the
+  400kHz identification speed unconditionally at its own start.
+- **UNTESTED on real hardware** - see WORKLOG.md and README.md's Known
+  Limitations. This is the newest and highest-risk part of the LCD/SD/
+  touch integration.
 
 ### SD card snapshot — `source/storage/sd_spi_disk.c` + `snapshot.c`
 
 - **Responsibility:** on face detection, draw a box into the camera frame
   buffer (`bbox_overlay.c`, shared with the abandoned live-image LCD path)
-  and save it as a BMP to the microSD card on the TFT shield (Arduino
-  D10..D13), rate-limited to 1 capture/sec via the DWT cycle counter.
-- **Why hardware LPSPI1, not bit-banged like the LCD:** unlike the LCD's
-  Arduino pins, D10..D13 on this board are wired to `LP_FLEXCOMM1`'s SPI
-  function (mux Alt2), not plain GPIO (NXP UM12018 pin tables) — a real
-  SPI peripheral was available, so there was no reason to bit-bang it.
+  and save it as a BMP to the microSD card on the TFT panel (Arduino
+  D10..D13, shared SPI bus - see above), rate-limited to 1 capture/sec via
+  the DWT cycle counter.
 - **Why the SDK's own SD-over-SPI FatFs glue isn't used:**
   `middleware/fatfs/source/fsl_sdspi_disk/` is hardcoded to the DSPI
   peripheral (`fsl_dspi.h`), which doesn't exist on the MCXN947 (LPSPI-

@@ -2,8 +2,13 @@
  * lcd_bitbang.c - see lcd_bitbang.h
  *
  * Generic GPIO bit-bang 8080 8-bit LCD driver, pin-agnostic (all signal
- * names come from app.h's DEMO_LCD_* macros) - drives either the Arduino
- * header (current default) or J8, whichever CMakeLists.txt selects.
+ * names come from app.h's DEMO_LCD_* macros) - drives the J8 header's
+ * parallel-bus panel (bit-bang diagnostic variant, see CMakeLists.txt's
+ * LCD_BITBANG_DIAGNOSTIC). The Arduino header now has its own SPI panel
+ * (lcd_spi_bitbang.c) - the `#if DEMO_LCD_ARDUINO_HEADER` branches below
+ * are dead code in every build this file is actually compiled into
+ * (DEMO_LCD_ARDUINO_HEADER is always 0 here), kept only because this file
+ * still doubles as the reference 8080 bit-bang implementation.
  *
  * RD is held high (inactive) for this driver's whole lifetime - it never
  * reads from the panel, and a floating RD line during writes caused bugs
