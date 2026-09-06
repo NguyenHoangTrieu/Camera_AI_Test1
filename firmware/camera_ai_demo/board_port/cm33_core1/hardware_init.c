@@ -61,8 +61,15 @@ void BOARD_InitHardware(void)
     CLOCK_AttachClk(kFRO_HF_to_CLKOUT);
     CLOCK_SetClkDiv(kCLOCK_DivClkOut, 2U);
 
-    /* GPIO module clocks for the LCD pins (GPIO0, Arduino header). */
+    /* GPIO module clocks for the LCD pins (GPIO0, Arduino header). GPIO1
+     * added for LCD_DC specifically (WORKLOG.md, dual-core Stage 5 SEVENTH
+     * FOLLOW-UP) - moved off GPIO0 (Arduino D3/P1_23 instead of A2/P0_14)
+     * after live SWD reads confirmed core1 can't reliably write that one
+     * GPIO0 bit, while CS/RST/BLK (same peripheral, different bits) work
+     * fine. Not needed by core0's hardware_init.c - core0 never touches
+     * these pins in the dual-core build. */
     CLOCK_EnableClock(kCLOCK_Gpio0);
+    CLOCK_EnableClock(kCLOCK_Gpio1);
 
     /* Camera I2C (SCCB) clock. */
     CLOCK_AttachClk(kFRO12M_to_FLEXCOMM7);

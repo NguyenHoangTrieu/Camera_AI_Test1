@@ -218,9 +218,15 @@ void BOARD_InitArduinoLcdPins(void)
     const gpio_pin_config_t idleHighConfig = {.pinDirection = kGPIO_DigitalOutput, .outputLogic = 1U};
 
     CLOCK_EnableClock(kCLOCK_Port0);
+    /* Only actually needed by the dual-core build now that DC moved to
+     * GPIO1/PORT1 (WORKLOG.md) - harmless no-op extra clock gate for the
+     * legacy single-core build, where DEMO_LCD_DC_PORT is still PORT0. */
+    CLOCK_EnableClock(kCLOCK_Port1);
 
-    /* DC/CS/RST - plugged in directly (Arduino A2/A3/A4). */
-    PORT_SetPinMux(PORT0, DEMO_LCD_DC_PIN, kPORT_MuxAlt0);
+    /* DC/CS/RST - plugged in directly (Arduino A2/A3/A4, except DC which
+     * the dual-core build moved to D3 - see DEMO_LCD_DC_PORT/GPIO/PIN in
+     * app.h). */
+    PORT_SetPinMux(DEMO_LCD_DC_PORT, DEMO_LCD_DC_PIN, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT0, DEMO_LCD_CS_PIN, kPORT_MuxAlt0);
     PORT_SetPinMux(PORT0, DEMO_LCD_RST_PIN, kPORT_MuxAlt0);
     GPIO_PinInit(DEMO_LCD_DC_GPIO, DEMO_LCD_DC_PIN, &outputConfig);

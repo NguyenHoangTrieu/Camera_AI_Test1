@@ -17,7 +17,8 @@ Table of contents:
 6. [Loading a program onto the chip: SWD/JTAG and the "Debug Mailbox"](#6-loading-a-program-onto-the-chip-swdjtag-and-the-debug-mailbox)
 7. [Core voltage: why the camera and USB "fight" each other](#7-core-voltage-why-the-camera-and-usb-fight-each-other)
 8. [SPI and DMA: how the chip talks to the display, and why "leftover" hardware settings can silently break things](#8-spi-and-dma-how-the-chip-talks-to-the-display-and-why-leftover-hardware-settings-can-silently-break-things)
-9. [Quick glossary](#9-quick-glossary)
+9. [TrustZone: why a second CPU core can be "not allowed" to touch a pin, even though the wiring is fine](#9-trustzone-why-a-second-cpu-core-can-be-not-allowed-to-touch-a-pin-even-though-the-wiring-is-fine)
+10. [Quick glossary](#10-quick-glossary)
 
 ---
 
@@ -428,7 +429,97 @@ start.
 
 ---
 
-## 9. Quick glossary
+## 9. TrustZone: why a second CPU core can be "not allowed" to touch a pin, even though the wiring is fine
+
+### Two "access levels" built right into the chip's hardware, not just software
+
+**TrustZone** (Arm's name for this) is a hardware feature on newer Arm
+chips (Armv8-M, like the Cortex-M33 in this project) that splits the
+whole chip into two access levels: **Secure** and **Non-secure** — think
+of it like a building with two keycard levels, "all-access" and
+"visitor." This isn't just a software convention that code could ignore
+if it wanted to — it's enforced by real hardware logic sitting between
+the CPU and memory/peripherals, the same way a locked door is enforced by
+the lock itself, not by a sign asking people not to enter.
+
+This project's chip (MCXN947) actually has **two CPU cores**, and — this
+is the detail that caused months of confusion in this project's own
+history (see WORKLOG.md) — **only one of them has the hardware needed to
+ever be "Secure."** The second core (core1) has no **SAU** (Security
+Attribute Unit — the piece of hardware inside a core that decides,
+address by address, "is this Secure or Non-secure for me"). A core with
+no SAU at all isn't "sometimes Secure" — it is **permanently,
+unconditionally Non-secure**, for literally everything it ever does. This
+is a deliberate chip-design choice, not a defect: SAU hardware costs
+real silicon area, and on an asymmetric multicore chip like this one,
+the smaller "helper" core often isn't meant to run security-sensitive
+code at all, so the vendor leaves that hardware out of it entirely.
+
+### A peripheral can have its own extra lock, independent of everything else
+
+Beyond the chip-wide Secure/Non-secure split, an individual peripheral
+(like GPIO on this chip) can have its **own**, separate permission
+register that decides, **per resource** (here: per physical pin),
+whether a Non-secure request is allowed through at all. Think of it like
+a shared office building: your visitor badge (Non-secure) lets you walk
+into the building and even into most rooms, but one specific filing
+cabinet inside one of those rooms has its own separate key — and unless
+someone with all-access (Secure) has already unlocked that one cabinet
+for visitors, your badge does nothing for it, no matter how valid it is
+for the rest of the building.
+
+This chip's GPIO peripheral has exactly this: a register called `PCNS`
+(Pin Control Non-Secure), one enable bit per physical pin, and **every
+single bit defaults to "locked" (Secure-only) after reset.** Nobody
+unlocks these automatically — not the chip's boot ROM, not the vendor
+SDK's normal pin-setup helper functions. If you want a Non-secure core to
+control a pin, something running as Secure has to explicitly flip that
+pin's bit first.
+
+### The genuinely nasty part: a blocked write doesn't look blocked at all
+
+Here's what makes this exact class of bug so hard to find by reading code
+or by "it should obviously work" reasoning: when a Non-secure request
+hits a peripheral resource that's locked to Secure-only, the hardware
+usually doesn't raise an error, doesn't crash the program, and doesn't
+time out. It just **quietly discards the write**, as if it had never
+happened — from the CPU's point of view, the write instruction completed
+completely normally. There is no compiler warning, no runtime exception,
+nothing in a log. The only symptom is: the thing you wrote never actually
+happens, every single time, forever, no matter how many times you retry
+it or how carefully you time it.
+
+This is exactly why this project spent so long chasing this as a
+"hardware reliability" mystery (see WORKLOG.md's dual-core entries) —
+every symptom (a GPIO write from the second core "just doesn't stick")
+looked exactly like a timing race or an electrical problem, because a
+silent permission block and a flaky write are, from the outside,
+indistinguishable. The only way to actually tell them apart is to know
+the mechanism exists and go check for it directly (the permission
+register's own value), rather than continuing to test timing/retry
+theories that can never explain a **100%-reproducible, permanent**
+failure.
+
+### A second trap on top of the first: "checking the wrong side" looks like the fix failed too
+
+Because Secure and Non-secure are genuinely separate hardware states, a
+register can even be **banked** — meaning the Secure world and the
+Non-secure world each get their **own independent copy** of what looks
+like "the same" register at "the same" address. If you fix the
+permission problem correctly (unlock the pin for Non-secure use) but then
+go check whether it worked by reading that address **from the Secure
+side**, you can still see the old, wrong value — not because the fix
+didn't work, but because you're looking at a completely different,
+unrelated copy of the register from the one the Non-secure core is
+actually using. The general lesson: when debugging a Non-secure core's
+own behavior, always inspect its state through **that core's own** access
+path, never the other (Secure) core's — the other core's view can be
+silently looking at something else entirely, even though nothing about
+the read itself is technically wrong.
+
+---
+
+## 10. Quick glossary
 
 | Term | Short explanation |
 |---|---|
@@ -458,3 +549,8 @@ start.
 | **Watermark** | A configured FIFO fill-level threshold that triggers a hardware request signal (e.g., to wake up a DMA transfer). |
 | **DMA / eDMA** | Hardware that moves data between memory and a peripheral's FIFO on its own, without the CPU checking/writing each byte. |
 | **Blocking / polled transfer** | A CPU-driven transfer where software itself repeatedly checks and feeds the FIFO, one step at a time. |
+| **TrustZone** | Arm's hardware-enforced Secure/Non-secure split on Armv8-M chips - not just a software convention. |
+| **SAU** | Security Attribute Unit - the hardware inside a CPU core that decides which addresses are Secure vs. Non-secure for that core. A core with no SAU is permanently Non-secure. |
+| **Secure / Non-secure** | The two TrustZone access levels; some memory/peripherals can be restricted to Secure-only access. |
+| **PCNS** | "Pin Control Non-Secure" - this chip's GPIO register gating whether a Non-secure core may control each individual pin; defaults to locked (Secure-only) after reset. |
+| **Banked register** | A register where the Secure and Non-secure worlds each get their own independent copy at the same nominal address - reading from the wrong side can show a completely different value. |

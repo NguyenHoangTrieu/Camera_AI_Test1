@@ -90,6 +90,9 @@
  ******************************************************************************/
 #define DEMO_LCD_DC_GPIO GPIO0
 #define DEMO_LCD_DC_PIN  14U /* Arduino A2 */
+#define DEMO_LCD_DC_PORT PORT0 /* core1/app.h moves DC to GPIO1/PORT1 for the dual-core build only
+                                 * (WORKLOG.md) - this core's copy (the legacy single-core build)
+                                 * keeps the original, still-working A2/GPIO0 wiring/pin unchanged. */
 #define DEMO_LCD_CS_GPIO GPIO0
 #define DEMO_LCD_CS_PIN  22U /* Arduino A3 */
 #define DEMO_LCD_RST_GPIO GPIO0

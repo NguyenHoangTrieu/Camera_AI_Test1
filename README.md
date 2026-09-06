@@ -88,7 +88,7 @@ Limitations before assuming it's solid.
 | SDI(MOSI) / SD_MOSI / T_DIN | D11 | P0_24 | shared bus, hardware LPSPI1 SDO (MCU→devices) |
 | SDO(MISO) / SD_MISO / T_DO | D12 | P0_26 | shared bus, hardware LPSPI1 SDI (devices→MCU); needs the internal pull-up `pin_mux.c` already enables here |
 | LCD CS | A3 | P0_22 | manual GPIO, LCD-only |
-| LCD DC | A2 | P0_14 | manual GPIO, command/data select |
+| LCD DC | A2 (legacy single-core build) / **D3** (dual-core build) | P0_14 / **P1_23** | manual GPIO, command/data select - moved to GPIO1 for the dual-core build while this pin's real blocker (core1 has no SAU, needs an explicit `PCNS` Non-Secure grant from core0 - see WORKLOG.md's EIGHTH FOLLOW-UP) was still being tracked down; the GPIO1 move itself probably wasn't the fix, granting `PCNS` was, but it's confirmed working as-is so left unchanged |
 | LCD RESET | A4 | P0_15 | manual GPIO |
 | LCD LED (backlight) | A5 | P0_23 | manual GPIO, driven high in `LCD_Init()` |
 | SD_CS | D10 | P0_27 | **real hardware** LPSPI1 PCS0 - SD-only, see below |
@@ -188,14 +188,30 @@ Notes specific to this build:
   `CameraLcdTask` always runs one fixed loop (camera preview + AI overlay
   + rate-limited snapshot together); there is currently no dual-core
   equivalent of the AI-off, preview-only diagnostic build.
-- **Status: Stage 5 of the plan in WORKLOG.md.** Camera capture, LCD push,
-  the core0 AI round-trip, and SD snapshot have each been individually
-  confirmed on real hardware at some point in the migration, but the full
-  pipeline running together still has open, unconfirmed issues (LCD
-  tearing under the cross-core IPC interrupt, a currently-unexplained
-  "no image / backlight stays off" report) — read WORKLOG.md's most recent
-  entries before assuming this build is stable. **The single-core build
-  above remains the confirmed-stable, production default.**
+- **Status: Stage 5 of the plan in WORKLOG.md — CONFIRMED SHOWING A LIVE
+  IMAGE on real hardware as of 2026-09-06**, the first time in this
+  project's history the dual-core build has displayed anything. Camera
+  capture, LCD push, the core0 AI round-trip, SD snapshot, and now the
+  actual on-screen image have each been confirmed on real hardware.
+  Still open: LCD tearing under the cross-core IPC interrupt has never
+  been re-checked now that the image is actually visible (every earlier
+  "confirmation" could only check fps/build success), and SD write
+  reliability degrades after the first few snapshots in a session (see
+  WORKLOG.md). Read WORKLOG.md's most recent entries before assuming this
+  build is fully stable, but it is no longer blocked on "nothing shows up
+  at all."
+- **If you ever add a new GPIO pin for core1 to drive (a new sensor CS
+  line, an LED, anything), read this first.** core1 on this chip (MCXN947)
+  has no SAU, so it is permanently Armv8-M Non-Secure — GPIO blocks
+  Non-Secure pin access by default (`PCNS` register, one enable bit per
+  pin, defaults to all-zero/Secure-only after reset). A pin core1 tries to
+  drive without this grant doesn't error or crash — it just silently does
+  nothing, forever, no matter how "correct" the code looks. Grant it from
+  **core0** (the only core with a SAU), before `MCMGR_StartCore()` releases
+  core1 — see `main_core0.c`'s `GPIO0->PCNS`/`GPIO1->PCNS` lines for the
+  pattern, and WORKLOG.md's EIGHTH FOLLOW-UP entry for the full story
+  (months of this project's history were lost chasing this as a "core1
+  hardware reliability" mystery before finding the real cause).
 
 ### Expected output on success
 

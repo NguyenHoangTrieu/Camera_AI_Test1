@@ -43,8 +43,22 @@
  * with the microSD slot (Stage 4) - see source/spi1_bus.h. Only LCD_DC/
  * CS/RST/BLK are plain GPIO, on the Arduino header (A2..A5).
  ******************************************************************************/
-#define DEMO_LCD_DC_GPIO GPIO0
-#define DEMO_LCD_DC_PIN  14U /* Arduino A2 */
+/* DC moved off GPIO0 onto a different peripheral instance entirely
+ * (WORKLOG.md, dual-core Stage 5 SEVENTH FOLLOW-UP): live SWD reads
+ * (trusted core0-AP path) confirmed GPIO0 bit14/DC reliably reads back
+ * LOW no matter what core1's firmware commands, while CS/RST/BLK (same
+ * GPIO0 peripheral, different bits) read back correctly - so the fault is
+ * bit/pin-specific, not "GPIO0 is broken." Moved to Arduino D3 (GPIO1,
+ * P1_23) to rule out any GPIO0-specific cause entirely rather than gamble
+ * on a different GPIO0 bit. Needs BOARD_InitArduinoLcdPins() (pin_mux.c)
+ * to mux PORT1 instead of PORT0 for this one pin, and core1's
+ * hardware_init.c to enable GPIO1's clock (not needed before - only
+ * GPIO0 was ever used from this core). */
+#define DEMO_LCD_DC_GPIO GPIO1
+#define DEMO_LCD_DC_PIN  23U /* Arduino D3 */
+#define DEMO_LCD_DC_PORT PORT1 /* pin_mux.c's BOARD_InitArduinoLcdPins() is shared with the legacy
+                                 * single-core build (core0/app.h keeps DC on PORT0/GPIO0), so the
+                                 * port to mux can't be hardcoded there - it needs this macro. */
 #define DEMO_LCD_CS_GPIO GPIO0
 #define DEMO_LCD_CS_PIN  22U /* Arduino A3 */
 #define DEMO_LCD_RST_GPIO GPIO0

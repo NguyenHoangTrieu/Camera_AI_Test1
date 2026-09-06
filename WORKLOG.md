@@ -9,6 +9,336 @@ what happened" history, kept separate so README doesn't get cluttered.
 > see README.md's "History" section for the summary) was trimmed from this
 > file to keep it focused on the current, unresolved problem below.
 
+## Dual-core RTOS migration Stage 5 EIGHTH FOLLOW-UP - ROOT CAUSE FOUND AND CONFIRMED ON REAL HARDWARE: the whole "core1 can't reliably write GPIO0" mystery (backlight, DC, all of it, going back multiple sessions) was never a core1 hardware/timing quirk at all - core1 has no SAU (Security Attribute Unit) on this chip, so it is permanently in the Armv8-M Non-Secure state, and GPIO gates Non-Secure pin access per-bit via its own `PCNS` register, which defaults to all-zero (Secure-only) after reset. core1's writes to any never-explicitly-granted pin were being silently discarded at the peripheral, every time, for the entire history of this project's dual-core work. Fixed with a 4-line PCNS grant in core0's boot code, before `MCMGR_StartCore()` releases core1. **User confirmed on real hardware: the LCD now shows a real, live image in the dual-core build for the first time ever** (2026-09-06)
+
+Follow-up to the FIFTH FOLLOW-UP entry (backlight investigation) and the
+REVERTED SEVENTH FOLLOW-UP entry below (unrelated SEMA42 detour, already
+undone). Picked back up the actual display problem: after the FIFTH
+FOLLOW-UP's 3V3 backlight rewire, the user reported the panel was no
+longer black - it was **solid white**, still no live image. Backlight was
+confirmed genuinely fine this session (live SWD reads showed it correctly
+latched); this entry is about what actually was still broken.
+
+**Two theories tested and DISPROVEN this session, in order, each with
+real hardware evidence - documented so a future session doesn't repeat
+them:**
+
+1. **RST (reset pin) was NOT the problem.** The user tied RST to 3V3 too
+   (mirroring the BLK fix) - screen stayed white. A live SWD read
+   (`GPIO0->PDOR` bit 15) had already shown RST correctly latched HIGH
+   before this test even ran, so the negative result matched the
+   prediction - RST was never actually broken, only ever suspected by
+   analogy to BLK.
+2. **A GPIO-write/SPI-transfer timing race was NOT the problem.** DC
+   (`DEMO_LCD_DC_PIN`, the command/data select line) was the one pin still
+   provably stuck at 0 on live SWD reads, toggled far more rapidly than
+   CS/RST/BLK (low-write, one SPI byte, high-write, repeated for every
+   command). Two escalating tests: (a) moved DC entirely off GPIO0 onto a
+   different peripheral instance (GPIO1, Arduino D3/P1_23) to rule out a
+   GPIO0-specific cause - still stuck at 0, ruling that out; (b) added a
+   settle delay (`SDK_DelayAtLeastUs`) bracketing the SPI transfer between
+   DC's two writes, to test whether tight interleaving with live SPI
+   traffic was the cause - still stuck at 0, ruling that out too. Both
+   changes reverted rather than left in as non-functional code (DC's
+   GPIO1/D3 move was KEPT - see below for why it turned out to still
+   matter, just not for the reason originally tested).
+
+**Real root cause, found by searching for this exact symptom on this
+exact chip rather than continuing to guess:** an NXP Community post,
+["MCXN947 failed to control GPIO in slave core
+(CPU1)"](https://community.nxp.com/t5/MCX-Microcontrollers/MCXN947-failed-to-control-GPIO-in-slave-core-CPU1/td-p/2250120),
+describes this project's exact symptom on this exact chip. core1 on the
+MCXN947 does not implement a SAU, so it is **permanently Armv8-M
+Non-Secure** (this is a fixed hardware/architecture property of this
+chip's asymmetric dual-core design, not a bug or an erratum). GPIO
+peripherals implement TrustZone-style access gating: a `PCNS` register
+(confirmed in this SDK's own `PERI_GPIO.h`, one `NSEn` enable bit per
+pin, at register offset `0x10`) controls whether a Non-Secure bus master
+may touch each individual pin. Confirmed live: `GPIO0->PCNS` and
+`GPIO1->PCNS` both read `0x00000000` on this board - **every single pin
+defaults to Secure-only after reset**, and nothing in this codebase (or
+the NXP SDK's default board bring-up) had ever granted core1 permission
+for any of them. core1's writes to these pins were being silently
+dropped at the peripheral on every single call, for the entire history of
+this project's dual-core work - not "unreliable," not "timing-sensitive,"
+simply never landing at all.
+
+**Fix**: `main_core0.c`'s `main()`, before `MCMGR_StartCore()` releases
+core1 (plain register writes, not a FreeRTOS API, so this doesn't
+conflict with the established "no FreeRTOS API before `MCMGR_StartCore()`"
+boot-ordering rule):
+```c
+GPIO0->PCNS |= GPIO_PCNS_NSE15_MASK  /* LCD RST, P0_15 */
+             | GPIO_PCNS_NSE22_MASK  /* LCD CS,  P0_22 */
+             | GPIO_PCNS_NSE23_MASK; /* LCD BLK, P0_23 */
+GPIO1->PCNS |= GPIO_PCNS_NSE23_MASK; /* LCD DC,  P1_23 (Arduino D3) */
+```
+Must run on core0 - it's the only core with a SAU, so the only one that
+can act Secure and grant this. Pin numbers are hardcoded (can't `#include`
+core1's `app.h` from core0's translation unit) - must be kept in sync by
+hand if core1's LCD pins ever change again.
+
+**A second, genuinely confusing methodological trap along the way, worth
+recording so it isn't repeated**: after adding the PCNS grant, a live SWD
+read of `GPIO1->PDOR` (bit 23, DC) *still* showed 0 every time - looking
+like the fix had failed. It hadn't. TrustZone-aware peripherals bank
+Secure and Non-Secure register state **independently** - reading via
+core0's own debug AP (AHB-AP#0) shows the *Secure* alias/instance of the
+register, which has nothing to do with what core1 (Non-Secure) is
+actually writing to its own Non-Secure instance of the same nominal
+address. Confirmed directly: switching the SWD read to core1's own debug
+AP (AHB-AP#1) - which, tellingly, could not read/write ANY GPIO
+peripheral at all before this fix (confirmed against GPIO0, GPIO1, and
+GPIO4, while it read LPSPI1 fine throughout - a real, separate,
+now-explained symptom of the exact same Non-Secure-blocked-by-PCNS cause)
+- immediately showed DC toggling correctly, and forcing it low via AP1
+and watching the running firmware pull it back high within ~150ms proved
+it live, not just "reads differently once." **The general lesson: on a
+TrustZone-partitioned chip, always read a Non-Secure core's own registers
+through that core's own debug AP - the other core's AP can show a
+completely different, unrelated value for the exact same address, even
+though nothing about the read itself is wrong.**
+
+**Confirmed on real hardware by the user**: the dual-core build now shows
+a real, live camera image on the LCD - the first time this has ever
+worked in the dual-core build, across many sessions of this project's
+history. This also retroactively explains (though does not need separate
+fixing) the CS/RST/BLK-vs-DC split that several earlier WORKLOG entries
+found and could never cleanly explain - CS/RST/BLK's *apparent* success
+in earlier live-SWD checks was never actually valid evidence either (same
+wrong-AP trap above), it was almost certainly coincidental defaults on
+those specific bits, not a genuine reliability difference from DC. All
+four pins are now correctly explained by the same single mechanism.
+
+**Open question for a future session, not urgent**: DC's move to GPIO1/D3
+was kept, but may not have been strictly necessary - the real fix is the
+PCNS grant, and it's plausible DC could have stayed on its original
+GPIO0/P0_14 (Arduino A2) pin if `GPIO_PCNS_NSE14_MASK` had been granted
+there instead. Not tested (the GPIO1 move was already in place and
+working by the time PCNS was identified as the real fix, and there was no
+reason to re-risk a working configuration just to simplify the wiring
+back). If a future session wants the wiring back to the original
+A2/A3/A4/A5 layout, granting `GPIO0->PCNS |= GPIO_PCNS_NSE14_MASK` instead
+of touching GPIO1 at all should work by the same mechanism - not yet
+verified.
+
+### Next steps for a fresh session
+
+1. Re-confirm the LCD tearing fix (`SPI1_BUS_LockNoPreempt()`,
+   THIRD FOLLOW-UP entry) with the display now actually visible - every
+   earlier "confirmation" of that fix could only check fps/build success,
+   never the actual image, since the image itself was never visible until
+   now.
+2. The SD card write-reliability issue is separate and still open - mounts
+   and saves the first few snapshots successfully most boots, then
+   degrades to write failures / "could not create a new file" later in
+   the same session (see the SIXTH-FOLLOW-UP-adjacent session's own real
+   hardware log). Not caused by anything in this entry.
+3. Phase 4 of the original migration plan (retire the legacy single-core
+   `main.c`/board_port/CMakeLists once dual-core is the confirmed default)
+   is now much more realistic to consider, given this is the first time
+   the dual-core build has been fully functional end-to-end (camera + AI +
+   LCD image + boot) - still not done yet.
+4. If any NEW GPIO pin is ever wired up for core1 to drive in the future
+   (a new sensor's chip-select, an LED, anything), remember this entry:
+   grant its `PCNS` bit from core0 before `MCMGR_StartCore()`, or it will
+   silently do nothing, exactly like every pin in this entire investigation
+   did before this fix.
+
+## Dual-core RTOS migration Stage 5 SEVENTH FOLLOW-UP, REVERTED - the bounded-poll fix below (SIXTH FOLLOW-UP) got real output back, but real hardware then showed a SECOND, worse regression: the core0<->core1 AI round trip that worked before any of this SEMA42 work failed on 100% of frames ("AI: no result from core0... within 100ms", every single frame), fps collapsed from 8-9 down to 2-3, and boot-time log corruption was STILL happening despite the lock - strongly suggesting SEMA42_TryLock() was failing almost every call and burning its full retry budget on every single DEBUG_PRINTF(), not just occasionally. Root cause not confirmed (no live debugger access this session), but two regressions in a row from the same approach was reason enough to stop iterating blind. REVERTED entirely (`debug_lock.c/.h` deleted, all `DEBUG_PRINTF`/`PRINTF` renames and CMakeLists/prj.conf changes undone via `git checkout`) back to the exact pre-session baseline (confirmed: reverted build's core0 `m_text`/`m_data` exactly match the original numbers) - the per-core `HeartbeatTask`s from the FIFTH FOLLOW-UP-adjacent entry were reverted too (they lived in the same two files as the SEMA42 changes) since their diagnostic question ("are both cores really running concurrently") is already answered - yes, confirmed on real hardware in that entry - and isn't needed again unless a future session doubts it again. Log corruption at boot is once again a known, unfixed, lower-priority cosmetic issue - see the FIFTH FOLLOW-UP-adjacent entry below for the root-cause analysis if a future session wants to try a different, lower-risk approach (2026-09-05)
+
+Follow-up to the two entries below (same day, same session). Do not repeat
+the SEMA42-based `DEBUG_PRINTF()` approach without first understanding why
+it caused the AI round trip to fail 100% of the time on real hardware -
+that failure mode was never explained, only worked around by reverting.
+
+## Dual-core RTOS migration Stage 5 SIXTH FOLLOW-UP - the SEMA42 debug-lock fix below made things WORSE on real hardware (total silence, no boot output at all) before any confirmation was obtained; root cause not pinned down (no live debugger this session either) but the leading suspect is SEMA42_Lock()'s zero-timeout default polling forever on the very first DEBUG_PRINTF() call - fixed by hand-rolling a bounded poll (SEMA42_TryLock() + a large-but-finite retry count, fail open rather than hang) in both DEBUG_LOCK_Init()'s reset-completion wait and DEBUG_PRINTF() itself. Builds clean, same memory margins - AGAIN NOT yet confirmed on real hardware, and THIS ENTRY'S OWN FIX WAS ITSELF REVERTED per the entry above after real hardware showed a second regression (2026-09-05)
+
+Follow-up to the entry directly below (same day, same session). The user
+flashed the SEMA42-based `DEBUG_PRINTF()` fix and reported **total
+silence - no serial output at all**, a strictly worse symptom than the
+corrupted-but-present log it was meant to fix.
+
+**Root cause not confirmed - no live debugger available this session
+either, same limitation as several earlier entries in this file.** Leading
+suspect, from reading the code rather than a live register read: the
+original `debug_lock.c` used `SEMA42_Lock()`, which polls
+`SEMA42_TryLock()` in a loop with **zero timeout** by default
+(`SEMA42_BUSY_POLL_COUNT` is 0 unless explicitly overridden, per
+`fsl_sema42.h`) - if the very first `DEBUG_PRINTF()` call on either core
+(core0's boot banner, immediately after `DEBUG_LOCK_Init()`) ever failed
+to acquire gate 0 for any reason, it would spin forever with no way out
+and no partial output, matching "no log at all" exactly. Two candidate
+explanations for why the gate might not have been acquirable were
+considered and NOT ruled out without hardware: (1) `SEMA42_ResetAllGates()`
+returns as soon as the reset command pattern is written, not once the
+reset has actually completed in hardware (`RSTGT_R`'s busy bit) - core0's
+own immediately-following `DEBUG_PRINTF()` call may have raced this; (2)
+some other, not-yet-identified SEMA42-specific quirk on this chip. (One
+theory that WAS ruled out by reading the device header directly:
+`SEMA42_0` resolving to the secure-world alias address instead of the
+non-secure one this project's `ARM_CM33_NTZ` FreeRTOS port expects -
+checked `MCXN947_cm33_core0_COMMON.h`'s `SEMA42_0_BASE` macro, which is
+conditioned on `__ARM_FEATURE_CMSE` and correctly resolves to the same
+`0x400B1000` non-secure address this project's other peripherals use,
+since this build never defines that macro - not the cause.)
+
+**Fix, defensive rather than root-caused**: rewrote `debug_lock.c` to
+never be able to hang forever regardless of the actual cause - a logging
+helper hanging the whole core is strictly worse than any corruption it
+might ever fail to prevent. `DEBUG_PRINTF()` now hand-rolls its own
+bounded retry loop around `SEMA42_TryLock()` (`DEBUG_LOCK_POLL_LIMIT` =
+1,000,000 iterations - generous relative to how briefly this gate is ever
+actually held) instead of calling `SEMA42_Lock()`; on a real timeout it
+still prints (unlocked, in the rare case that ever actually triggers)
+rather than blocking forever, and correctly skips calling
+`SEMA42_Unlock()` in that case (unlocking a gate this core never
+acquired would just create a new corruption case instead of preventing
+one). `DEBUG_LOCK_Init()` (core0 only) now also waits, with the same
+bounded-poll pattern, for `SEMA42_ResetAllGates()`'s reset to actually
+complete (`RSTGT_R`'s busy bit clearing) before returning, closing
+candidate explanation (1) above whether or not it was the real cause.
+
+**Confirmed only as a clean build** (real, measured): both cores build
+without error, memory margins unchanged from the previous entry
+(core1 84.67%/98.86% `m_text`/`m_data`, core0 18.80%/94.70%). **NOT yet
+confirmed on real hardware again** - same access limitation as the entry
+below.
+
+### Next steps for a fresh session
+
+1. Flash `dualcore-all` and check: does ANY output appear now? This is a
+   genuinely informative experiment either way - if output now appears
+   (even if briefly corrupted-looking or showing an unexpected delay), the
+   bounded-poll fix confirms the hang was inside `SEMA42_Lock()`/the reset
+   wait as suspected; if it's STILL completely silent, the cause is
+   somewhere else entirely (unrelated to the timeout theory) and this
+   whole SEMA42 approach needs reconsidering, not just re-tuning - don't
+   assume it's "almost fixed" if this second attempt also produces
+   silence.
+2. If real output appears and looks clean (no more boot-time garble, no
+   new corruption under load): this entry and the one below can be
+   considered resolved together - see that entry's own next-steps for
+   what a "clean" confirmation should look like (fresh boot + full
+   camera+LCD+AI+SD steady state).
+3. If it's a genuine hardware quirk with this chip's SEMA42 peripheral
+   (not just a missing timeout), worth knowing before investing further:
+   was this exact SEMA42 instance/gate ever exercised successfully by
+   anything else on this board before (nothing in this project used it
+   until this entry) - if not, this may be new territory for this specific
+   chip/errata, not just a software ordering bug.
+4. Everything else queued in the entry below (backlight 3V3 rewire, SD
+   write failure, tearing re-confirmation) is unaffected by this
+   regression and still pending, unchanged.
+
+## Dual-core RTOS migration Stage 5 SIXTH FOLLOW-UP - added a per-core heartbeat log (independent of camera/LCD/AI) to check whether both cores are genuinely running concurrently; both are, but core1's heartbeat visibly lags core0's - explained (not a bug, a real timing cost: SPI1_BUS_LockNoPreempt()'s taskENTER_CRITICAL() masks core1's own SysTick for the ~57ms/frame LCD_DrawImage() takes at 24MHz). Separately found and fixed a real bug the heartbeat log surfaced: both cores independently print to the SAME physical debug UART (FLEXCOMM4) with no cross-core arbitration, causing real, reproducible byte-level interleaving/corruption in the serial log whenever core0 and core1 print near-simultaneously (worst right at boot, when both cores burst their startup banners) - fixed with a SEMA42 hardware-semaphore-backed DEBUG_PRINTF() wrapper (source/shared/debug_lock.h/.c) replacing every PRINTF() call in both cores' dual-core-only sources. Builds clean on both cores, real measured margin unchanged (core1 m_text 84.03%/m_data 98.86%, core0 m_text 18.80%/m_data 94.70%) - NOT yet confirmed on real hardware, this session had no flash/serial access (2026-09-05)
+
+Follow-up to the FIFTH FOLLOW-UP entry directly below (same day). Before
+doing anything about the still-unresolved backlight mystery, added a
+`HeartbeatTask` on each core (`main_core0.c`/`main_core1.c`) - a trivial
+`vTaskDelay(1000ms)` loop printing `core0/1 heartbeat: N`, deliberately
+independent of the camera/LCD/AI/IPC pipeline - to directly answer "is
+core1 actually running, or is the whole 'dual-core' build secretly only
+executing one core" as a sanity check before trusting any more GPIO-level
+findings from that investigation.
+
+**Both cores are genuinely running concurrently** - both heartbeats
+increment steadily in the user's serial capture. But core0's counter
+reliably outpaces core1's (e.g. core0:37 vs. core1:22 over the same
+window) - investigated rather than dismissed, since an unequal heartbeat
+rate on hardware previously suspected of a per-core write reliability
+issue was worth taking seriously. Root cause, confirmed by reading the
+code (not yet by a live measurement): `spi1_bus.c`'s
+`SPI1_BUS_LockNoPreempt()` (`taskENTER_CRITICAL()`/`taskEXIT_CRITICAL()` -
+see the THIRD FOLLOW-UP entry below for why this exists) raises BASEPRI
+high enough to mask core1's own SysTick, not just `MAILBOX_IRQn` - this
+lock wraps `LCD_Init()`'s panel init AND every single `LCD_DrawImage()`
+pixel push (`lcd_spi_hw.c`), which this file's Stage 4 FOLLOW-UP entry
+already measured at ~57ms/frame at 24MHz. While that critical section is
+active, core1's tick genuinely does not advance, so any `vTaskDelay()` on
+core1 (the heartbeat's 1s period included) loses real wall-clock time on
+every single frame - core0's `AiInferenceTask` has no equivalent critical
+section, so its own tick stays accurate. This is NOT evidence core1 is
+unreliable or "not really running" - it is running, just spending a large,
+already-known fraction of every frame period with its own timebase frozen
+by a lock this project added deliberately. Not fixed (no reason to yet -
+nothing currently depends on core1's tick being precise), just documented
+here so a future session doesn't mistake this for a new mystery.
+
+**Real bug found and fixed: the two cores' debug UART output was never
+cross-core-safe, and it shows.** The user's serial capture had a burst of
+genuinely unreadable garbled bytes right at the start, plus scattered
+mid-stream corruption throughout (e.g. `"core1 heartbeat:J...`",
+`"...classifil...hearer time...tbeat: 28"`) - real, reproducible data
+corruption, not a baud-rate/framing glitch. Root cause, confirmed by
+reading both cores' `hardware_init.c`: core0 and core1 each independently
+call `BOARD_InitHardware()` -> `BOARD_InitDebugConsole()` and `PRINTF()`
+against the exact same physical UART (FLEXCOMM4 - core1's own file
+explicitly attaches the same `BOARD_DEBUG_UART_CLK_ATTACH`).
+`debug_console_lite`'s `PRINTF()` is a per-core blocking write straight to
+that UART's TX register; any locking it does only serializes tasks on the
+SAME core's own FreeRTOS instance - there is no hardware arbitration
+between the two physically separate CM33 cores writing to the same
+register at the same instant, so concurrent prints interleave their bytes
+mid-string. Worst right at boot (both cores burst several banner/init
+lines while racing the MCMGR handshake), but reproducible any time both
+cores happen to print close together.
+
+**Fix**: added `source/shared/debug_lock.h`/`.c` - `DEBUG_PRINTF()`, a
+drop-in `PRINTF()` replacement that takes a SEMA42 hardware semaphore gate
+(`fsl_sema42.h`, confirmed available for this chip -
+`FSL_FEATURE_SOC_SEMA42_COUNT` = 1, 16 gates - and already present in the
+SDK tree) around the whole call via `DbgConsole_Vprintf()`, making each
+core's print atomic with respect to the other. `DEBUG_LOCK_Init()` enables
+the SEMA42 clock on both cores and, on core0 only
+(`DEBUG_LOCK_PROC_NUM == 0`, set per-core via `CMakeLists.txt`'s
+`mcux_add_configuration(CC "-DDEBUG_LOCK_PROC_NUM=...")`), resets all
+gates - called before `MCMGR_StartCore()` releases core1, so core1 can
+never observe a gate mid-reset (same boot-ordering argument as the
+existing "no FreeRTOS API before `MCMGR_StartCore()`" rule - `SEMA42_Init`/
+`ResetAllGates` are plain register pokes, not FreeRTOS APIs, so this is
+safe). Every `PRINTF(` call site in both cores' dual-core-only sources
+(`main_core0.c`, `main_core1.c`, `fault_handler.c`,
+`ai/model_runner_npu.cpp`, `camera/camera_capture.c`,
+`display/lcd_spi_hw.c`, `storage/snapshot.c`, `storage/sd_spi_disk.c` - 42
+call sites total) was mechanically renamed to `DEBUG_PRINTF(` and their
+`#include "fsl_debug_console.h"` swapped for `#include "debug_lock.h"`
+(which itself declares `DEBUG_PRINTF()` with no other dependency on those
+files' end). The legacy single-core build's own files (`main.c`,
+`lcd_bitbang.c`, `lcd_flexio_mculcd.c`, `usb_video_camera.c`,
+`model_runner.cpp`, `ei_debug_porting.c`, `ei_sramx_alloc.c`) were left
+untouched - a single physical core can't race itself. `CONFIG_MCUX_
+COMPONENT_driver.sema42=y` added to both cores' `prj.conf`.
+
+**Confirmed only as far as a clean build/link** (real, measured - not
+guessed): both cores build without error, core1 84.03%/98.86%
+`m_text`/`m_data`, core0 18.80%/94.70% (both up only slightly from the
+previous entry's numbers, as expected for one small added driver+wrapper).
+**NOT yet confirmed on real hardware** - this session had no flash/serial
+access at all. Needs a fresh capture to confirm the boot-time garble is
+actually gone and no new corruption appears under load (camera+LCD+AI all
+printing at once, the busiest case for this lock).
+
+### Next steps for a fresh session
+
+1. Flash `dualcore-all` and capture a fresh serial log across a full boot
+   + steady-state run (camera+LCD+AI+SD all active, matching the busiest
+   print traffic this session's fix targets) - confirm the log is now
+   clean, both at boot and under load, with no regression in fps.
+2. If clean: this repurposes cleanly as the ongoing serial-log
+   confirmation mechanism for the still-unresolved backlight GPIO mystery
+   (FIFTH FOLLOW-UP entry below) - a corrupted log was never actually
+   blamed for any wrong conclusion there (the SWD-based findings didn't
+   depend on serial output), but a trustworthy log removes one possible
+   source of doubt before that investigation's next step (hardware
+   watchpoint or logic analyzer).
+3. The 3V3 backlight rewire (FIFTH FOLLOW-UP's actual next step) is still
+   the priority once real hardware access is available - unchanged by
+   this entry.
+4. The `HeartbeatTask`s added this entry are diagnostic, not part of the
+   product - fine to leave in (negligible cost), but callable out if a
+   future session wants the core1 m_text/m_data budget back.
+
 ## Dual-core RTOS migration Stage 5 FIFTH FOLLOW-UP - CONFIRMED on real hardware: single-core baseline is genuinely fine (backlight+image both good), isolating the blackout to the dual-core build specifically; TEMP_SKIP_IPC_ROUNDTRIP was still on (explains "no AI log"), fixed. The backlight GPIO (P0_23/GPIO0) does not reliably reflect software writes issued by core1 - extensively investigated live (pin mux, clock, settling delay, AHBSC per-peripheral access rules, address aliasing, and a full 32-bit simultaneous write/readback sweep tested both before and after the panel's full init sequence, all ruled out or contradicted) but NOT root-caused; two attempted software workarounds did not fix it and were reverted rather than left in as non-functional code. DECISION (with user): stop chasing a GPIO fix and wire the backlight directly to 3V3 instead, since the code never needs to turn it off - real hardware change, not yet done, planned for a fresh session (2026-09-05)
 
 Follow-up to the FOURTH FOLLOW-UP entry below (same day, this session finally

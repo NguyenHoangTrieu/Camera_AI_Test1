@@ -22,6 +22,7 @@
  */
 #include <string.h>
 #include "fsl_debug_console.h"
+#include "fsl_gpio.h"
 #include "board.h"
 #include "app.h"
 #include "mcmgr.h"
@@ -83,6 +84,24 @@ int main(void)
     BOARD_InitHardware();
 
     PRINTF("\r\nCamera_AI_Test1 - core0 (dual-core Stage 5: AI inference)\r\n");
+
+    /* Grant core1 permission to drive the LCD control pins it owns
+     * (WORKLOG.md, dual-core Stage 5 SEVENTH FOLLOW-UP) - months of "core1's
+     * GPIO write doesn't stick" investigation turned out to match a known
+     * MCXN947 issue (NXP Community: "MCXN947 failed to control GPIO in
+     * slave core (CPU1)"): core1 has no SAU, so it's always Non-Secure, and
+     * GPIO gates Non-Secure access per pin via its own PCNS register -
+     * every pin reads back Secure-only (PCNS=0) after reset. Must happen on
+     * core0 (the only core with a SAU, so the only one that can act Secure)
+     * BEFORE MCMGR_StartCore() below releases core1, same boot-ordering
+     * reason as everything else in this function - PCNS is a plain
+     * register, not a FreeRTOS API, so this is safe here. Pin numbers
+     * hardcoded to match core1's own app.h (DEMO_LCD_*_GPIO/PIN) - core0
+     * can't include core1's board_port headers. */
+    GPIO0->PCNS |= GPIO_PCNS_NSE15_MASK  /* LCD RST, P0_15 */
+                 | GPIO_PCNS_NSE22_MASK  /* LCD CS,  P0_22 */
+                 | GPIO_PCNS_NSE23_MASK; /* LCD BLK, P0_23 */
+    GPIO1->PCNS |= GPIO_PCNS_NSE23_MASK; /* LCD DC,  P1_23 (Arduino D3) */
 
 #ifdef CORE1_IMAGE_COPY_TO_RAM
     uint32_t core1_image_size = get_core1_image_size();
